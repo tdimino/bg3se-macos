@@ -80,24 +80,39 @@ static void enumerate_loaded_images(void) {
  * Check if libOsiris.dylib is loaded and examine its exports
  */
 static void check_osiris_library(void) {
-    // Try to find libOsiris.dylib
-    void *osiris = dlopen("libOsiris.dylib", RTLD_NOLOAD);
+    // Try to find libOsiris.dylib - use full path since RTLD_NOLOAD needs it
+    void *osiris = dlopen("@rpath/libOsiris.dylib", RTLD_NOLOAD);
+
+    if (!osiris) {
+        // Try with explicit path
+        osiris = dlopen("/Users/tomdimino/Library/Application Support/Steam/steamapps/common/Baldurs Gate 3/Baldur's Gate 3.app/Contents/Frameworks/libOsiris.dylib", RTLD_NOW);
+    }
 
     if (osiris) {
-        log_message("libOsiris.dylib is loaded!");
+        log_message("libOsiris.dylib handle obtained!");
 
-        // Check for key symbols
-        void *initGame = dlsym(osiris, "_COsiris_InitGame");
-        void *debugHook = dlsym(osiris, "_DebugHook");
-        void *createRule = dlsym(osiris, "_CreateRule");
+        // These are the actual exported C symbols (with underscore prefix stripped by dlsym)
+        void *debugHook = dlsym(osiris, "DebugHook");
+        void *createRule = dlsym(osiris, "CreateRule");
+        void *defineFunction = dlsym(osiris, "DefineFunction");
+        void *setInitSection = dlsym(osiris, "SetInitSection");
 
-        log_message("  COsiris_InitGame: %p", initGame);
+        // Try C++ mangled names for COsiris methods
+        void *initGame = dlsym(osiris, "_ZN7COsiris8InitGameEv");
+        void *load = dlsym(osiris, "_ZN7COsiris4LoadER12COsiSmartBuf");
+
         log_message("  DebugHook: %p", debugHook);
         log_message("  CreateRule: %p", createRule);
+        log_message("  DefineFunction: %p", defineFunction);
+        log_message("  SetInitSection: %p", setInitSection);
+        log_message("  COsiris::InitGame: %p", initGame);
+        log_message("  COsiris::Load: %p", load);
 
-        dlclose(osiris);
+        // Don't close - we'll need to hook these
+        // dlclose(osiris);
     } else {
         log_message("libOsiris.dylib not yet loaded (this is normal at init time)");
+        log_message("  dlerror: %s", dlerror());
     }
 }
 
