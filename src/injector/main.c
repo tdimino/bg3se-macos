@@ -17,8 +17,10 @@
 #include <unistd.h>
 #include <mach-o/dyld.h>
 
+#include "../hooks/osiris_hooks.h"
+
 // Version info
-#define BG3SE_VERSION "0.1.0"
+#define BG3SE_VERSION "0.2.0"
 #define BG3SE_NAME "BG3SE-macOS"
 
 // Log file for debugging
@@ -108,7 +110,16 @@ static void check_osiris_library(void) {
         log_message("  COsiris::InitGame: %p", initGame);
         log_message("  COsiris::Load: %p", load);
 
-        // Don't close - we'll need to hook these
+        // Install hooks now that we have the library loaded
+        log_message("Attempting to install Osiris hooks...");
+        int hook_result = install_osiris_hooks();
+        if (hook_result == 0) {
+            log_message("Osiris hooks installed successfully!");
+        } else {
+            log_message("Failed to install Osiris hooks (code: %d)", hook_result);
+        }
+
+        // Don't close - we need these for hooks
         // dlclose(osiris);
     } else {
         log_message("libOsiris.dylib not yet loaded (this is normal at init time)");

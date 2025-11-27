@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${PROJECT_ROOT}/build"
 SRC_DIR="${PROJECT_ROOT}/src"
+LIB_DIR="${PROJECT_ROOT}/lib"
 
 echo "=========================================="
 echo "Building BG3SE-macOS"
@@ -17,19 +18,33 @@ echo "=========================================="
 
 # Create build directory
 mkdir -p "${BUILD_DIR}/lib"
+mkdir -p "${BUILD_DIR}/obj"
+
+# Source files
+SOURCES=(
+    "${SRC_DIR}/injector/main.c"
+    "${SRC_DIR}/hooks/osiris_hooks.c"
+    "${LIB_DIR}/fishhook/fishhook.c"
+)
 
 # Compile for universal binary
-echo "Compiling injector..."
+echo "Compiling sources..."
+for src in "${SOURCES[@]}"; do
+    echo "  - $(basename "$src")"
+done
+
 clang \
     -arch arm64 \
     -arch x86_64 \
     -dynamiclib \
     -o "${BUILD_DIR}/lib/libbg3se.dylib" \
+    -I"${SRC_DIR}" \
+    -I"${LIB_DIR}" \
     -Wall -Wextra \
     -O2 \
     -fvisibility=hidden \
     -undefined dynamic_lookup \
-    "${SRC_DIR}/injector/main.c"
+    "${SOURCES[@]}"
 
 echo ""
 echo "Build successful!"

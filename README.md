@@ -6,14 +6,22 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 
 ## Status
 
-🚧 **Work in Progress** - Currently at Proof of Concept stage.
+🚧 **Work in Progress**
 
-| Phase | Status |
-|-------|--------|
-| DYLD Injection | ✅ Built |
-| libOsiris Hooking | 🔄 In Progress |
-| Lua Runtime | ⏳ Pending |
-| Mod Compatibility | ⏳ Pending |
+| Phase | Status | Notes |
+|-------|--------|-------|
+| DYLD Injection | ✅ Complete | Verified working via Steam |
+| Symbol Resolution | ✅ Complete | All libOsiris symbols resolved |
+| Function Hooking | 🔄 In Progress | Using fishhook library |
+| Lua Runtime | ⏳ Pending | |
+| Mod Compatibility | ⏳ Pending | Target: More Reactive Companions |
+
+### Verified Working (Nov 27, 2025)
+- Steam launch with injection via wrapper script
+- libOsiris.dylib symbol addresses resolved:
+  - `DebugHook`, `CreateRule`, `DefineFunction`, `SetInitSection`
+  - `COsiris::InitGame`, `COsiris::Load`
+- Game runs normally at main menu with injection active
 
 ## Requirements
 
