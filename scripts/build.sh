@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Build script for BG3SE-macOS
-# Builds universal binary (arm64 + x86_64)
+# Builds x86_64 binary (BG3 runs under Rosetta)
 #
 
 set -e
@@ -20,21 +20,19 @@ echo "=========================================="
 mkdir -p "${BUILD_DIR}/lib"
 mkdir -p "${BUILD_DIR}/obj"
 
-# Source files
+# Source files - minimal build
 SOURCES=(
     "${SRC_DIR}/injector/main.c"
-    "${SRC_DIR}/hooks/osiris_hooks.c"
-    "${LIB_DIR}/fishhook/fishhook.c"
 )
 
-# Compile for universal binary
-echo "Compiling sources..."
+echo ""
+echo "Compiling sources for x86_64..."
 for src in "${SOURCES[@]}"; do
     echo "  - $(basename "$src")"
 done
 
+# Compile for x86_64 (BG3 runs under Rosetta)
 clang \
-    -arch arm64 \
     -arch x86_64 \
     -dynamiclib \
     -o "${BUILD_DIR}/lib/libbg3se.dylib" \
@@ -63,5 +61,6 @@ echo "Dependencies:"
 otool -L "${BUILD_DIR}/lib/libbg3se.dylib" | head -10
 echo ""
 echo "=========================================="
-echo "To test: ./scripts/launch_bg3.sh"
+echo "To test: Launch BG3 via Steam with wrapper"
+echo "Steam launch options: /tmp/bg3w.sh %command%"
 echo "=========================================="
