@@ -6,7 +6,7 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 
 ## Status
 
-🚧 **Work in Progress** - Lua Runtime Working!
+🎉 **Mod Loading Working!** - SE mods now load and execute on macOS!
 
 | Phase | Status | Notes |
 |-------|--------|-------|
@@ -15,7 +15,9 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Function Hooking | ✅ Complete | Dobby inline hooking verified working |
 | Lua Runtime | ✅ Complete | Lua 5.4 with Ext API |
 | Mod Detection | ✅ Complete | Reads modsettings.lsx at startup |
-| Mod Compatibility | ⏳ Pending | Target: More Reactive Companions |
+| Ext.Require | ✅ Complete | Module loading from mod directories |
+| Ext.Osiris | ✅ Complete | Event listener registration |
+| Osi.* Functions | ⏳ Stubs | Osiris bindings (stubs only) |
 
 ### Verified Working (Nov 27, 2025)
 
@@ -32,6 +34,9 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **Ext API functions working (Print, GetVersion, IsClient, IsServer)**
 - ✅ **Mod list detection from modsettings.lsx**
 - ✅ **Hooks triggering Lua callbacks on game events**
+- ✅ **Ext.Require() loading mod modules**
+- ✅ **Ext.Osiris.RegisterListener() registering event callbacks**
+- ✅ **More Reactive Companions mod successfully loads!**
 
 ## Requirements
 
@@ -76,30 +81,45 @@ chmod +x /tmp/bg3w.sh
 
 See `scripts/*.example` files for reference wrapper scripts.
 
+### Testing SE Mods (Current Method)
+
+Until PAK reading is implemented, extract SE mods manually:
+
+```bash
+# Extract a mod's PAK file
+python3 tools/extract_pak.py path/to/ModName.pak /tmp/ModName_extracted
+
+# The mod will be loaded from /tmp/ModName_extracted/Mods/ModName/ScriptExtender/Lua/
+```
+
 ### Verify
 
-Check `/tmp/bg3se_macos.log` for injection logs:
+Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
 ```
-=== BG3SE-macOS v0.5.0 ===
-[timestamp] === BG3SE-macOS v0.5.0 initialized ===
+=== BG3SE-macOS v0.7.0 ===
+[timestamp] === BG3SE-macOS v0.7.0 initialized ===
 [timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
 [timestamp] Architecture: ARM64 (Apple Silicon)
 [timestamp] Dobby inline hooking: enabled
 [timestamp] === Enabled Mods ===
 [timestamp]   [1] GustavX (base game)
 [timestamp]   [2] YourMod1
-[timestamp]   [3] YourMod2
-[timestamp] Total mods: 3 (2 user mods)
+[timestamp] Total mods: 2 (1 user mods)
 [timestamp] ====================
 [timestamp] Initializing Lua runtime...
+[timestamp] Ext API registered in Lua
+[timestamp] Ext.Osiris API registered
+[timestamp] Osi namespace registered (stubs)
 [timestamp] [Lua] BG3SE-macOS Lua runtime initialized!
-[timestamp] [Lua] Version: 0.5.0
-[timestamp] Found 6/6 key Osiris symbols
-[timestamp] Hooks installed: 2/2
 ...
 [timestamp] >>> COsiris::Load called! (count: 1, this: 0x..., buf: 0x...)
 [timestamp] >>> COsiris::Load returned: 1
 [timestamp] [Lua] Story/save data loaded!
+[timestamp] === Loading Mod Scripts ===
+[timestamp] [Lua] Ext.Require('Server/YourMod.lua')
+[timestamp] [Lua] HERE IN THE MOD
+[timestamp] [Lua] Registered Osiris listener: SomeEvent (arity=2, timing=before)
+[timestamp] === Mod Script Loading Complete ===
 ```
 
 ## How It Works
@@ -153,6 +173,45 @@ When hooking C++ member functions, the return value must be captured and returne
 │                      └───────────────────┘    │
 └─────────────────────────────────────────────────┘
 ```
+
+## Implemented APIs
+
+### Ext Namespace
+
+| API | Status | Description |
+|-----|--------|-------------|
+| `Ext.Print(...)` | ✅ Working | Print to BG3SE log |
+| `Ext.GetVersion()` | ✅ Working | Returns version string |
+| `Ext.IsClient()` | ✅ Working | Returns true |
+| `Ext.IsServer()` | ✅ Working | Returns false |
+| `Ext.Require(path)` | ✅ Working | Load Lua module relative to mod |
+| `Ext.IO.LoadFile(path)` | ✅ Working | Read file contents |
+| `Ext.IO.SaveFile(path, content)` | ✅ Working | Write file contents |
+| `Ext.Json.Parse(json)` | ✅ Working | Parse JSON to Lua table |
+| `Ext.Json.Stringify(table)` | ✅ Working | Convert Lua table to JSON |
+| `Ext.Osiris.RegisterListener(event, arity, timing, callback)` | ✅ Working | Register Osiris event callback |
+
+### Global Functions
+
+| API | Status | Description |
+|-----|--------|-------------|
+| `_P(...)` | ✅ Working | Debug print (alias for Ext.Print) |
+| `_D(value)` | ✅ Working | Debug dump (JSON for tables) |
+| `GetHostCharacter()` | ⏳ Stub | Returns placeholder UUID |
+
+### Osi Namespace (Stubs)
+
+These functions are registered but return placeholder values. Real Osiris integration is planned.
+
+| API | Status | Description |
+|-----|--------|-------------|
+| `Osi.IsTagged(char, tag)` | ⏳ Stub | Always returns false |
+| `Osi.GetDistanceTo(char1, char2)` | ⏳ Stub | Always returns 0 |
+| `Osi.DialogGetNumberOfInvolvedPlayers(id)` | ⏳ Stub | Always returns 1 |
+| `Osi.SpeakerGetDialog(char, idx)` | ⏳ Stub | Returns empty string |
+| `Osi.DialogRequestStop(char)` | ⏳ Stub | No-op |
+| `Osi.QRY_StartDialog_Fixed(res, char)` | ⏳ Stub | Returns false |
+| `Osi.DB_Players:Get(nil)` | ⏳ Stub | Returns empty table |
 
 ## File Structure
 
@@ -209,43 +268,6 @@ _ZN7COsiris8InitGameEv          - COsiris::InitGame()
 _ZN7COsiris4LoadER12COsiSmartBuf - COsiris::Load(COsiSmartBuf&)
 ```
 
-### Sample Log Output (v0.5.0)
-
-```
-=== BG3SE-macOS v0.5.0 ===
-Injection timestamp: 1764288141
-Process ID: 53033
-[2025-11-27 19:02:21] === BG3SE-macOS v0.5.0 initialized ===
-[2025-11-27 19:02:21] Running in process: Baldur's Gate 3 (PID: 53033)
-[2025-11-27 19:02:21] Architecture: ARM64 (Apple Silicon)
-[2025-11-27 19:02:21] Dobby inline hooking: enabled
-[2025-11-27 19:02:21] === Enabled Mods ===
-[2025-11-27 19:02:21]   [1] GustavX (base game)
-[2025-11-27 19:02:21]   [2] LIX_OriginDialogTags
-[2025-11-27 19:02:21]   [3] Facial Animations
-[2025-11-27 19:02:21]   [4] ACT1 Capes and Cloaks
-[2025-11-27 19:02:21]   [5] Better Inventory UI
-[2025-11-27 19:02:21]   [6] HT_Camp Event Overhaul
-[2025-11-27 19:02:21]   [7] IN_Core_1_03
-[2025-11-27 19:02:21] Total mods: 7 (6 user mods)
-[2025-11-27 19:02:21] ====================
-[2025-11-27 19:02:21] Initializing Lua runtime...
-[2025-11-27 19:02:21] Ext API registered in Lua
-[2025-11-27 19:02:21] [Lua] BG3SE-macOS Lua runtime initialized!
-[2025-11-27 19:02:21] [Lua] Version: 0.5.0
-[2025-11-27 19:02:21] [Lua] IsClient: true
-[2025-11-27 19:02:21] [Lua] IsServer: false
-[2025-11-27 19:02:21] Lua Lua 5.4 initialized
-[2025-11-27 19:02:21] Found 6/6 key Osiris symbols
-[2025-11-27 19:02:21] Installing Dobby hooks...
-[2025-11-27 19:02:21]   COsiris::InitGame hooked successfully (orig: 0x110e08000)
-[2025-11-27 19:02:21]   COsiris::Load hooked successfully (orig: 0x110e08020)
-[2025-11-27 19:02:21] Hooks installed: 2/2
-[2025-11-27 19:02:45] >>> COsiris::Load called! (count: 1, this: 0x600019f34080, buf: 0x44d5ea098)
-[2025-11-27 19:02:45] >>> COsiris::Load returned: 1
-[2025-11-27 19:02:45] [Lua] Story/save data loaded!
-```
-
 ## Target Mod
 
 Primary goal: Enable **"More Reactive Companions"** to work on macOS.
@@ -254,17 +276,7 @@ Primary goal: Enable **"More Reactive Companions"** to work on macOS.
 
 This mod redirects ambient party dialogue to random nearby companions instead of always using the player character, making the party feel more alive. It requires Script Extender APIs and serves as our primary compatibility target.
 
-### Required SE APIs
-
-| API | Status | Notes |
-|-----|--------|-------|
-| `Ext.Require()` | ⏳ Stub | Module loading |
-| `Ext.IO.LoadFile()` | ✅ Done | File reading |
-| `Ext.Json.Parse()` | ✅ Done | JSON parsing |
-| `Ext.Json.Stringify()` | ✅ Done | JSON serialization |
-| `_P()` / `_D()` | ✅ Done | Debug print/dump |
-| `Ext.Osiris.RegisterListener()` | ⏳ Pending | Event hooks |
-| `Osi.*` functions | ⏳ Pending | Osiris bindings |
+**Current Status:** The mod **loads successfully** and registers its event listeners. Full functionality requires implementing real Osiris bindings (currently stubs).
 
 ## Tools
 
@@ -280,7 +292,16 @@ pip3 install lz4
 python3 tools/extract_pak.py path/to/mod.pak [output_dir]
 ```
 
-This is useful for examining mod structure and Lua scripts.
+This is useful for examining mod structure and Lua scripts, and currently required for testing SE mods until PAK reading is implemented.
+
+## Roadmap
+
+### Next Steps
+
+1. **Real Osiris Bindings** - Hook into Osiris database to implement real `Osi.*` functions
+2. **PAK File Reading** - Load scripts directly from .pak files without extraction
+3. **Steam Workshop Support** - Auto-detect mods from workshop folder
+4. **Auto-detection** - Scan for SE-enabled mods via Config.json
 
 ## Troubleshooting
 
@@ -304,6 +325,13 @@ If the game loads but immediately returns to the main menu:
 1. This usually means a hook isn't preserving the return value
 2. Check that hooked functions return the original function's return value
 3. Review `/tmp/bg3se_macos.log` for hook call/return messages
+
+### Mod Not Loading
+
+1. Ensure the mod is extracted to `/tmp/<ModName>_extracted/`
+2. Check that the path structure is: `Mods/<ModName>/ScriptExtender/Lua/BootstrapServer.lua`
+3. Review the log for "Loading Mod Scripts" section
+4. Verify the mod name matches what's hardcoded (currently `MoreReactiveCompanions_Configurable`)
 
 ### Architecture Mismatch Error
 
@@ -330,3 +358,4 @@ MIT License
 - Inspired by [Norbyte's BG3SE](https://github.com/Norbyte/bg3se)
 - [Dobby](https://github.com/jmpews/Dobby) - Inline hooking framework
 - [fishhook](https://github.com/facebook/fishhook) - Symbol rebinding library
+- Test mod: [More Reactive Companions](https://www.nexusmods.com/baldursgate3/mods/5447) by LightningLarryL
