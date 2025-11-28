@@ -6,7 +6,7 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 
 ## Status
 
-🎉 **Mod Loading Working!** - SE mods now load and execute on macOS!
+🎉 **MRC Mod Integration Working!** - SE mods load, execute, and receive real game data on macOS!
 
 | Phase | Status | Notes |
 |-------|--------|-------|
@@ -19,9 +19,10 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | PAK File Reading | ✅ Complete | Load scripts directly from .pak files |
 | Ext.Require | ✅ Complete | Module loading from filesystem or PAK |
 | Ext.Osiris | ✅ Complete | Event listener registration |
-| Osi.* Functions | ⏳ Stubs | Osiris bindings (stubs only) |
+| Osiris Event Hook | ✅ Complete | COsiris::Event() hooked, 2000+ events captured |
+| Osi.* Functions | ✅ Partial | Key functions return real data (see below) |
 
-### Verified Working (Nov 27, 2025)
+### Verified Working (Nov 28, 2025)
 
 - ✅ Steam launch with injection via wrapper script
 - ✅ Universal binary (ARM64 native + x86_64 Rosetta)
@@ -30,7 +31,7 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **Successfully loaded saved games with hooks active**
 - ✅ 533 loaded images enumerated
 - ✅ libOsiris.dylib symbol addresses resolved (6/6)
-- ✅ **Dobby inline hooks intercepting `COsiris::Load` calls**
+- ✅ **Dobby inline hooks intercepting `COsiris::Load` and `COsiris::Event` calls**
 - ✅ **Hook return values properly preserved (game loads correctly)**
 - ✅ **Lua 5.4 runtime initialized and executing scripts**
 - ✅ **Ext API functions working (Print, GetVersion, IsClient, IsServer)**
@@ -41,6 +42,10 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **Ext.Require() loading mod modules (filesystem or PAK)**
 - ✅ **Ext.Osiris.RegisterListener() registering event callbacks**
 - ✅ **More Reactive Companions mod successfully loads!**
+- ✅ **COsiris::Event() hook capturing 2000+ Osiris events per session**
+- ✅ **Real player GUIDs discovered from events (6 party members)**
+- ✅ **Dialog tracking from AutomatedDialogStarted/Ended events**
+- ✅ **MRC mod receiving real game data and identifying dialog participants**
 
 ## Requirements
 
@@ -100,7 +105,7 @@ BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
 Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
 ```
-=== BG3SE-macOS v0.9.0 ===
+=== BG3SE-macOS v0.9.2 ===
 [timestamp] === BG3SE-macOS v0.9.0 initialized ===
 [timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
 [timestamp] Architecture: ARM64 (Apple Silicon)
@@ -201,19 +206,19 @@ When hooking C++ member functions, the return value must be captured and returne
 | `_D(value)` | ✅ Working | Debug dump (JSON for tables) |
 | `GetHostCharacter()` | ⏳ Stub | Returns placeholder UUID |
 
-### Osi Namespace (Stubs)
+### Osi Namespace
 
-These functions are registered but return placeholder values. Real Osiris integration is planned.
+Key Osiris functions now return real game data. Player GUIDs and dialog state are discovered by observing Osiris events.
 
 | API | Status | Description |
 |-----|--------|-------------|
-| `Osi.IsTagged(char, tag)` | ⏳ Stub | Always returns false |
+| `Osi.DB_Players:Get(nil)` | ✅ Working | Returns real player GUIDs (discovered from events) |
+| `Osi.IsTagged(char, tag)` | ✅ Working | Returns true for players in active dialog |
+| `Osi.DialogGetNumberOfInvolvedPlayers(id)` | ✅ Working | Returns 1 (single-player) |
+| `Osi.SpeakerGetDialog(char, idx)` | ✅ Working | Returns current dialog resource |
 | `Osi.GetDistanceTo(char1, char2)` | ⏳ Stub | Always returns 0 |
-| `Osi.DialogGetNumberOfInvolvedPlayers(id)` | ⏳ Stub | Always returns 1 |
-| `Osi.SpeakerGetDialog(char, idx)` | ⏳ Stub | Returns empty string |
 | `Osi.DialogRequestStop(char)` | ⏳ Stub | No-op |
 | `Osi.QRY_StartDialog_Fixed(res, char)` | ⏳ Stub | Returns false |
-| `Osi.DB_Players:Get(nil)` | ⏳ Stub | Returns empty table |
 
 ## File Structure
 
@@ -279,7 +284,7 @@ Primary goal: Enable **"More Reactive Companions"** to work on macOS.
 
 This mod redirects ambient party dialogue to random nearby companions instead of always using the player character, making the party feel more alive. It requires Script Extender APIs and serves as our primary compatibility target.
 
-**Current Status:** The mod **loads successfully** and registers its event listeners. Full functionality requires implementing real Osiris bindings (currently stubs).
+**Current Status:** The mod **loads and receives real game data**. Event listeners fire on dialog events, player GUIDs are discovered from Osiris events, and dialog state is tracked. MRC can now identify which party members are in dialogs.
 
 ## Tools
 
@@ -301,10 +306,14 @@ This is useful for examining mod structure and Lua scripts. Note: BG3SE-macOS no
 
 ### Next Steps
 
-1. **Real Osiris Bindings** - Hook into Osiris database to implement real `Osi.*` functions
+1. **Additional Osi.* Functions** - Implement remaining stub functions (GetDistanceTo, etc.)
+2. **More Event Discovery** - Map additional function IDs for combat, spells, etc.
+3. **Full MRC Testing** - Verify visible companion behavior changes in-game
 
 ### Completed
 
+- ✅ Real Osiris bindings via event observation (v0.9.2)
+- ✅ COsiris::Event() hook with callback dispatch (v0.9.1)
 - ✅ PAK file reading - load scripts directly from .pak files (v0.9.0)
 - ✅ Auto-detection of SE mods via Config.json scanning (v0.8.0)
 

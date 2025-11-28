@@ -36,7 +36,7 @@ extern "C" {
 #endif
 
 // Version info
-#define BG3SE_VERSION "0.9.0"
+#define BG3SE_VERSION "0.9.2"
 #define BG3SE_NAME "BG3SE-macOS"
 
 // Log file for debugging
@@ -57,10 +57,150 @@ static void detect_enabled_mods(void);
 // Original function pointers (filled by Dobby)
 static void *orig_InitGame = NULL;
 static void *orig_Load = NULL;
+static void *orig_Event = NULL;
 
 // Hook call counters
 static int initGame_call_count = 0;
 static int load_call_count = 0;
+static int event_call_count = 0;
+
+// ============================================================================
+// Osiris Data Structures (based on Windows BG3SE, validated via logging)
+// ============================================================================
+
+// Value types in Osiris
+typedef enum {
+    OSI_TYPE_NONE = 0,
+    OSI_TYPE_INTEGER = 1,
+    OSI_TYPE_INTEGER64 = 2,
+    OSI_TYPE_REAL = 3,
+    OSI_TYPE_STRING = 4,
+    OSI_TYPE_GUIDSTRING = 5
+} OsiValueType;
+
+// Argument value - tagged union (structure layout TBD via logging)
+typedef struct OsiArgumentValue {
+    union {
+        int32_t int32Val;
+        int64_t int64Val;
+        float floatVal;
+        char *stringVal;
+    };
+    uint16_t typeId;
+    uint16_t flags;
+} OsiArgumentValue;
+
+// Argument linked list node
+typedef struct OsiArgumentDesc {
+    struct OsiArgumentDesc *nextParam;  // offset 0 (8 bytes on ARM64)
+    OsiArgumentValue value;              // offset 8
+} OsiArgumentDesc;
+
+// Function pointers for Osiris calls
+typedef void (*OsiEventFn)(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args);
+typedef int (*InternalQueryFn)(uint32_t funcId, OsiArgumentDesc *args);
+typedef int (*InternalCallFn)(uint32_t funcId, void *params);
+typedef void* (*pFunctionDataFn)(void *funcMan, uint32_t funcId);
+
+// Global function pointers (resolved at runtime)
+static InternalQueryFn pfn_InternalQuery = NULL;
+static InternalCallFn pfn_InternalCall = NULL;
+static pFunctionDataFn pfn_pFunctionData = NULL;
+static void *g_OsiFunctionMan = NULL;
+static void *g_COsiris = NULL;  // Captured from hook calls
+
+// Global pointer to OsiFunctionMan from libOsiris
+static void **g_pOsiFunctionMan = NULL;  // Points to the global _OsiFunctionMan
+
+// Captured player GUIDs from events (we learn these by observing)
+#define MAX_KNOWN_PLAYERS 8
+static char g_knownPlayerGuids[MAX_KNOWN_PLAYERS][128];
+static int g_knownPlayerCount = 0;
+
+// Current dialog tracking (learned from AutomatedDialogStarted events)
+static char g_currentDialogResource[256] = {0};  // Dialog resource ID
+static int g_currentDialogInstance = -1;         // Dialog instance ID (if known)
+static int g_currentDialogPlayerCount = 1;       // Number of players in dialog (default 1)
+
+// Dialog participants (characters currently in an active dialog)
+#define MAX_DIALOG_PARTICIPANTS 8
+static char g_dialogParticipants[MAX_DIALOG_PARTICIPANTS][128];
+static int g_dialogParticipantCount = 0;
+
+// Function cache for name->ID lookup
+#define MAX_CACHED_FUNCTIONS 4096
+#define INVALID_FUNCTION_ID 0xFFFFFFFF
+#define OSI_FUNCTION_TYPE_MASK 0x80000000  // High bit indicates function type
+
+// Function types (based on Windows BG3SE)
+typedef enum {
+    OSI_FUNC_EVENT = 1,
+    OSI_FUNC_QUERY = 2,
+    OSI_FUNC_CALL = 3,
+    OSI_FUNC_DATABASE = 4,
+    OSI_FUNC_PROC = 5,
+    OSI_FUNC_SYSCALL = 6,
+    OSI_FUNC_SYSQUERY = 7
+} OsiFunctionType;
+
+// Function definition structure (layout determined empirically)
+// This is the structure returned by pFunctionData()
+// Note: Layout may need adjustment based on actual memory dumps
+typedef struct {
+    void *vtable;           // offset 0: C++ vtable pointer
+    void *name_ptr;         // offset 8: pointer to std::string or char*
+    uint32_t funcId;        // offset 16: function ID
+    uint8_t  funcType;      // offset 20: function type
+    uint8_t  numInParams;   // offset 21: number of input parameters
+    uint8_t  numOutParams;  // offset 22: number of output parameters
+    uint8_t  reserved1;     // offset 23: padding
+    // More fields follow but we don't need them
+} OsiFunctionDef;
+
+typedef struct {
+    char name[128];
+    uint8_t arity;
+    uint8_t type;  // FunctionType: 1=Event, 2=Query, 3=Call, 4=Database
+    uint32_t id;
+} CachedFunction;
+
+static CachedFunction g_funcCache[MAX_CACHED_FUNCTIONS];
+static int g_funcCacheCount = 0;
+static int g_funcCacheBuilt = 0;
+
+// Reverse lookup: funcId -> cache index (for fast event dispatch)
+#define FUNC_HASH_SIZE 8192
+static int16_t g_funcIdHashTable[FUNC_HASH_SIZE];  // -1 = empty, else index into g_funcCache
+
+// Known event names we want to track (for MRC compatibility)
+// We'll learn the function IDs by observing events and matching patterns
+typedef struct {
+    const char *name;
+    uint32_t funcId;        // 0 = not yet discovered
+    uint8_t expectedArity;
+} KnownEvent;
+
+static KnownEvent g_knownEvents[] = {
+    // Discovered via runtime observation on macOS ARM64
+    {"AutomatedDialogStarted", 2147492339, 4},   // 0x800021f3 - Main event MRC uses
+    {"AutomatedDialogEnded", 2147492347, 4},     // 0x800021fb - Dialog end event
+    // These still need to be discovered:
+    {"DialogStarted", 0, 2},
+    {"DialogEnded", 0, 2},
+    {"CharacterJoinedParty", 0, 1},
+    {"CharacterLeftParty", 0, 1},
+    {"CombatStarted", 0, 1},
+    {"CombatEnded", 0, 1},
+    {"TurnStarted", 0, 1},
+    {"TurnEnded", 0, 1},
+    {NULL, 0, 0}  // Sentinel
+};
+
+// Track unique function IDs we've seen (for analysis)
+#define MAX_SEEN_FUNC_IDS 256
+static uint32_t g_seenFuncIds[MAX_SEEN_FUNC_IDS];
+static uint8_t g_seenFuncArities[MAX_SEEN_FUNC_IDS];
+static int g_seenFuncIdCount = 0;
 
 // Track if hooks are already installed
 static int hooks_installed = 0;
@@ -1352,13 +1492,31 @@ static int lua_gethostcharacter(lua_State *L) {
 
 /**
  * Osi.IsTagged(character, tag) - Check if character has a tag
- * Stub: always returns false
+ * Returns true for known players when checking dialog-related tags
  */
 static int lua_osi_istagged(lua_State *L) {
     const char *character = luaL_checkstring(L, 1);
     const char *tag = luaL_checkstring(L, 2);
-    log_message("[Lua] Osi.IsTagged('%s', '%s') called (stub)", character, tag);
-    lua_pushboolean(L, 0);  // Always return false for now
+
+    int result = 0;
+
+    // Check if this is the dialog involvement tag MRC uses
+    // Tag 306b9b05-1057-4770-aa17-01af21acd650 seems to be checking dialog participation
+    if (strcmp(tag, "306b9b05-1057-4770-aa17-01af21acd650") == 0) {
+        // Return true for any known player character when in a dialog
+        if (g_currentDialogResource[0] != '\0') {
+            // We're in a dialog - check if this is a known player
+            for (int i = 0; i < g_knownPlayerCount; i++) {
+                if (strcmp(g_knownPlayerGuids[i], character) == 0) {
+                    result = 1;
+                    break;
+                }
+            }
+        }
+    }
+
+    log_message("[Lua] Osi.IsTagged('%s', '%s') -> %d", character, tag, result);
+    lua_pushboolean(L, result);
     return 1;
 }
 
@@ -1376,21 +1534,43 @@ static int lua_osi_getdistanceto(lua_State *L) {
 
 /**
  * Osi.DialogGetNumberOfInvolvedPlayers(instance_id) - Get player count in dialog
- * Stub: always returns 1
+ * Returns the tracked player count (default 1 for single-player)
  */
 static int lua_osi_dialoggetnumberofinvolvedplayers(lua_State *L) {
-    log_message("[Lua] Osi.DialogGetNumberOfInvolvedPlayers() called (stub)");
-    lua_pushinteger(L, 1);
+    int instance_id = -1;
+    if (lua_gettop(L) >= 1) {
+        if (lua_isinteger(L, 1)) {
+            instance_id = (int)lua_tointeger(L, 1);
+        } else if (lua_isnumber(L, 1)) {
+            instance_id = (int)lua_tonumber(L, 1);
+        }
+    }
+    log_message("[Lua] Osi.DialogGetNumberOfInvolvedPlayers(%d) -> %d",
+                instance_id, g_currentDialogPlayerCount);
+    lua_pushinteger(L, g_currentDialogPlayerCount);
     return 1;
 }
 
 /**
  * Osi.SpeakerGetDialog(character, index) - Get dialog resource
- * Stub: returns empty string
+ * Returns the current dialog resource if we've captured one
  */
 static int lua_osi_speakergetdialog(lua_State *L) {
-    log_message("[Lua] Osi.SpeakerGetDialog() called (stub)");
-    lua_pushstring(L, "");
+    const char *character = "";
+    int index = 0;
+    if (lua_gettop(L) >= 1 && lua_isstring(L, 1)) {
+        character = lua_tostring(L, 1);
+    }
+    if (lua_gettop(L) >= 2) {
+        if (lua_isinteger(L, 2)) {
+            index = (int)lua_tointeger(L, 2);
+        } else if (lua_isnumber(L, 2)) {
+            index = (int)lua_tonumber(L, 2);
+        }
+    }
+    log_message("[Lua] Osi.SpeakerGetDialog('%s', %d) -> '%s'",
+                character, index, g_currentDialogResource);
+    lua_pushstring(L, g_currentDialogResource);
     return 1;
 }
 
@@ -1415,17 +1595,55 @@ static int lua_osi_qry_startdialog_fixed(lua_State *L) {
 }
 
 /**
+ * Check if a GUID looks like a player character
+ * Player GUIDs typically start with "S_Player_" in BG3
+ */
+static int is_player_guid(const char *guid) {
+    if (!guid) return 0;
+    // Player characters have "S_Player_" prefix
+    if (strncmp(guid, "S_Player_", 9) == 0) return 1;
+    // Also check for common player names (Tav, custom characters)
+    if (strstr(guid, "_Player_") != NULL) return 1;
+    return 0;
+}
+
+/**
+ * Track a player GUID if we haven't seen it before
+ */
+static void track_player_guid(const char *guid) {
+    if (!guid || !is_player_guid(guid)) return;
+    if (g_knownPlayerCount >= MAX_KNOWN_PLAYERS) return;
+
+    // Check if already tracked
+    for (int i = 0; i < g_knownPlayerCount; i++) {
+        if (strcmp(g_knownPlayerGuids[i], guid) == 0) return;
+    }
+
+    // Add to list
+    strncpy(g_knownPlayerGuids[g_knownPlayerCount], guid,
+            sizeof(g_knownPlayerGuids[0]) - 1);
+    g_knownPlayerGuids[g_knownPlayerCount][sizeof(g_knownPlayerGuids[0]) - 1] = '\0';
+    g_knownPlayerCount++;
+    log_message("[Players] Discovered player: %s (total: %d)", guid, g_knownPlayerCount);
+}
+
+/**
  * DB_Players database accessor
  * Creates a table with a :Get() method that returns player list
  */
 static int lua_osi_db_players_get(lua_State *L) {
-    log_message("[Lua] Osi.DB_Players:Get() called (stub)");
+    log_message("[Lua] Osi.DB_Players:Get() called, known players: %d", g_knownPlayerCount);
 
-    // Return an empty table for now (no players)
+    // Return table of known players: { {guid1}, {guid2}, ... }
     lua_newtable(L);
 
-    // In a real implementation, this would return a table of player UUIDs:
-    // { {"UUID1"}, {"UUID2"}, ... }
+    for (int i = 0; i < g_knownPlayerCount; i++) {
+        // Each entry is a table with the GUID as first element
+        lua_newtable(L);
+        lua_pushstring(L, g_knownPlayerGuids[i]);
+        lua_rawseti(L, -2, 1);  // t[1] = guid
+        lua_rawseti(L, -2, i + 1);  // result[i+1] = {guid}
+    }
 
     return 1;
 }
@@ -1752,6 +1970,19 @@ static void fake_InitGame(void *thisPtr) {
     initGame_call_count++;
     log_message(">>> COsiris::InitGame called! (count: %d, this: %p)", initGame_call_count, thisPtr);
 
+    // Capture COsiris pointer for function lookups
+    if (!g_COsiris) {
+        g_COsiris = thisPtr;
+        log_message("  Captured COsiris instance: %p", g_COsiris);
+
+        // Try to find function manager - it may be at a fixed offset in COsiris
+        // or it may be the same object (COsiris might inherit from COsiFunctionMan)
+        if (!g_OsiFunctionMan) {
+            g_OsiFunctionMan = thisPtr;  // Try using COsiris directly first
+            log_message("  Using COsiris as function manager: %p", g_OsiFunctionMan);
+        }
+    }
+
     // Call original
     if (orig_InitGame) {
         ((void (*)(void*))orig_InitGame)(thisPtr);
@@ -1802,6 +2033,427 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
     }
 
     return result;
+}
+
+/**
+ * Initialize the function hash table
+ */
+static void init_func_hash_table(void) {
+    for (int i = 0; i < FUNC_HASH_SIZE; i++) {
+        g_funcIdHashTable[i] = -1;
+    }
+}
+
+/**
+ * Hash function for function ID lookup
+ */
+static inline int func_id_hash(uint32_t funcId) {
+    // Simple hash - use lower bits, handling type flag
+    return (int)((funcId ^ (funcId >> 13)) & (FUNC_HASH_SIZE - 1));
+}
+
+/**
+ * Add a function to the cache
+ */
+static void cache_function(const char *name, uint32_t funcId, uint8_t arity, uint8_t type) {
+    if (g_funcCacheCount >= MAX_CACHED_FUNCTIONS) {
+        return;
+    }
+
+    // Check for duplicate
+    int hash = func_id_hash(funcId);
+    if (g_funcIdHashTable[hash] >= 0) {
+        // Linear probe to check if already exists
+        for (int i = 0; i < g_funcCacheCount; i++) {
+            if (g_funcCache[i].id == funcId) {
+                return;  // Already cached
+            }
+        }
+    }
+
+    CachedFunction *cf = &g_funcCache[g_funcCacheCount];
+    strncpy(cf->name, name, sizeof(cf->name) - 1);
+    cf->name[sizeof(cf->name) - 1] = '\0';
+    cf->id = funcId;
+    cf->arity = arity;
+    cf->type = type;
+
+    // Add to hash table (simple - just store first match at hash location)
+    if (g_funcIdHashTable[hash] < 0) {
+        g_funcIdHashTable[hash] = (int16_t)g_funcCacheCount;
+    }
+
+    g_funcCacheCount++;
+}
+
+/**
+ * Try to extract function name from a function definition pointer
+ * The structure layout is empirically determined
+ */
+static const char *extract_func_name_from_def(void *funcDef) {
+    if (!funcDef) return NULL;
+
+    // The function definition structure varies by Osiris version
+    // We'll try multiple offsets to find the name
+    uint8_t *p = (uint8_t *)funcDef;
+
+    // Try offset 8 (common for std::string* or char*)
+    void *name_candidate = *(void **)(p + 8);
+    if (name_candidate) {
+        // Check if it's a direct char* (starts with printable ASCII)
+        char *str = (char *)name_candidate;
+        if (str[0] >= 'A' && str[0] <= 'z') {
+            return str;
+        }
+
+        // It might be std::string (SSO or heap)
+        // For small strings, data is inline at offset 0
+        // For large strings, there's a pointer
+        // Try reading as std::string internal layout
+        char *sso_data = (char *)name_candidate;
+        if (sso_data[0] >= 'A' && sso_data[0] <= 'z') {
+            return sso_data;
+        }
+    }
+
+    // Try offset 16
+    name_candidate = *(void **)(p + 16);
+    if (name_candidate) {
+        char *str = (char *)name_candidate;
+        if (str[0] >= 'A' && str[0] <= 'z') {
+            return str;
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * Probe structure layout by dumping bytes from a function definition
+ * This is called once during cache building for debugging
+ */
+static void probe_funcdef_structure(void *funcDef, uint32_t funcId) {
+    if (!funcDef) return;
+
+    uint8_t *p = (uint8_t *)funcDef;
+    log_message("[FuncDef] Probing structure for funcId=%u at %p", funcId, funcDef);
+
+    // Dump first 64 bytes
+    log_message("  bytes[0-31]:  %02x%02x%02x%02x %02x%02x%02x%02x "
+               "%02x%02x%02x%02x %02x%02x%02x%02x "
+               "%02x%02x%02x%02x %02x%02x%02x%02x "
+               "%02x%02x%02x%02x %02x%02x%02x%02x",
+               p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],
+               p[8],p[9],p[10],p[11],p[12],p[13],p[14],p[15],
+               p[16],p[17],p[18],p[19],p[20],p[21],p[22],p[23],
+               p[24],p[25],p[26],p[27],p[28],p[29],p[30],p[31]);
+    log_message("  bytes[32-63]: %02x%02x%02x%02x %02x%02x%02x%02x "
+               "%02x%02x%02x%02x %02x%02x%02x%02x "
+               "%02x%02x%02x%02x %02x%02x%02x%02x "
+               "%02x%02x%02x%02x %02x%02x%02x%02x",
+               p[32],p[33],p[34],p[35],p[36],p[37],p[38],p[39],
+               p[40],p[41],p[42],p[43],p[44],p[45],p[46],p[47],
+               p[48],p[49],p[50],p[51],p[52],p[53],p[54],p[55],
+               p[56],p[57],p[58],p[59],p[60],p[61],p[62],p[63]);
+
+    // Try to interpret as pointers
+    void **ptrs = (void **)p;
+    log_message("  ptr[0] (vtable?): %p", ptrs[0]);
+    log_message("  ptr[1] (name?):   %p", ptrs[1]);
+    log_message("  ptr[2]:           %p", ptrs[2]);
+    log_message("  ptr[3]:           %p", ptrs[3]);
+
+    // Try to read strings at various offsets
+    for (int off = 8; off <= 32; off += 8) {
+        void *candidate = *(void **)(p + off);
+        if (candidate && (uintptr_t)candidate > 0x100000000ULL) {
+            // Looks like a valid pointer, try to read as string
+            char *str = (char *)candidate;
+            // Check if first char is printable
+            if (str[0] >= 0x20 && str[0] < 0x7f) {
+                log_message("  offset %d -> possible string: %.40s", off, str);
+            }
+        }
+    }
+}
+
+/**
+ * Track a function ID we've seen (for analysis purposes)
+ */
+static void track_seen_func_id(uint32_t funcId, uint8_t arity) {
+    // Check if already seen
+    for (int i = 0; i < g_seenFuncIdCount; i++) {
+        if (g_seenFuncIds[i] == funcId) return;
+    }
+
+    // Add to list
+    if (g_seenFuncIdCount < MAX_SEEN_FUNC_IDS) {
+        g_seenFuncIds[g_seenFuncIdCount] = funcId;
+        g_seenFuncArities[g_seenFuncIdCount] = arity;
+        g_seenFuncIdCount++;
+
+        // Log new unique function ID
+        log_message("[FuncID] New unique: id=%u (0x%08x), arity=%d, total_unique=%d",
+                   funcId, funcId, arity, g_seenFuncIdCount);
+    }
+}
+
+/**
+ * Build function cache by probing known function IDs from events
+ * DISABLED: Calling pFunctionData with incorrect this pointer causes hangs
+ * TODO: Find correct way to get COsiFunctionMan instance
+ */
+static void try_cache_function_from_event(uint32_t funcId) {
+    (void)funcId;  // Unused for now
+
+    // DISABLED - calling pFunctionData crashes/hangs the game
+    // Need to find the correct COsiFunctionMan instance first
+    // The COsiris pointer we have is not the same as COsiFunctionMan
+    return;
+}
+
+/**
+ * Get function name from function ID
+ * First checks known events table, then the dynamic cache
+ */
+static const char *get_function_name(uint32_t funcId) {
+    // Check known events table first (hardcoded mappings)
+    for (int i = 0; g_knownEvents[i].name != NULL; i++) {
+        if (g_knownEvents[i].funcId == funcId) {
+            return g_knownEvents[i].name;
+        }
+    }
+
+    // Check hash table (fast path for dynamic cache)
+    int hash = func_id_hash(funcId);
+    int16_t idx = g_funcIdHashTable[hash];
+    if (idx >= 0 && g_funcCache[idx].id == funcId) {
+        return g_funcCache[idx].name;
+    }
+
+    // Linear search (for hash collisions)
+    for (int i = 0; i < g_funcCacheCount; i++) {
+        if (g_funcCache[i].id == funcId) {
+            return g_funcCache[i].name;
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * Count arguments in an OsiArgumentDesc chain
+ */
+static int count_osi_args(OsiArgumentDesc *args) {
+    int count = 0;
+    OsiArgumentDesc *current = args;
+    while (current && count < 20) {  // Safety limit
+        count++;
+        current = current->nextParam;
+    }
+    return count;
+}
+
+/**
+ * Dispatch event to registered Lua callbacks
+ */
+static void dispatch_event_to_lua(const char *eventName, int arity,
+                                   OsiArgumentDesc *args, const char *timing) {
+    if (!L || !eventName) return;
+
+    for (int i = 0; i < osiris_listener_count; i++) {
+        OsirisListener *listener = &osiris_listeners[i];
+
+        // Match by name and timing only - arity is how many args listener wants
+        if (strcmp(listener->event_name, eventName) == 0 &&
+            strcmp(listener->timing, timing) == 0) {
+
+            // Get callback from Lua registry
+            lua_rawgeti(L, LUA_REGISTRYINDEX, listener->callback_ref);
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                continue;
+            }
+
+            // Log callback dispatch
+            log_message("[Osiris] Dispatching %s callback (%s, arity=%d)",
+                       eventName, timing, listener->arity);
+
+            // Push arguments (up to listener's requested arity)
+            int argsToPass = listener->arity;
+            int pushed = 0;
+            OsiArgumentDesc *arg = args;
+            while (arg && pushed < argsToPass) {
+                // For now, push as strings - will refine based on type
+                if (arg->value.typeId == OSI_TYPE_STRING ||
+                    arg->value.typeId == OSI_TYPE_GUIDSTRING) {
+                    if (arg->value.stringVal) {
+                        lua_pushstring(L, arg->value.stringVal);
+                    } else {
+                        lua_pushnil(L);
+                    }
+                } else if (arg->value.typeId == OSI_TYPE_INTEGER) {
+                    lua_pushinteger(L, arg->value.int32Val);
+                } else if (arg->value.typeId == OSI_TYPE_INTEGER64) {
+                    lua_pushinteger(L, (lua_Integer)arg->value.int64Val);
+                } else if (arg->value.typeId == OSI_TYPE_REAL) {
+                    lua_pushnumber(L, arg->value.floatVal);
+                } else {
+                    // Unknown type - try string
+                    if (arg->value.stringVal) {
+                        lua_pushstring(L, arg->value.stringVal);
+                    } else {
+                        lua_pushnil(L);
+                    }
+                }
+                pushed++;
+                arg = arg->nextParam;
+            }
+
+            // Call the callback
+            if (lua_pcall(L, pushed, 0, 0) != LUA_OK) {
+                log_message("[Osiris] Callback error for %s: %s",
+                           eventName, lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        }
+    }
+}
+
+/**
+ * Hooked COsiris::Event - called for all Osiris events
+ * Mangled name: _ZN7COsiris5EventEjP16COsiArgumentDesc
+ * Signature: void COsiris::Event(unsigned int funcId, COsiArgumentDesc* args)
+ */
+static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
+    event_call_count++;
+
+    // Capture COsiris pointer if we haven't already
+    if (!g_COsiris && thisPtr) {
+        g_COsiris = thisPtr;
+        g_OsiFunctionMan = thisPtr;  // Try using COsiris as function manager
+        log_message(">>> Captured COsiris from Event: %p", g_COsiris);
+    }
+
+    // Get function name if available
+    const char *funcName = get_function_name(funcId);
+    int arity = count_osi_args(args);
+
+    // Track unique function IDs for analysis
+    track_seen_func_id(funcId, (uint8_t)arity);
+
+    // Track player GUIDs from event arguments (learn as we observe events)
+    OsiArgumentDesc *scanArg = args;
+    while (scanArg) {
+        if ((scanArg->value.typeId == OSI_TYPE_STRING ||
+             scanArg->value.typeId == OSI_TYPE_GUIDSTRING) &&
+            scanArg->value.stringVal) {
+            track_player_guid(scanArg->value.stringVal);
+        }
+        scanArg = scanArg->nextParam;
+    }
+
+    // Log event (limit frequency to avoid log spam)
+    if (event_call_count <= 50 || (event_call_count % 100 == 0) || funcName != NULL) {
+        if (funcName) {
+            log_message(">>> Event[%d]: %s (id=%u, arity=%d, args=%p)",
+                       event_call_count, funcName, funcId, arity, (void*)args);
+        } else {
+            log_message(">>> Event[%d]: id=%u (arity=%d, args=%p)",
+                       event_call_count, funcId, arity, (void*)args);
+        }
+
+        // Dump first few bytes of args for structure analysis (first 10 events only)
+        if (args && event_call_count <= 10) {
+            uint8_t *p = (uint8_t *)args;
+            log_message("    args bytes[0-31]: %02x%02x%02x%02x %02x%02x%02x%02x "
+                       "%02x%02x%02x%02x %02x%02x%02x%02x "
+                       "%02x%02x%02x%02x %02x%02x%02x%02x "
+                       "%02x%02x%02x%02x %02x%02x%02x%02x",
+                       p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],
+                       p[8],p[9],p[10],p[11],p[12],p[13],p[14],p[15],
+                       p[16],p[17],p[18],p[19],p[20],p[21],p[22],p[23],
+                       p[24],p[25],p[26],p[27],p[28],p[29],p[30],p[31]);
+
+            // Try to read as our assumed structure
+            log_message("    Assumed: nextParam=%p, typeId=%u, stringVal=%p",
+                       (void*)args->nextParam, args->value.typeId,
+                       (void*)args->value.stringVal);
+
+            // If it looks like a string, try to print it
+            if (args->value.typeId >= OSI_TYPE_STRING &&
+                args->value.typeId <= OSI_TYPE_GUIDSTRING &&
+                args->value.stringVal) {
+                // Safety check - verify it's a readable address
+                log_message("    String arg: %.80s", args->value.stringVal);
+            }
+        }
+    }
+
+    // Track dialog state from dialog events
+    if (funcName) {
+        if (strcmp(funcName, "AutomatedDialogStarted") == 0 && args) {
+            // Clear previous participants
+            g_dialogParticipantCount = 0;
+
+            // Log and capture all 4 arguments
+            OsiArgumentDesc *arg = args;
+            int argIdx = 0;
+            while (arg && argIdx < 4) {
+                if ((arg->value.typeId == OSI_TYPE_STRING ||
+                     arg->value.typeId == OSI_TYPE_GUIDSTRING) &&
+                    arg->value.stringVal) {
+                    log_message("[Dialog] Arg[%d]: %s", argIdx, arg->value.stringVal);
+
+                    // Store first arg as dialog resource
+                    if (argIdx == 0) {
+                        strncpy(g_currentDialogResource, arg->value.stringVal,
+                                sizeof(g_currentDialogResource) - 1);
+                        g_currentDialogResource[sizeof(g_currentDialogResource) - 1] = '\0';
+                    }
+
+                    // Track all GUID args as potential participants
+                    if (g_dialogParticipantCount < MAX_DIALOG_PARTICIPANTS) {
+                        strncpy(g_dialogParticipants[g_dialogParticipantCount],
+                                arg->value.stringVal,
+                                sizeof(g_dialogParticipants[0]) - 1);
+                        g_dialogParticipants[g_dialogParticipantCount][sizeof(g_dialogParticipants[0]) - 1] = '\0';
+                        g_dialogParticipantCount++;
+                    }
+                } else if (arg->value.typeId == OSI_TYPE_INTEGER) {
+                    log_message("[Dialog] Arg[%d]: (int) %d", argIdx, arg->value.int32Val);
+                } else if (arg->value.typeId == OSI_TYPE_INTEGER64) {
+                    log_message("[Dialog] Arg[%d]: (int64) %lld", argIdx, arg->value.int64Val);
+                }
+                arg = arg->nextParam;
+                argIdx++;
+            }
+
+            g_currentDialogPlayerCount = 1;  // Single-player default
+            log_message("[Dialog] Started with %d participants", g_dialogParticipantCount);
+        } else if (strcmp(funcName, "AutomatedDialogEnded") == 0) {
+            // Clear dialog state when dialog ends
+            log_message("[Dialog] Ended: %s", g_currentDialogResource);
+            g_currentDialogResource[0] = '\0';
+            g_currentDialogInstance = -1;
+            g_dialogParticipantCount = 0;
+        }
+    }
+
+    // Dispatch to "before" callbacks if we know the function name
+    if (funcName) {
+        dispatch_event_to_lua(funcName, arity, args, "before");
+    }
+
+    // Call original
+    if (orig_Event) {
+        ((OsiEventFn)orig_Event)(thisPtr, funcId, args);
+    }
+
+    // Dispatch to "after" callbacks
+    if (funcName) {
+        dispatch_event_to_lua(funcName, arity, args, "after");
+    }
 }
 
 /**
@@ -1858,6 +2510,24 @@ static void install_hooks(void) {
     // Get function addresses (C++ mangled names)
     void *initGameAddr = dlsym(osiris, "_ZN7COsiris8InitGameEv");
     void *loadAddr = dlsym(osiris, "_ZN7COsiris4LoadER12COsiSmartBuf");
+    void *eventAddr = dlsym(osiris, "_ZN7COsiris5EventEjP16COsiArgumentDesc");
+
+    // Also resolve function pointers for Osiris calls (not hooked, just called)
+    pfn_InternalQuery = (InternalQueryFn)dlsym(osiris, "_Z13InternalQueryjP16COsiArgumentDesc");
+    pfn_InternalCall = (InternalCallFn)dlsym(osiris, "_Z12InternalCalljP18COsipParameterList");
+    pfn_pFunctionData = (pFunctionDataFn)dlsym(osiris, "_ZN15COsiFunctionMan13pFunctionDataEj");
+
+    // Get the global OsiFunctionMan pointer
+    g_pOsiFunctionMan = (void **)dlsym(osiris, "_OsiFunctionMan");
+
+    log_message("Osiris function pointers:");
+    log_message("  InternalQuery: %p", (void*)pfn_InternalQuery);
+    log_message("  InternalCall: %p", (void*)pfn_InternalCall);
+    log_message("  pFunctionData: %p", (void*)pfn_pFunctionData);
+    log_message("  OsiFunctionMan global: %p", (void*)g_pOsiFunctionMan);
+    if (g_pOsiFunctionMan) {
+        log_message("  OsiFunctionMan instance: %p", *g_pOsiFunctionMan);
+    }
 
     int hook_count = 0;
 
@@ -1887,7 +2557,20 @@ static void install_hooks(void) {
         log_message("  COsiris::Load not found, skipping");
     }
 
-    log_message("Hooks installed: %d/2", hook_count);
+    // Hook COsiris::Event - this is the key hook for event interception!
+    if (eventAddr) {
+        int result = DobbyHook(eventAddr, (void *)fake_Event, &orig_Event);
+        if (result == 0) {
+            log_message("  COsiris::Event hooked successfully (orig: %p)", orig_Event);
+            hook_count++;
+        } else {
+            log_message("  ERROR: Failed to hook COsiris::Event (error: %d)", result);
+        }
+    } else {
+        log_message("  COsiris::Event not found, skipping");
+    }
+
+    log_message("Hooks installed: %d/3", hook_count);
     hooks_installed = 1;
 #else
     log_message("Hooks DISABLED (ENABLE_HOOKS=0)");
@@ -1981,6 +2664,9 @@ static void bg3se_init(void) {
         fclose(f);
     }
 
+    // Initialize function cache hash table
+    init_func_hash_table();
+
     log_message("=== %s v%s initialized ===", BG3SE_NAME, BG3SE_VERSION);
     log_message("Running in process: %s (PID: %d)", getprogname(), getpid());
 
@@ -2027,6 +2713,17 @@ static void bg3se_cleanup(void) {
     log_message("Final hook call counts:");
     log_message("  COsiris::InitGame: %d calls", initGame_call_count);
     log_message("  COsiris::Load: %d calls", load_call_count);
+    log_message("  COsiris::Event: %d calls", event_call_count);
+
+    // Log unique function IDs summary
+    log_message("Unique function IDs observed: %d", g_seenFuncIdCount);
+    for (int i = 0; i < g_seenFuncIdCount && i < 50; i++) {
+        log_message("  [%d] id=%u (0x%08x) arity=%d",
+                   i, g_seenFuncIds[i], g_seenFuncIds[i], g_seenFuncArities[i]);
+    }
+    if (g_seenFuncIdCount > 50) {
+        log_message("  ... and %d more", g_seenFuncIdCount - 50);
+    }
 
     // Shutdown Lua
     shutdown_lua();
