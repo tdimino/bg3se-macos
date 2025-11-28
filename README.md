@@ -172,6 +172,8 @@ bg3se-macos/
 │   ├── bg3-wrapper.sh.example  # Example Steam wrapper
 │   ├── launch_bg3.sh.example   # Example direct launcher
 │   └── launch_via_steam.sh.example  # Example Steam setup helper
+├── tools/
+│   └── extract_pak.py          # BG3 PAK file extractor (Python)
 ├── build/
 │   └── lib/
 │       └── libbg3se.dylib      # Built dylib (universal: arm64 + x86_64)
@@ -246,13 +248,39 @@ Process ID: 53033
 
 ## Target Mod
 
-Primary goal: Enable **"More Reactive Companions"** ([Nexusmods #5447](https://www.nexusmods.com/baldursgate3/mods/5447)) to work on macOS.
+Primary goal: Enable **"More Reactive Companions"** to work on macOS.
 
-Required SE APIs:
-- `Ext.Require()`
-- `Ext.IO.LoadFile()`
-- `Ext.Json.Parse()`
-- `Osi.*` functions
+**Test Mod:** [More Reactive Companions (Configurable)](https://www.nexusmods.com/baldursgate3/mods/5447) by [LightningLarryL](https://next.nexusmods.com/profile/LightningLarryL?gameId=3474)
+
+This mod redirects ambient party dialogue to random nearby companions instead of always using the player character, making the party feel more alive. It requires Script Extender APIs and serves as our primary compatibility target.
+
+### Required SE APIs
+
+| API | Status | Notes |
+|-----|--------|-------|
+| `Ext.Require()` | ⏳ Stub | Module loading |
+| `Ext.IO.LoadFile()` | ✅ Done | File reading |
+| `Ext.Json.Parse()` | ✅ Done | JSON parsing |
+| `Ext.Json.Stringify()` | ✅ Done | JSON serialization |
+| `_P()` / `_D()` | ✅ Done | Debug print/dump |
+| `Ext.Osiris.RegisterListener()` | ⏳ Pending | Event hooks |
+| `Osi.*` functions | ⏳ Pending | Osiris bindings |
+
+## Tools
+
+### PAK Extractor
+
+A Python tool to extract BG3 mod `.pak` files (LSPK v18 format):
+
+```bash
+# Install dependency
+pip3 install lz4
+
+# Extract a mod
+python3 tools/extract_pak.py path/to/mod.pak [output_dir]
+```
+
+This is useful for examining mod structure and Lua scripts.
 
 ## Troubleshooting
 
