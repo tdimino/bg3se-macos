@@ -105,7 +105,7 @@ BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
 Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
 ```
-=== BG3SE-macOS v0.9.3 ===
+=== BG3SE-macOS v0.9.4 ===
 [timestamp] === BG3SE-macOS v0.9.0 initialized ===
 [timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
 [timestamp] Architecture: ARM64 (Apple Silicon)
@@ -328,6 +328,7 @@ This is useful for examining mod structure and Lua scripts. Note: BG3SE-macOS no
 
 ### Completed
 
+- ✅ Direct Osiris query/call wrappers - real Osi.* function calls (v0.9.4)
 - ✅ ARM64 pattern database with fallback symbol resolution (v0.9.3)
 - ✅ Pattern scanning infrastructure for cross-version compatibility (v0.9.3)
 - ✅ Real Osiris bindings via event observation (v0.9.2)
