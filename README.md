@@ -16,7 +16,8 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Lua Runtime | ✅ Complete | Lua 5.4 with Ext API |
 | Mod Detection | ✅ Complete | Reads modsettings.lsx at startup |
 | SE Mod Auto-Detection | ✅ Complete | Scans Config.json for "Lua" feature flag |
-| Ext.Require | ✅ Complete | Module loading from mod directories |
+| PAK File Reading | ✅ Complete | Load scripts directly from .pak files |
+| Ext.Require | ✅ Complete | Module loading from filesystem or PAK |
 | Ext.Osiris | ✅ Complete | Event listener registration |
 | Osi.* Functions | ⏳ Stubs | Osiris bindings (stubs only) |
 
@@ -35,8 +36,9 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **Ext API functions working (Print, GetVersion, IsClient, IsServer)**
 - ✅ **Mod list detection from modsettings.lsx**
 - ✅ **Auto-detection of SE mods via Config.json scanning**
+- ✅ **PAK file reading - no extraction needed!**
 - ✅ **Hooks triggering Lua callbacks on game events**
-- ✅ **Ext.Require() loading mod modules**
+- ✅ **Ext.Require() loading mod modules (filesystem or PAK)**
 - ✅ **Ext.Osiris.RegisterListener() registering event callbacks**
 - ✅ **More Reactive Companions mod successfully loads!**
 
@@ -83,47 +85,42 @@ chmod +x /tmp/bg3w.sh
 
 See `scripts/*.example` files for reference wrapper scripts.
 
-### Testing SE Mods (Current Method)
+### Using SE Mods
 
-Until PAK reading is implemented, extract SE mods manually:
+SE mods work automatically - just install them like any other mod:
 
-```bash
-# Extract a mod's PAK file
-python3 tools/extract_pak.py path/to/ModName.pak /tmp/ModName_extracted
+1. Download the mod's `.pak` file from Nexus Mods
+2. Place it in `~/Documents/Larian Studios/Baldur's Gate 3/Mods/`
+3. Enable the mod in the game's mod manager (or add to modsettings.lsx)
+4. Launch the game and load a save
 
-# The mod will be loaded from /tmp/ModName_extracted/Mods/ModName/ScriptExtender/Lua/
-```
+BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
 ### Verify
 
 Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
 ```
-=== BG3SE-macOS v0.8.0 ===
-[timestamp] === BG3SE-macOS v0.8.0 initialized ===
+=== BG3SE-macOS v0.9.0 ===
+[timestamp] === BG3SE-macOS v0.9.0 initialized ===
 [timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
 [timestamp] Architecture: ARM64 (Apple Silicon)
 [timestamp] Dobby inline hooking: enabled
 [timestamp] === Enabled Mods ===
 [timestamp]   [1] GustavX (base game)
-[timestamp]   [2] YourMod1
-[timestamp]   [3] MoreReactiveCompanions_Configurable
-[timestamp] Total mods: 3 (2 user mods)
+[timestamp]   [2] MoreReactiveCompanions_Configurable
+[timestamp] Total mods: 2 (1 user mods)
 [timestamp] ====================
 [timestamp] === Scanning for SE Mods ===
-[timestamp] [SE] Found Config.json with Lua for MoreReactiveCompanions_Configurable at: /tmp/mrc_extracted/...
+[timestamp] [SE] Found SE mod MoreReactiveCompanions_Configurable in PAK: .../Mods/MoreReactiveCompanions_Configurable.pak
 [timestamp]   [SE] MoreReactiveCompanions_Configurable
 [timestamp] Total SE mods: 1
 [timestamp] ============================
-[timestamp] Initializing Lua runtime...
 ...
-[timestamp] >>> COsiris::Load called! (count: 1, this: 0x..., buf: 0x...)
-[timestamp] >>> COsiris::Load returned: 1
-[timestamp] [Lua] Story/save data loaded!
 [timestamp] === Loading Mod Scripts ===
-[timestamp] [Lua] Loading 1 detected SE mod(s)...
-[timestamp] [Lua] Ext.Require('Server/YourMod.lua')
+[timestamp] [Lua] Trying to load BootstrapServer.lua from PAK: .../MoreReactiveCompanions_Configurable.pak
+[timestamp] [Lua] Loaded from PAK: Mods/.../BootstrapServer.lua
 [timestamp] [Lua] HERE IN THE MOD
-[timestamp] [Lua] Registered Osiris listener: SomeEvent (arity=2, timing=before)
+[timestamp] [Lua] Registered Osiris listener: AutomatedDialogStarted (arity=2, timing=before)
 [timestamp] === Mod Script Loading Complete ===
 ```
 
@@ -228,6 +225,7 @@ bg3se-macos/
 ├── lib/
 │   ├── fishhook/               # Symbol rebinding (for imported symbols)
 │   ├── Dobby/                  # Inline hooking (for internal functions)
+│   ├── lz4/                    # LZ4 decompression (for PAK file reading)
 │   └── lua/                    # Lua 5.4 source and build scripts
 │       ├── src/                # Lua 5.4.7 source code
 │       └── build_universal.sh  # Builds universal static library
@@ -297,18 +295,17 @@ pip3 install lz4
 python3 tools/extract_pak.py path/to/mod.pak [output_dir]
 ```
 
-This is useful for examining mod structure and Lua scripts, and currently required for testing SE mods until PAK reading is implemented.
+This is useful for examining mod structure and Lua scripts. Note: BG3SE-macOS now reads PAK files directly, so extraction is only needed for debugging.
 
 ## Roadmap
 
 ### Next Steps
 
-1. **Steam Workshop Support** - Auto-detect mods from `~/Library/Application Support/Steam/steamapps/workshop/content/1086940/`
-2. **PAK File Reading** - Load scripts directly from .pak files without manual extraction
-3. **Real Osiris Bindings** - Hook into Osiris database to implement real `Osi.*` functions
+1. **Real Osiris Bindings** - Hook into Osiris database to implement real `Osi.*` functions
 
 ### Completed
 
+- ✅ PAK file reading - load scripts directly from .pak files (v0.9.0)
 - ✅ Auto-detection of SE mods via Config.json scanning (v0.8.0)
 
 ## Troubleshooting
@@ -337,10 +334,11 @@ If the game loads but immediately returns to the main menu:
 ### Mod Not Loading
 
 1. Ensure the mod is enabled in modsettings.lsx (use in-game mod manager or BG3 Mod Manager)
-2. Extract the mod to `/tmp/<ModName>_extracted/` using `tools/extract_pak.py`
+2. Ensure the mod's `.pak` file is in `~/Documents/Larian Studios/Baldur's Gate 3/Mods/`
 3. Check that the mod has `ScriptExtender/Config.json` with `"Lua"` in FeatureFlags
-4. Check that the path structure is: `Mods/<ModName>/ScriptExtender/Lua/BootstrapServer.lua`
+4. Check that the path structure inside PAK is: `Mods/<ModName>/ScriptExtender/Lua/BootstrapServer.lua`
 5. Review the log for "Scanning for SE Mods" and "Loading Mod Scripts" sections
+6. For debugging, extract with `tools/extract_pak.py` to inspect mod structure
 
 ### Architecture Mismatch Error
 

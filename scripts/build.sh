@@ -73,7 +73,7 @@ for src in "${SOURCES[@]}"; do
     echo "  - $(basename "$src")"
 done
 
-# Compile universal binary with Dobby and Lua
+# Compile universal binary with Dobby, Lua, and LZ4
 clang++ \
     -arch x86_64 \
     -arch arm64 \
@@ -87,8 +87,10 @@ clang++ \
     -O2 \
     -fvisibility=hidden \
     "${SOURCES[@]}" \
+    "${LIB_DIR}/lz4/lz4.c" \
     "${DOBBY_LIB}" \
     "${LUA_LIB}" \
+    -lz \
     -lc++
 
 echo ""

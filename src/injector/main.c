@@ -16,6 +16,10 @@
 #include <mach-o/dyld.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <zlib.h>
+
+// LZ4 decompression
+#include "lz4/lz4.h"
 
 // Dobby hooking framework
 #include "Dobby/include/dobby.h"
@@ -32,7 +36,7 @@ extern "C" {
 #endif
 
 // Version info
-#define BG3SE_VERSION "0.8.0"
+#define BG3SE_VERSION "0.9.0"
 #define BG3SE_NAME "BG3SE-macOS"
 
 // Log file for debugging
@@ -82,6 +86,371 @@ static int detected_mod_count = 0;
 // Detected SE mods (mods with ScriptExtender/Config.json containing "Lua")
 static char se_mods[MAX_MODS][MAX_MOD_NAME_LEN];
 static int se_mod_count = 0;
+
+// Current PAK file for mod loading (used by Ext.Require)
+static char current_mod_pak_path[MAX_PATH_LEN] = "";
+
+// ============================================================================
+// PAK File Reading (LSPK v18 format)
+// ============================================================================
+
+// LSPK signature: "LSPK" = 0x4B50534C
+#define LSPK_SIGNATURE 0x4B50534C
+#define LSPK_ENTRY_SIZE 272
+
+// PAK file entry
+typedef struct {
+    char name[256];
+    uint64_t offset;
+    uint8_t archive_part;
+    uint8_t compression;  // 0=none, 1=zlib, 2=LZ4
+    uint32_t disk_size;
+    uint32_t uncompressed_size;
+} PakEntry;
+
+// PAK file handle
+typedef struct {
+    FILE *file;
+    uint32_t version;
+    uint64_t file_list_offset;
+    uint32_t file_list_size;
+    uint32_t num_files;
+    PakEntry *entries;
+} PakFile;
+
+/**
+ * Open a PAK file and read its header and file list
+ * Returns NULL on failure
+ */
+static PakFile *pak_open(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+
+    // Read header (40 bytes)
+    uint8_t header[40];
+    if (fread(header, 1, 40, f) != 40) {
+        fclose(f);
+        return NULL;
+    }
+
+    // Check signature
+    uint32_t signature;
+    memcpy(&signature, header, 4);
+    if (signature != LSPK_SIGNATURE) {
+        fclose(f);
+        return NULL;
+    }
+
+    // Parse header
+    uint32_t version;
+    uint64_t file_list_offset;
+    uint32_t file_list_size;
+
+    memcpy(&version, header + 4, 4);
+    memcpy(&file_list_offset, header + 8, 8);
+    memcpy(&file_list_size, header + 16, 4);
+
+    // Seek to file list
+    fseek(f, file_list_offset, SEEK_SET);
+
+    // Read file count and compressed size
+    uint32_t num_files, compressed_size;
+    if (fread(&num_files, 4, 1, f) != 1 || fread(&compressed_size, 4, 1, f) != 1) {
+        fclose(f);
+        return NULL;
+    }
+
+    // Read compressed file list
+    uint8_t *compressed_data = (uint8_t *)malloc(compressed_size);
+    if (!compressed_data) {
+        fclose(f);
+        return NULL;
+    }
+
+    if (fread(compressed_data, 1, compressed_size, f) != compressed_size) {
+        free(compressed_data);
+        fclose(f);
+        return NULL;
+    }
+
+    // Decompress file list (LZ4)
+    uint32_t uncompressed_size = num_files * LSPK_ENTRY_SIZE;
+    uint8_t *decompressed = (uint8_t *)malloc(uncompressed_size);
+    if (!decompressed) {
+        free(compressed_data);
+        fclose(f);
+        return NULL;
+    }
+
+    int result = LZ4_decompress_safe((const char *)compressed_data, (char *)decompressed,
+                                      compressed_size, uncompressed_size);
+    free(compressed_data);
+
+    if (result < 0) {
+        free(decompressed);
+        fclose(f);
+        return NULL;
+    }
+
+    // Parse entries
+    PakEntry *entries = (PakEntry *)calloc(num_files, sizeof(PakEntry));
+    if (!entries) {
+        free(decompressed);
+        fclose(f);
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < num_files; i++) {
+        uint8_t *entry_data = decompressed + (i * LSPK_ENTRY_SIZE);
+
+        // Name: 256 bytes, null-terminated
+        memcpy(entries[i].name, entry_data, 255);
+        entries[i].name[255] = '\0';
+
+        // Offset: 48-bit value (bytes 256-261)
+        uint32_t offset_lo;
+        uint16_t offset_hi;
+        memcpy(&offset_lo, entry_data + 256, 4);
+        memcpy(&offset_hi, entry_data + 260, 2);
+        entries[i].offset = offset_lo | ((uint64_t)offset_hi << 32);
+
+        entries[i].archive_part = entry_data[262];
+        entries[i].compression = entry_data[263] & 0x0F;
+
+        memcpy(&entries[i].disk_size, entry_data + 264, 4);
+        memcpy(&entries[i].uncompressed_size, entry_data + 268, 4);
+    }
+
+    free(decompressed);
+
+    // Create PakFile struct
+    PakFile *pak = (PakFile *)malloc(sizeof(PakFile));
+    if (!pak) {
+        free(entries);
+        fclose(f);
+        return NULL;
+    }
+
+    pak->file = f;
+    pak->version = version;
+    pak->file_list_offset = file_list_offset;
+    pak->file_list_size = file_list_size;
+    pak->num_files = num_files;
+    pak->entries = entries;
+
+    return pak;
+}
+
+/**
+ * Close a PAK file and free resources
+ */
+static void pak_close(PakFile *pak) {
+    if (pak) {
+        if (pak->file) fclose(pak->file);
+        if (pak->entries) free(pak->entries);
+        free(pak);
+    }
+}
+
+/**
+ * Find an entry in a PAK file by path
+ * Returns entry index or -1 if not found
+ */
+static int pak_find_entry(PakFile *pak, const char *path) {
+    if (!pak || !path) return -1;
+
+    for (uint32_t i = 0; i < pak->num_files; i++) {
+        if (strcmp(pak->entries[i].name, path) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/**
+ * Read a file from a PAK archive
+ * Returns allocated buffer with file contents, or NULL on failure
+ * Caller must free the returned buffer
+ * Sets *out_size to the uncompressed size
+ */
+static char *pak_read_file(PakFile *pak, int entry_idx, size_t *out_size) {
+    if (!pak || entry_idx < 0 || entry_idx >= (int)pak->num_files) return NULL;
+
+    PakEntry *entry = &pak->entries[entry_idx];
+
+    // Seek to file data
+    fseek(pak->file, entry->offset, SEEK_SET);
+
+    // Read compressed/raw data
+    uint8_t *disk_data = (uint8_t *)malloc(entry->disk_size);
+    if (!disk_data) return NULL;
+
+    if (fread(disk_data, 1, entry->disk_size, pak->file) != entry->disk_size) {
+        free(disk_data);
+        return NULL;
+    }
+
+    char *content = NULL;
+
+    if (entry->compression == 0) {
+        // Uncompressed
+        content = (char *)malloc(entry->uncompressed_size + 1);
+        if (content) {
+            memcpy(content, disk_data, entry->uncompressed_size);
+            content[entry->uncompressed_size] = '\0';
+            if (out_size) *out_size = entry->uncompressed_size;
+        }
+    } else if (entry->compression == 1) {
+        // zlib
+        content = (char *)malloc(entry->uncompressed_size + 1);
+        if (content) {
+            uLongf dest_len = entry->uncompressed_size;
+            if (uncompress((Bytef *)content, &dest_len, disk_data, entry->disk_size) == Z_OK) {
+                content[dest_len] = '\0';
+                if (out_size) *out_size = dest_len;
+            } else {
+                free(content);
+                content = NULL;
+            }
+        }
+    } else if (entry->compression == 2) {
+        // LZ4
+        content = (char *)malloc(entry->uncompressed_size + 1);
+        if (content) {
+            int result = LZ4_decompress_safe((const char *)disk_data, content,
+                                              entry->disk_size, entry->uncompressed_size);
+            if (result > 0) {
+                content[result] = '\0';
+                if (out_size) *out_size = result;
+            } else {
+                free(content);
+                content = NULL;
+            }
+        }
+    }
+
+    free(disk_data);
+    return content;
+}
+
+/**
+ * Check if a PAK file contains a specific file path
+ */
+static int pak_contains_file(PakFile *pak, const char *path) {
+    return pak_find_entry(pak, path) >= 0;
+}
+
+/**
+ * Check if a PAK file contains ScriptExtender/Config.json with "Lua" feature
+ */
+static int pak_has_script_extender(const char *pak_path, const char *mod_name) {
+    PakFile *pak = pak_open(pak_path);
+    if (!pak) return 0;
+
+    // Build path to Config.json
+    char config_path[512];
+    snprintf(config_path, sizeof(config_path),
+             "Mods/%s/ScriptExtender/Config.json", mod_name);
+
+    int entry_idx = pak_find_entry(pak, config_path);
+    if (entry_idx < 0) {
+        pak_close(pak);
+        return 0;
+    }
+
+    // Read and check for "Lua"
+    size_t size;
+    char *content = pak_read_file(pak, entry_idx, &size);
+    pak_close(pak);
+
+    if (!content) return 0;
+
+    int has_lua = (strstr(content, "\"Lua\"") != NULL);
+    free(content);
+
+    return has_lua;
+}
+
+/**
+ * Find the PAK file containing a mod in the Mods folder
+ * Returns 1 if found and sets pak_path_out, 0 if not found
+ */
+static int find_mod_pak(const char *mod_name, char *pak_path_out, size_t pak_path_size) {
+    const char *home = getenv("HOME");
+    if (!home) return 0;
+
+    char mods_dir[MAX_PATH_LEN];
+    snprintf(mods_dir, sizeof(mods_dir),
+             "%s/Documents/Larian Studios/Baldur's Gate 3/Mods", home);
+
+    DIR *dir = opendir(mods_dir);
+    if (!dir) return 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        size_t name_len = strlen(entry->d_name);
+        if (name_len > 4 && strcasecmp(entry->d_name + name_len - 4, ".pak") == 0) {
+            char pak_path[MAX_PATH_LEN];
+            snprintf(pak_path, sizeof(pak_path), "%s/%s", mods_dir, entry->d_name);
+
+            // Check if this PAK contains our mod
+            PakFile *pak = pak_open(pak_path);
+            if (pak) {
+                // Look for any file with our mod name in the path
+                char mod_prefix[512];
+                snprintf(mod_prefix, sizeof(mod_prefix), "Mods/%s/", mod_name);
+
+                for (uint32_t i = 0; i < pak->num_files; i++) {
+                    if (strncmp(pak->entries[i].name, mod_prefix, strlen(mod_prefix)) == 0) {
+                        pak_close(pak);
+                        closedir(dir);
+                        strncpy(pak_path_out, pak_path, pak_path_size - 1);
+                        pak_path_out[pak_path_size - 1] = '\0';
+                        return 1;
+                    }
+                }
+                pak_close(pak);
+            }
+        }
+    }
+
+    closedir(dir);
+    return 0;
+}
+
+/**
+ * Load and execute a Lua file from a PAK archive
+ * Returns 1 on success, 0 on failure
+ */
+static int load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua_path) {
+    PakFile *pak = pak_open(pak_path);
+    if (!pak) return 0;
+
+    int entry_idx = pak_find_entry(pak, lua_path);
+    if (entry_idx < 0) {
+        pak_close(pak);
+        return 0;
+    }
+
+    size_t size;
+    char *content = pak_read_file(pak, entry_idx, &size);
+    pak_close(pak);
+
+    if (!content) return 0;
+
+    // Execute the Lua code
+    if (luaL_dostring(L, content) != LUA_OK) {
+        const char *error = lua_tostring(L, -1);
+        log_message("[Lua] PAK load error (%s): %s", lua_path, error);
+        lua_pop(L, 1);
+        free(content);
+        return 0;
+    }
+
+    free(content);
+    log_message("[Lua] Loaded from PAK: %s", lua_path);
+    return 1;
+}
 
 /**
  * Write to both syslog and our log file
@@ -187,8 +556,33 @@ static int check_mod_has_script_extender(const char *mod_name) {
         }
     }
 
-    // Location 4: Steam Workshop (will be expanded in Steam Workshop support task)
-    // For now, just a placeholder
+    // Location 4: PAK file in Mods folder
+    // Scan for PAK files that might contain this mod
+    if (home) {
+        char mods_dir[MAX_PATH_LEN];
+        snprintf(mods_dir, sizeof(mods_dir),
+                 "%s/Documents/Larian Studios/Baldur's Gate 3/Mods", home);
+
+        DIR *dir = opendir(mods_dir);
+        if (dir) {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                // Check if it's a PAK file
+                size_t name_len = strlen(entry->d_name);
+                if (name_len > 4 && strcasecmp(entry->d_name + name_len - 4, ".pak") == 0) {
+                    char pak_path[MAX_PATH_LEN];
+                    snprintf(pak_path, sizeof(pak_path), "%s/%s", mods_dir, entry->d_name);
+
+                    if (pak_has_script_extender(pak_path, mod_name)) {
+                        log_message("[SE] Found SE mod %s in PAK: %s", mod_name, pak_path);
+                        closedir(dir);
+                        return 1;
+                    }
+                }
+            }
+            closedir(dir);
+        }
+    }
 
     return 0;
 }
@@ -446,41 +840,71 @@ static int try_load_lua_file(lua_State *L, const char *full_path) {
  * Ext.Require(path) - Load and execute a Lua module
  * Paths are relative to the current mod's ScriptExtender/Lua/ folder
  * Modules are cached - subsequent calls return cached results
+ * Supports loading from both filesystem (extracted mods) and PAK files
  */
 static int lua_ext_require(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     log_message("[Lua] Ext.Require('%s')", path);
 
-    if (strlen(current_mod_lua_base) == 0) {
-        log_message("[Lua] Warning: Ext.Require called but no current mod base path set");
-        lua_pushnil(L);
-        return 1;
-    }
+    // Try filesystem first (for extracted mods)
+    if (strlen(current_mod_lua_base) > 0) {
+        // Build full path using the base path from where bootstrap was loaded
+        char full_path[MAX_PATH_LEN];
+        snprintf(full_path, sizeof(full_path), "%s/%s", current_mod_lua_base, path);
 
-    // Build full path using the base path from where bootstrap was loaded
-    char full_path[MAX_PATH_LEN];
-    snprintf(full_path, sizeof(full_path), "%s/%s", current_mod_lua_base, path);
-
-    // Check if already loaded
-    if (is_module_loaded(full_path)) {
-        log_message("[Lua] Module already loaded: %s", path);
-        lua_pushnil(L);
-        return 1;
-    }
-
-    // Try to load from the tracked base path
-    if (try_load_lua_file(L, full_path)) {
-        mark_module_loaded(full_path);
-        log_message("[Lua] Loaded module from: %s", full_path);
-        if (lua_gettop(L) == 0) {
+        // Check if already loaded
+        if (is_module_loaded(full_path)) {
+            log_message("[Lua] Module already loaded: %s", path);
             lua_pushnil(L);
+            return 1;
         }
-        return 1;
+
+        // Try to load from the tracked base path
+        if (try_load_lua_file(L, full_path)) {
+            mark_module_loaded(full_path);
+            log_message("[Lua] Loaded module from: %s", full_path);
+            if (lua_gettop(L) == 0) {
+                lua_pushnil(L);
+            }
+            return 1;
+        }
+    }
+
+    // Try PAK file (for non-extracted mods)
+    if (strlen(current_mod_pak_path) > 0 && strlen(current_mod_name) > 0) {
+        char pak_lua_path[MAX_PATH_LEN];
+        snprintf(pak_lua_path, sizeof(pak_lua_path),
+                 "Mods/%s/ScriptExtender/Lua/%s", current_mod_name, path);
+
+        // Check if already loaded (use PAK path as key)
+        char cache_key[MAX_PATH_LEN];
+        snprintf(cache_key, sizeof(cache_key), "pak:%s:%s", current_mod_pak_path, pak_lua_path);
+
+        if (is_module_loaded(cache_key)) {
+            log_message("[Lua] Module already loaded from PAK: %s", path);
+            lua_pushnil(L);
+            return 1;
+        }
+
+        if (load_lua_from_pak(L, current_mod_pak_path, pak_lua_path)) {
+            mark_module_loaded(cache_key);
+            log_message("[Lua] Loaded module from PAK: %s", pak_lua_path);
+            if (lua_gettop(L) == 0) {
+                lua_pushnil(L);
+            }
+            return 1;
+        }
     }
 
     // Module not found
     log_message("[Lua] Warning: Module not found: %s", path);
-    log_message("[Lua]   Tried: %s", full_path);
+    if (strlen(current_mod_lua_base) > 0) {
+        log_message("[Lua]   Tried filesystem: %s/%s", current_mod_lua_base, path);
+    }
+    if (strlen(current_mod_pak_path) > 0) {
+        log_message("[Lua]   Tried PAK: %s (Mods/%s/ScriptExtender/Lua/%s)",
+                    current_mod_pak_path, current_mod_name, path);
+    }
 
     lua_pushnil(L);
     return 1;
@@ -1178,6 +1602,31 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
             log_message("[Lua] Loaded %s %s", mod_name, bootstrap_file);
             return 1;
         }
+    }
+
+    // Try loading from PAK file in Mods folder
+    char pak_path[MAX_PATH_LEN];
+    if (find_mod_pak(mod_name, pak_path, sizeof(pak_path))) {
+        char pak_lua_path[MAX_PATH_LEN];
+        snprintf(pak_lua_path, sizeof(pak_lua_path),
+                 "Mods/%s/ScriptExtender/Lua/%s", mod_name, bootstrap_file);
+
+        log_message("[Lua] Trying to load %s from PAK: %s", bootstrap_file, pak_path);
+
+        // Store current PAK path for Ext.Require to use
+        strncpy(current_mod_pak_path, pak_path, sizeof(current_mod_pak_path) - 1);
+        current_mod_pak_path[sizeof(current_mod_pak_path) - 1] = '\0';
+
+        // Clear filesystem base path since we're loading from PAK
+        current_mod_lua_base[0] = '\0';
+
+        if (load_lua_from_pak(L, pak_path, pak_lua_path)) {
+            log_message("[Lua] Loaded %s %s from PAK", mod_name, bootstrap_file);
+            return 1;
+        }
+
+        // Clear PAK path on failure
+        current_mod_pak_path[0] = '\0';
     }
 
     // Clear mod name if not found
