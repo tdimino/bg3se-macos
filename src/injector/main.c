@@ -37,7 +37,7 @@ extern "C" {
 #endif
 
 // Version info
-#define BG3SE_VERSION "0.9.8"
+#define BG3SE_VERSION "0.9.5"
 #define BG3SE_NAME "BG3SE-macOS"
 
 // Log file for debugging
@@ -125,18 +125,6 @@ static void *g_COsiris = NULL;  // Captured from hook calls
 
 // Global pointer to OsiFunctionMan from libOsiris
 static void **g_pOsiFunctionMan = NULL;  // Points to the global _OsiFunctionMan
-
-// libOsiris base address for offset-based lookups
-static void *g_libOsirisBase = NULL;
-
-// ============================================================================
-// Ghidra-discovered offsets for libOsiris.dylib (ARM64)
-// These may need updating if the game version changes
-// ============================================================================
-#define OSIFUNCMAN_OFFSET       0x0009f348  // _OsiFunctionMan global variable
-#define PFUNCTIONDATA_OFFSET    0x0002a04c  // COsiFunctionMan::pFunctionData(uint32_t)
-#define COSIRIS_EVENT_OFFSET    0x000513cc  // COsiris::Event(uint, COsiArgumentDesc*)
-#define COSIRIS_INITGAME_OFFSET 0x000519b8  // COsiris::InitGame()
 
 // Captured player GUIDs from events (we learn these by observing)
 #define MAX_KNOWN_PLAYERS 8
@@ -2375,13 +2363,11 @@ static void fake_InitGame(void *thisPtr) {
         g_COsiris = thisPtr;
         log_message("  Captured COsiris instance: %p", g_COsiris);
 
-        // Get OsiFunctionMan from Ghidra-derived global pointer
-        // This is the CORRECT way to get it - not from COsiris offset
-        if (!g_OsiFunctionMan && g_pOsiFunctionMan && *g_pOsiFunctionMan) {
-            g_OsiFunctionMan = *g_pOsiFunctionMan;
-            log_message("  Captured OsiFunctionMan from global: %p", g_OsiFunctionMan);
-        } else if (!g_OsiFunctionMan) {
-            log_message("  WARNING: OsiFunctionMan global not yet initialized");
+        // Try to find function manager - it may be at a fixed offset in COsiris
+        // or it may be the same object (COsiris might inherit from COsiFunctionMan)
+        if (!g_OsiFunctionMan) {
+            g_OsiFunctionMan = thisPtr;  // Try using COsiris directly first
+            log_message("  Using COsiris as function manager: %p", g_OsiFunctionMan);
         }
     }
 
@@ -2392,22 +2378,11 @@ static void fake_InitGame(void *thisPtr) {
 
     log_message(">>> COsiris::InitGame returned");
 
-    // Check again after InitGame returns - the global should be set now
-    if (!g_OsiFunctionMan && g_pOsiFunctionMan && *g_pOsiFunctionMan) {
-        g_OsiFunctionMan = *g_pOsiFunctionMan;
-        log_message("  OsiFunctionMan now available after InitGame: %p", g_OsiFunctionMan);
-    }
-
     // Enumerate Osiris functions after initialization (only once)
-    // Now using Ghidra-derived OsiFunctionMan offset
     static int functions_enumerated = 0;
-    if (!functions_enumerated && g_OsiFunctionMan && pfn_pFunctionData) {
+    if (!functions_enumerated && g_pOsiFunctionMan && *g_pOsiFunctionMan) {
         functions_enumerated = 1;
-        log_message("[FuncEnum] Starting enumeration with OsiFunctionMan: %p", g_OsiFunctionMan);
         enumerate_osiris_functions();
-    } else if (!functions_enumerated) {
-        log_message("[FuncEnum] Cannot enumerate - OsiFunctionMan=%p, pFunctionData=%p",
-                    g_OsiFunctionMan, (void*)pfn_pFunctionData);
     }
 
     // Notify Lua that Osiris is initialized
@@ -2621,15 +2596,16 @@ static void track_seen_func_id(uint32_t funcId, uint8_t arity) {
 
 /**
  * Try to get function definition and cache it
- * Uses the captured COsiris/OsiFunctionMan instance
+ * Uses the global OsiFunctionMan if available
  */
 static int try_cache_function_by_id(uint32_t funcId) {
     // Need both the function pointer and the manager instance
-    if (!pfn_pFunctionData || !g_OsiFunctionMan) {
+    if (!pfn_pFunctionData || !g_pOsiFunctionMan || !*g_pOsiFunctionMan) {
         return 0;
     }
 
-    void *funcDef = pfn_pFunctionData(g_OsiFunctionMan, funcId);
+    void *funcMan = *g_pOsiFunctionMan;
+    void *funcDef = pfn_pFunctionData(funcMan, funcId);
 
     if (funcDef) {
         const char *name = extract_func_name_from_def(funcDef);
@@ -2652,7 +2628,7 @@ static int try_cache_function_by_id(uint32_t funcId) {
  * Called once during initialization to build the function cache
  */
 static void enumerate_osiris_functions(void) {
-    if (!pfn_pFunctionData || !g_OsiFunctionMan) {
+    if (!pfn_pFunctionData || !g_pOsiFunctionMan || !*g_pOsiFunctionMan) {
         log_message("[FuncEnum] Cannot enumerate - pFunctionData or OsiFunctionMan not available");
         return;
     }
@@ -3085,13 +3061,8 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     // Capture COsiris pointer if we haven't already
     if (!g_COsiris && thisPtr) {
         g_COsiris = thisPtr;
+        g_OsiFunctionMan = thisPtr;  // Try using COsiris as function manager
         log_message(">>> Captured COsiris from Event: %p", g_COsiris);
-
-        // Try to get OsiFunctionMan from global pointer (Ghidra-derived offset)
-        if (!g_OsiFunctionMan && g_pOsiFunctionMan && *g_pOsiFunctionMan) {
-            g_OsiFunctionMan = *g_pOsiFunctionMan;
-            log_message(">>> Captured OsiFunctionMan from global: %p", g_OsiFunctionMan);
-        }
     }
 
     // Get function name if available (may trigger cache lookup)
@@ -3328,30 +3299,21 @@ static void install_hooks(void) {
         log_message("  WARNING: InternalCall not found");
     }
 
-    // pFunctionData - compute from base + offset (Ghidra-derived)
-    if (g_libOsirisBase) {
-        pfn_pFunctionData = (pFunctionDataFn)((char *)g_libOsirisBase + PFUNCTIONDATA_OFFSET);
-        log_message("  pFunctionData computed from offset: %p", (void*)pfn_pFunctionData);
-    } else {
-        // Fallback to dlsym if base not captured (shouldn't happen)
-        pfn_pFunctionData = (pFunctionDataFn)dlsym(osiris, "_ZN15COsiFunctionMan13pFunctionDataEj");
-    }
+    // pFunctionData - direct dlsym only (no pattern yet)
+    pfn_pFunctionData = (pFunctionDataFn)dlsym(osiris, "_ZN15COsiFunctionMan13pFunctionDataEj");
 
-    // Note: g_pOsiFunctionMan is now computed in image_added_callback using
-    // Ghidra-derived offset (OSIFUNCMAN_OFFSET). dlsym won't work since the
-    // symbol is not exported.
+    // Get the global OsiFunctionMan pointer
+    g_pOsiFunctionMan = (void **)dlsym(osiris, "_OsiFunctionMan");
 
     log_message("Osiris function pointers:");
     log_message("  InternalQuery: %p%s", (void*)pfn_InternalQuery,
                 pfn_InternalQuery ? "" : " (NOT FOUND)");
     log_message("  InternalCall: %p%s", (void*)pfn_InternalCall,
                 pfn_InternalCall ? "" : " (NOT FOUND)");
-    log_message("  pFunctionData: %p (offset-based)", (void*)pfn_pFunctionData);
-    log_message("  OsiFunctionMan global: %p (offset-based)", (void*)g_pOsiFunctionMan);
-    if (g_pOsiFunctionMan && *g_pOsiFunctionMan) {
+    log_message("  pFunctionData: %p", (void*)pfn_pFunctionData);
+    log_message("  OsiFunctionMan global: %p", (void*)g_pOsiFunctionMan);
+    if (g_pOsiFunctionMan) {
         log_message("  OsiFunctionMan instance: %p", *g_pOsiFunctionMan);
-    } else {
-        log_message("  WARNING: OsiFunctionMan instance not yet initialized");
     }
 
     int hook_count = 0;
@@ -3466,27 +3428,6 @@ static void image_added_callback(const struct mach_header *mh, intptr_t slide) {
             const char *name = _dyld_get_image_name(i);
             if (name && strstr(name, "libOsiris")) {
                 log_message(">>> libOsiris.dylib loaded dynamically! Slide: 0x%lx", (long)slide);
-
-                // Store the base address for offset-based lookups
-                // The mach_header pointer IS the base address of the loaded image
-                g_libOsirisBase = (void *)mh;
-                log_message(">>> libOsiris base address: %p", g_libOsirisBase);
-
-                // Compute OsiFunctionMan address using Ghidra-discovered offset
-                // The offset points to a global pointer variable that holds the instance pointer
-                void **funcman_ptr_location = (void **)((char *)g_libOsirisBase + OSIFUNCMAN_OFFSET);
-                log_message(">>> OsiFunctionMan pointer location: %p", (void *)funcman_ptr_location);
-                g_pOsiFunctionMan = funcman_ptr_location;
-
-                // The actual instance may not be initialized yet at load time
-                // It gets set during game initialization, so check if it's valid
-                if (*g_pOsiFunctionMan) {
-                    g_OsiFunctionMan = *g_pOsiFunctionMan;
-                    log_message(">>> OsiFunctionMan instance: %p", g_OsiFunctionMan);
-                } else {
-                    log_message(">>> OsiFunctionMan instance: NULL (will be set during InitGame)");
-                }
-
                 check_osiris_library();
                 // Install hooks when Osiris loads
                 install_hooks();
