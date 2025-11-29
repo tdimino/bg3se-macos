@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "macos-automator": {
+      "command": "npx",
+      "args": ["-y", "@steipete/macos-automator-mcp@latest"]
+    },
+    "peekaboo": {
+      "command": "npx",
+      "args": ["-y", "@steipete/peekaboo-mcp@beta"]
+    }
+  }
+}

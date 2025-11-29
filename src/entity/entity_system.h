@@ -69,16 +69,23 @@ void guid_to_string(const Guid *guid, char *out);
 // ============================================================================
 
 // Component type indices (discovered from ARM64 binary)
+// Note: Only components with discovered GetComponent addresses are fully implemented
 typedef enum {
-    COMPONENT_TRANSFORM = 0,     // ls::TransformComponent
+    // Implemented - have GetComponent function addresses
+    COMPONENT_TRANSFORM = 0,     // ls::TransformComponent - 0x10010d5b00
+    COMPONENT_LEVEL,             // ls::LevelComponent - 0x10010d588c
+    COMPONENT_PHYSICS,           // ls::PhysicsComponent - 0x101ba0898
+    COMPONENT_VISUAL,            // ls::VisualComponent - 0x102e56350
+
+    // Not yet implemented - need to find GetComponent addresses via Ghidra
     COMPONENT_STATS,             // eoc::StatsComponent
     COMPONENT_BASE_HP,           // eoc::BaseHpComponent
     COMPONENT_HEALTH,            // eoc::HealthComponent
     COMPONENT_ARMOR,             // eoc::ArmorComponent
-    COMPONENT_LEVEL,             // eoc::LevelComponent
     COMPONENT_CLASSES,           // eoc::ClassesComponent
     COMPONENT_RACE,              // eoc::RaceComponent
     COMPONENT_PLAYER,            // eoc::PlayerComponent
+
     COMPONENT_COUNT
 } ComponentType;
 

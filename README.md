@@ -23,8 +23,9 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Osi.* Functions | ✅ Partial | Key functions return real data (see below) |
 | Ghidra RE Analysis | ✅ Complete | Headless analysis for offset discovery |
 | Function Enumeration | 🔄 Testing | OsiFunctionMan offset-based lookup |
+| Entity System | ✅ Complete | EntityWorld capture, GUID lookup, component access |
 
-### Verified Working (Nov 28, 2025)
+### Verified Working (Nov 29, 2025)
 
 - ✅ Steam launch with injection via wrapper script
 - ✅ Universal binary (ARM64 native + x86_64 Rosetta)
@@ -48,6 +49,10 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **Real player GUIDs discovered from events (6 party members)**
 - ✅ **Dialog tracking from AutomatedDialogStarted/Ended events**
 - ✅ **MRC mod receiving real game data and identifying dialog participants**
+- ✅ **Entity system hooks capturing EntityWorld pointer**
+- ✅ **GUID to EntityHandle lookup via HashMap (reverse-engineered)**
+- ✅ **Component accessors for Transform, Level, Physics, Visual**
+- ✅ **Ext.Entity Lua API registered and functional**
 
 ## Requirements
 
@@ -203,6 +208,12 @@ When hooking C++ member functions, the return value must be captured and returne
 | `Ext.Json.Parse(json)` | ✅ Working | Parse JSON to Lua table |
 | `Ext.Json.Stringify(table)` | ✅ Working | Convert Lua table to JSON |
 | `Ext.Osiris.RegisterListener(event, arity, timing, callback)` | ✅ Working | Register Osiris event callback |
+| `Ext.Entity.Get(guid)` | ✅ Working | Look up entity by GUID string |
+| `Ext.Entity.IsReady()` | ✅ Working | Check if entity system ready |
+| `entity.Transform` | ✅ Working | Get transform component (Position, Rotation, Scale) |
+| `entity:GetComponent(name)` | ✅ Working | Get component by name |
+| `entity:IsAlive()` | ✅ Working | Check if entity is valid |
+| `entity:GetHandle()` | ✅ Working | Get raw EntityHandle value |
 
 ### Global Functions
 
@@ -231,30 +242,32 @@ Key Osiris functions now return real game data. Player GUIDs and dialog state ar
 ```
 bg3se-macos/
 ├── src/
-│   └── injector/
-│       └── main.c              # Entry point, hooks, Lua runtime & Ext API
+│   ├── core/                   # Logging, version info
+│   ├── entity/                 # Entity Component System
+│   ├── injector/               # Main injection logic
+│   ├── lua/                    # Lua API modules
+│   ├── mod/                    # Mod detection and loading
+│   ├── osiris/                 # Osiris types and functions
+│   └── pak/                    # PAK file reading
 ├── lib/
 │   ├── fishhook/               # Symbol rebinding (for imported symbols)
 │   ├── Dobby/                  # Inline hooking (for internal functions)
 │   ├── lz4/                    # LZ4 decompression (for PAK file reading)
 │   └── lua/                    # Lua 5.4 source and build scripts
-│       ├── src/                # Lua 5.4.7 source code
-│       └── build_universal.sh  # Builds universal static library
 ├── ghidra/                     # Reverse engineering analysis
-│   ├── find_osiris_offsets.py  # Ghidra script for symbol discovery
-│   ├── analyze_funcdef_struct.py # Ghidra script for struct analysis
-│   ├── ghidra_analysis.log     # Analysis output (offsets discovered)
-│   └── OFFSETS.md              # Documentation of key offsets
+│   ├── scripts/                # Ghidra Python scripts
+│   ├── OFFSETS.md              # Osiris offset documentation
+│   └── ENTITY_OFFSETS.md       # Entity system offset documentation
 ├── scripts/
 │   ├── build.sh                # Build script (universal binary)
-│   ├── bg3-wrapper.sh.example  # Example Steam wrapper
-│   ├── launch_bg3.sh.example   # Example direct launcher
-│   └── launch_via_steam.sh.example  # Example Steam setup helper
+│   └── *.example               # Example wrapper scripts
 ├── tools/
+│   ├── automation/             # Claude Code MCP configs & skills
 │   └── extract_pak.py          # BG3 PAK file extractor (Python)
 ├── build/
 │   └── lib/
 │       └── libbg3se.dylib      # Built dylib (universal: arm64 + x86_64)
+├── CLAUDE.md                   # Development guide for Claude Code
 └── README.md
 ```
 
@@ -315,6 +328,21 @@ This mod redirects ambient party dialogue to random nearby companions instead of
 
 ## Tools
 
+### Automated Testing (Claude Code)
+
+The `tools/automation/` folder contains MCP server configs and a Claude Code skill for automated BG3 testing:
+
+```bash
+# Install MCP servers
+claude mcp add macos-automator -- npx -y @steipete/macos-automator-mcp@latest
+claude mcp add peekaboo -- npx -y @steipete/peekaboo-mcp@beta
+
+# Copy skill
+cp -r tools/automation/skills/bg3-steam-launcher ~/.claude/skills/
+```
+
+Then use `skill: "bg3-steam-launcher"` in Claude Code to automate launching BG3, loading saves, and checking SE logs.
+
 ### PAK Extractor
 
 A Python tool to extract BG3 mod `.pak` files (LSPK v18 format):
@@ -333,13 +361,13 @@ This is useful for examining mod structure and Lua scripts. Note: BG3SE-macOS no
 
 ### Next Steps
 
-1. **Dynamic Osi.* Metatable** - Lazy function lookup like Windows (`Osi.AnyFunction()` resolves at call time)
-2. **Entity/Component System** - Access game entities via `Ext.Entity.Get()`
-3. **Stats System** - Read/write game stats via `Ext.Stats`
-4. **Full MRC Testing** - Verify visible companion behavior changes in-game
+1. **Stats System** - Read/write game stats via `Ext.Stats`
+2. **Full MRC Testing** - Verify visible companion behavior changes in-game
+3. **Additional Components** - Stats, BaseHp, Armor component accessors
 
 ### Completed
 
+- ✅ Entity/Component System - EntityWorld capture, GUID lookup, Ext.Entity API (v0.10.0)
 - ✅ Ghidra headless RE analysis - discovered OsiFunctionMan offset (v0.9.8)
 - ✅ Offset-based symbol resolution for unexported symbols (v0.9.8)
 - ✅ Function enumeration via pFunctionData (v0.9.8)

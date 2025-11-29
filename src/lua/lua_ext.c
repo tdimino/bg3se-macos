@@ -112,6 +112,11 @@ int lua_ext_io_savefile(lua_State *L) {
 // ============================================================================
 
 void lua_ext_register_basic(lua_State *L, int ext_table_index) {
+    // Convert negative index to absolute since we'll be pushing onto stack
+    if (ext_table_index < 0) {
+        ext_table_index = lua_gettop(L) + ext_table_index + 1;
+    }
+
     lua_pushcfunction(L, lua_ext_print);
     lua_setfield(L, ext_table_index, "Print");
 
@@ -126,6 +131,11 @@ void lua_ext_register_basic(lua_State *L, int ext_table_index) {
 }
 
 void lua_ext_register_io(lua_State *L, int ext_table_index) {
+    // Convert negative index to absolute since we'll be pushing onto stack
+    if (ext_table_index < 0) {
+        ext_table_index = lua_gettop(L) + ext_table_index + 1;
+    }
+
     // Create Ext.IO table
     lua_newtable(L);
     lua_pushcfunction(L, lua_ext_io_loadfile);

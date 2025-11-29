@@ -156,6 +156,25 @@ From Windows BG3SE (`BinaryMappings.xml`):
    - `EoCServer/Server/GameServer.cpp`
    - `EoCClient/Client/GameClient.cpp`
 
+#### Singleton Access Functions
+
+Found `TryGetSingleton` template instantiations for accessing singleton components:
+
+| Singleton Component | TryGetSingleton Address | Notes |
+|--------------------|------------------------|-------|
+| `ls::uuid::ToHandleMappingComponent` | `0x1010dc924` | **CRITICAL** - GUID to EntityHandle mapping |
+| `esv::uuid::HistoryMappingComponent` | `0x102ae6074` | Server-side history mapping |
+
+**Signature**: `ls::Result<ComponentPtr, ls::Error<>> TryGetSingleton(ecs::EntityWorld&)`
+
+#### GUID to EntityHandle Lookup
+
+The `UuidToHandleMappingComponent` singleton contains a `HashMap<Guid, EntityHandle>` at offset 0x0.
+To look up an entity by GUID:
+1. Call `TryGetSingleton<UuidToHandleMappingComponent>(entityWorld)` at `0x1010dc924`
+2. Access the `Mappings` hash map field
+3. Call `try_get(guid)` to find the EntityHandle
+
 #### Next: Finding Singletons at Runtime
 
 Since global singletons aren't exported, we have two options:
@@ -254,14 +273,55 @@ bool hook_LEGACY_IsInCombat(uint64_t handle, void *entityWorld) {
 
 ### Step 2: GUID to EntityHandle Lookup
 
-Use `ls::uuid::ToHandleMappingComponent` to map GUIDs to handles:
+Use `ls::uuid::ToHandleMappingComponent` to map GUIDs to handles.
+
+#### HashMap<Guid, EntityHandle> Memory Layout
+
+From Windows BG3SE reference (`CoreLib/Base/BaseMap.h`):
+
+```
+HashMap<Guid, EntityHandle> (64 bytes total):
+├── offset 0x00: StaticArray<int32_t> HashKeys (16 bytes)
+│   ├── buf_: int32_t* (bucket table)
+│   └── size_: uint32_t (number of buckets)
+├── offset 0x10: Array<int32_t> NextIds (16 bytes)
+│   ├── buf_: int32_t* (collision chain)
+│   ├── capacity_: uint32_t
+│   └── size_: uint32_t
+├── offset 0x20: Array<Guid> Keys (16 bytes)
+│   ├── buf_: Guid* (key storage)
+│   ├── capacity_: uint32_t
+│   └── size_: uint32_t (number of entries)
+└── offset 0x30: UninitializedStaticArray<EntityHandle> Values (16 bytes)
+    ├── buf_: EntityHandle*
+    └── size_: uint32_t
+```
+
+#### GUID Hashing
 
 ```c
-// Lookup entity by GUID string
-EntityHandle get_entity_by_guid(const char *guid_str) {
-    // Parse GUID string to binary format
-    // Query ToHandleMappingComponent in EntityWorld
-    // Return EntityHandle or invalid handle
+// Hash function from Windows BG3SE
+uint64_t hash_guid(Guid const& g) {
+    return g.Val[0] ^ g.Val[1];  // XOR of two 64-bit halves
+}
+```
+
+#### Lookup Algorithm (Implemented)
+
+```c
+EntityHandle hashmap_lookup(HashMapGuidEntityHandle *map, Guid *guid) {
+    uint64_t hash = guid->lo ^ guid->hi;
+    uint32_t bucket = hash % map->HashKeys.size;
+    int32_t keyIndex = map->HashKeys.buf[bucket];
+
+    while (keyIndex >= 0) {
+        if (map->Keys.buf[keyIndex].lo == guid->lo &&
+            map->Keys.buf[keyIndex].hi == guid->hi) {
+            return map->Values.buf[keyIndex];  // Found!
+        }
+        keyIndex = map->NextIds.buf[keyIndex];  // Follow chain
+    }
+    return ENTITY_HANDLE_INVALID;  // Not found
 }
 ```
 

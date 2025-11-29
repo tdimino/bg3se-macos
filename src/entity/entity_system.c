@@ -66,8 +66,100 @@ static int g_GuidCacheCount = 0;
 // eoc::CombatHelpers::LEGACY_GetCombatFromGuid(Guid&, EntityWorld&)
 #define OFFSET_LEGACY_GET_COMBAT_FROM_GUID 0x101250074
 
-// ecs::EntityWorld::GetComponent<ls::TransformComponent>
+// ecs::legacy::Helper::TryGetSingleton<ls::uuid::ToHandleMappingComponent>(EntityWorld&)
+// This function returns the singleton containing GUID->EntityHandle mappings
+#define OFFSET_TRY_GET_UUID_MAPPING_SINGLETON 0x1010dc924
+
+// ecs::EntityWorld::GetComponent<T> template instances
+// These are direct function addresses from Ghidra analysis
 #define OFFSET_GET_TRANSFORM_COMPONENT 0x10010d5b00
+#define OFFSET_GET_LEVEL_COMPONENT     0x10010d588c
+#define OFFSET_GET_PHYSICS_COMPONENT   0x101ba0898
+#define OFFSET_GET_VISUAL_COMPONENT    0x102e56350
+
+// Ghidra base address (macOS ARM64)
+#define GHIDRA_BASE_ADDRESS 0x100000000
+
+// ============================================================================
+// Component Accessor Function Types
+// ============================================================================
+
+// GetComponent signature: void* GetComponent(EntityWorld*, EntityHandle)
+typedef void* (*GetComponentFn)(void *entityWorld, uint64_t handle);
+
+// Function pointers for each component type (initialized in entity_system_init)
+static GetComponentFn g_GetTransformComponent = NULL;
+static GetComponentFn g_GetLevelComponent = NULL;
+static GetComponentFn g_GetPhysicsComponent = NULL;
+static GetComponentFn g_GetVisualComponent = NULL;
+
+// ============================================================================
+// HashMap Memory Layout (from Windows BG3SE reference)
+// ============================================================================
+
+// StaticArray<T> layout (16 bytes on 64-bit):
+//   offset 0x00: T* buf_ (8 bytes)
+//   offset 0x08: uint32_t size_ (4 bytes)
+//   offset 0x0C: padding (4 bytes)
+
+// Array<T> layout (16 bytes on 64-bit):
+//   offset 0x00: T* buf_ (8 bytes)
+//   offset 0x08: uint32_t capacity_ (4 bytes)
+//   offset 0x0C: uint32_t size_ (4 bytes)
+
+// HashMap<Guid, EntityHandle> layout (64 bytes total):
+//   offset 0x00: StaticArray<int32_t> HashKeys   (bucket table)
+//   offset 0x10: Array<int32_t> NextIds          (collision chain)
+//   offset 0x20: Array<Guid> Keys                (key storage)
+//   offset 0x30: UninitializedStaticArray<EntityHandle> Values
+
+typedef struct {
+    int32_t *buf;
+    uint32_t size;
+    uint32_t _pad;
+} StaticArrayInt32;
+
+typedef struct {
+    int32_t *buf;
+    uint32_t capacity;
+    uint32_t size;
+} ArrayInt32;
+
+typedef struct {
+    Guid *buf;
+    uint32_t capacity;
+    uint32_t size;
+} ArrayGuid;
+
+typedef struct {
+    EntityHandle *buf;
+    uint32_t size;
+    uint32_t _pad;
+} StaticArrayEntityHandle;
+
+// HashMap<Guid, EntityHandle> structure
+typedef struct {
+    StaticArrayInt32 HashKeys;         // offset 0x00
+    ArrayInt32 NextIds;                // offset 0x10
+    ArrayGuid Keys;                    // offset 0x20
+    StaticArrayEntityHandle Values;    // offset 0x30
+} HashMapGuidEntityHandle;
+
+// UuidToHandleMappingComponent contains HashMap<Guid, EntityHandle> Mappings
+// The Mappings field is at offset 0 (first field after vtable if any)
+// Note: May need adjustment if there's a vtable pointer
+typedef struct {
+    HashMapGuidEntityHandle Mappings;
+} UuidToHandleMappingComponent;
+
+// TryGetSingleton returns a ls::Result<ComponentPtr, ls::Error>
+// In practice, this appears to return the component pointer directly
+// or NULL on failure (based on ARM64 calling convention)
+typedef void* (*TryGetSingletonFn)(void *entityWorld);
+static TryGetSingletonFn g_TryGetUuidMappingSingleton = NULL;
+
+// Cached pointer to the UUID mapping component
+static void *g_UuidMappingComponent = NULL;
 
 // ============================================================================
 // Original Function Pointers
@@ -159,10 +251,81 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
         }
     }
 
-    // TODO: Implement actual GUID lookup via ToHandleMappingComponent
-    // For now, return invalid - will implement once we have EntityWorld access
+    // Try to get UUID mapping singleton if not cached
+    if (!g_UuidMappingComponent && g_TryGetUuidMappingSingleton && g_EntityWorld) {
+        // Attempt to get the singleton component
+        // Note: TryGetSingleton returns ls::Result which may need unpacking
+        g_UuidMappingComponent = g_TryGetUuidMappingSingleton(g_EntityWorld);
+        if (g_UuidMappingComponent) {
+            log_entity("Got UuidToHandleMappingComponent: %p", g_UuidMappingComponent);
+        } else {
+            log_entity("Failed to get UuidToHandleMappingComponent");
+        }
+    }
 
-    log_entity("GUID lookup not yet implemented: %s", guid_str);
+    if (g_UuidMappingComponent) {
+        // Parse the GUID
+        Guid guid;
+        if (!guid_parse(guid_str, &guid)) {
+            log_entity("Failed to parse GUID: %s", guid_str);
+            return ENTITY_HANDLE_INVALID;
+        }
+
+        // Cast to our structure
+        UuidToHandleMappingComponent *mapping = (UuidToHandleMappingComponent*)g_UuidMappingComponent;
+        HashMapGuidEntityHandle *hashmap = &mapping->Mappings;
+
+        // Validate HashMap structure
+        if (!hashmap->HashKeys.buf || hashmap->HashKeys.size == 0) {
+            log_entity("HashMap not initialized (HashKeys.buf=%p, size=%u)",
+                       (void*)hashmap->HashKeys.buf, hashmap->HashKeys.size);
+            return ENTITY_HANDLE_INVALID;
+        }
+
+        // Hash the GUID: hash = lo ^ hi
+        uint64_t hash = guid.lo ^ guid.hi;
+        uint32_t bucket = (uint32_t)(hash % hashmap->HashKeys.size);
+
+        // Look up in hash table
+        int32_t keyIndex = hashmap->HashKeys.buf[bucket];
+
+        while (keyIndex >= 0) {
+            // Bounds check
+            if ((uint32_t)keyIndex >= hashmap->Keys.size) {
+                log_entity("HashMap corruption: keyIndex %d >= Keys.size %u",
+                           keyIndex, hashmap->Keys.size);
+                break;
+            }
+
+            // Compare GUID
+            Guid *key = &hashmap->Keys.buf[keyIndex];
+            if (key->lo == guid.lo && key->hi == guid.hi) {
+                // Found it!
+                EntityHandle handle = hashmap->Values.buf[keyIndex];
+
+                // Cache for future lookups
+                if (g_GuidCacheCount < GUID_CACHE_SIZE) {
+                    strncpy(g_GuidCache[g_GuidCacheCount].guid, guid_str, 63);
+                    g_GuidCache[g_GuidCacheCount].guid[63] = '\0';
+                    g_GuidCache[g_GuidCacheCount].handle = handle;
+                    g_GuidCacheCount++;
+                }
+
+                log_entity("GUID lookup success: %s -> 0x%llx", guid_str, (unsigned long long)handle);
+                return handle;
+            }
+
+            // Follow collision chain
+            if ((uint32_t)keyIndex >= hashmap->NextIds.size) {
+                log_entity("HashMap corruption: NextIds index out of bounds");
+                break;
+            }
+            keyIndex = hashmap->NextIds.buf[keyIndex];
+        }
+
+        log_entity("GUID not found in mapping: %s", guid_str);
+    }
+
     return ENTITY_HANDLE_INVALID;
 }
 
@@ -176,16 +339,59 @@ bool entity_is_alive(EntityHandle handle) {
 }
 
 void* entity_get_component(EntityHandle handle, ComponentType type) {
-    (void)type;  // Suppress unused parameter warning until implemented
-
     if (!entity_is_valid(handle) || !g_EntityWorld) {
         return NULL;
     }
 
-    // TODO: Call GetComponent with proper type index
-    // This requires knowing the component type → function address mapping
+    void *component = NULL;
 
-    return NULL;
+    switch (type) {
+        case COMPONENT_TRANSFORM:
+            if (g_GetTransformComponent) {
+                component = g_GetTransformComponent(g_EntityWorld, handle);
+            }
+            break;
+
+        case COMPONENT_LEVEL:
+            if (g_GetLevelComponent) {
+                component = g_GetLevelComponent(g_EntityWorld, handle);
+            }
+            break;
+
+        case COMPONENT_PHYSICS:
+            if (g_GetPhysicsComponent) {
+                component = g_GetPhysicsComponent(g_EntityWorld, handle);
+            }
+            break;
+
+        case COMPONENT_VISUAL:
+            if (g_GetVisualComponent) {
+                component = g_GetVisualComponent(g_EntityWorld, handle);
+            }
+            break;
+
+        // Not yet implemented - need to find GetComponent addresses
+        case COMPONENT_STATS:
+        case COMPONENT_BASE_HP:
+        case COMPONENT_HEALTH:
+        case COMPONENT_ARMOR:
+        case COMPONENT_CLASSES:
+        case COMPONENT_RACE:
+        case COMPONENT_PLAYER:
+            log_entity("GetComponent for type %d not yet implemented", type);
+            break;
+
+        default:
+            log_entity("Unknown component type: %d", type);
+            break;
+    }
+
+    if (component) {
+        log_entity("Got component type %d for handle 0x%llx: %p",
+                   type, (unsigned long long)handle, component);
+    }
+
+    return component;
 }
 
 const char** entity_get_component_names(EntityHandle handle, int *count) {
@@ -238,6 +444,20 @@ int entity_system_init(void *main_binary_base) {
     }
 
     log_entity("Hook installed successfully");
+
+    // Set up function pointers for component accessors and singleton getters
+    // These don't need hooks - we just need to know where to call
+    g_TryGetUuidMappingSingleton = (TryGetSingletonFn)(OFFSET_TRY_GET_UUID_MAPPING_SINGLETON - ghidra_base + actual_base);
+    g_GetTransformComponent = (GetComponentFn)(OFFSET_GET_TRANSFORM_COMPONENT - ghidra_base + actual_base);
+    g_GetLevelComponent = (GetComponentFn)(OFFSET_GET_LEVEL_COMPONENT - ghidra_base + actual_base);
+    g_GetPhysicsComponent = (GetComponentFn)(OFFSET_GET_PHYSICS_COMPONENT - ghidra_base + actual_base);
+    g_GetVisualComponent = (GetComponentFn)(OFFSET_GET_VISUAL_COMPONENT - ghidra_base + actual_base);
+
+    log_entity("Function pointers initialized:");
+    log_entity("  TryGetUuidMappingSingleton: %p", (void*)g_TryGetUuidMappingSingleton);
+    log_entity("  GetTransformComponent: %p", (void*)g_GetTransformComponent);
+    log_entity("  GetLevelComponent: %p", (void*)g_GetLevelComponent);
+
     g_Initialized = true;
 
     return 0;
@@ -309,10 +529,104 @@ static int lua_entity_get_handle(lua_State *L) {
     return 1;
 }
 
+// Helper: Push TransformComponent as Lua table
+static void push_transform_component(lua_State *L, void *component) {
+    TransformComponent *transform = (TransformComponent*)component;
+
+    lua_newtable(L);
+
+    // Position subtable
+    lua_newtable(L);
+    lua_pushnumber(L, transform->position[0]);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, transform->position[1]);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, transform->position[2]);
+    lua_setfield(L, -2, "z");
+    lua_setfield(L, -2, "Position");
+
+    // Rotation subtable (quaternion)
+    lua_newtable(L);
+    lua_pushnumber(L, transform->rotation[0]);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, transform->rotation[1]);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, transform->rotation[2]);
+    lua_setfield(L, -2, "z");
+    lua_pushnumber(L, transform->rotation[3]);
+    lua_setfield(L, -2, "w");
+    lua_setfield(L, -2, "Rotation");
+
+    // Scale subtable
+    lua_newtable(L);
+    lua_pushnumber(L, transform->scale[0]);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, transform->scale[1]);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, transform->scale[2]);
+    lua_setfield(L, -2, "z");
+    lua_setfield(L, -2, "Scale");
+}
+
+// Entity:GetComponent(name) method
+static int lua_entity_get_component(lua_State *L) {
+    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
+    const char *name = luaL_checkstring(L, 2);
+
+    ComponentType type;
+    bool found = true;
+
+    // Map component name to type
+    if (strcmp(name, "Transform") == 0) {
+        type = COMPONENT_TRANSFORM;
+    } else if (strcmp(name, "Level") == 0) {
+        type = COMPONENT_LEVEL;
+    } else if (strcmp(name, "Physics") == 0) {
+        type = COMPONENT_PHYSICS;
+    } else if (strcmp(name, "Visual") == 0) {
+        type = COMPONENT_VISUAL;
+    } else if (strcmp(name, "Stats") == 0) {
+        type = COMPONENT_STATS;
+    } else if (strcmp(name, "BaseHp") == 0) {
+        type = COMPONENT_BASE_HP;
+    } else if (strcmp(name, "Health") == 0) {
+        type = COMPONENT_HEALTH;
+    } else if (strcmp(name, "Armor") == 0) {
+        type = COMPONENT_ARMOR;
+    } else {
+        found = false;
+    }
+
+    if (!found) {
+        lua_pushnil(L);
+        lua_pushfstring(L, "Unknown component: %s", name);
+        return 2;
+    }
+
+    void *component = entity_get_component(*ud, type);
+    if (!component) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Convert component to Lua table based on type
+    switch (type) {
+        case COMPONENT_TRANSFORM:
+            push_transform_component(L, component);
+            break;
+
+        // For components without full struct definitions, return light userdata
+        default:
+            lua_pushlightuserdata(L, component);
+            break;
+    }
+
+    return 1;
+}
+
 // Entity metatable __index
 static int lua_entity_index(lua_State *L) {
-    // Validate this is a BG3Entity userdata (will throw if not)
-    (void)luaL_checkudata(L, 1, "BG3Entity");
+    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
     const char *key = luaL_checkstring(L, 2);
 
     // Check for methods first
@@ -324,9 +638,53 @@ static int lua_entity_index(lua_State *L) {
         lua_pushcfunction(L, lua_entity_get_handle);
         return 1;
     }
+    if (strcmp(key, "GetComponent") == 0) {
+        lua_pushcfunction(L, lua_entity_get_component);
+        return 1;
+    }
 
-    // TODO: Try to get component by name
-    // e.g., entity.Stats, entity.Transform, etc.
+    // Try to get component directly by name (e.g., entity.Transform)
+    ComponentType type;
+    bool is_component = true;
+
+    if (strcmp(key, "Transform") == 0) {
+        type = COMPONENT_TRANSFORM;
+    } else if (strcmp(key, "Level") == 0) {
+        type = COMPONENT_LEVEL;
+    } else if (strcmp(key, "Physics") == 0) {
+        type = COMPONENT_PHYSICS;
+    } else if (strcmp(key, "Visual") == 0) {
+        type = COMPONENT_VISUAL;
+    } else if (strcmp(key, "Stats") == 0) {
+        type = COMPONENT_STATS;
+    } else if (strcmp(key, "BaseHp") == 0) {
+        type = COMPONENT_BASE_HP;
+    } else if (strcmp(key, "Health") == 0) {
+        type = COMPONENT_HEALTH;
+    } else if (strcmp(key, "Armor") == 0) {
+        type = COMPONENT_ARMOR;
+    } else {
+        is_component = false;
+    }
+
+    if (is_component) {
+        void *component = entity_get_component(*ud, type);
+        if (!component) {
+            lua_pushnil(L);
+            return 1;
+        }
+
+        // Convert component to Lua based on type
+        switch (type) {
+            case COMPONENT_TRANSFORM:
+                push_transform_component(L, component);
+                break;
+            default:
+                lua_pushlightuserdata(L, component);
+                break;
+        }
+        return 1;
+    }
 
     lua_pushnil(L);
     return 1;

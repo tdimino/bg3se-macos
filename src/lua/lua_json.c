@@ -279,6 +279,11 @@ int lua_ext_json_stringify(lua_State *L) {
 // ============================================================================
 
 void lua_json_register(lua_State *L, int ext_table_index) {
+    // Convert negative index to absolute since we'll be pushing onto stack
+    if (ext_table_index < 0) {
+        ext_table_index = lua_gettop(L) + ext_table_index + 1;
+    }
+
     // Create Ext.Json table
     lua_newtable(L);
     lua_pushcfunction(L, lua_ext_json_parse);
