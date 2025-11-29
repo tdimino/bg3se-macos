@@ -1,0 +1,199 @@
+openjdk version "21.0.9" 2025-10-21
+OpenJDK Runtime Environment Homebrew (build 21.0.9)
+OpenJDK 64-Bit Server VM Homebrew (build 21.0.9, mixed mode)
+INFO  Using log config file: jar:file:/Users/tomdimino/ghidra/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /Users/tomdimino/Library/ghidra/ghidra_11.2.1_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /Users/tomdimino/Library/ghidra/ghidra_11.2.1_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (583 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (SSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (ApplicationTrustManagerFactory)  
+INFO  Headless startup complete (1032 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 57 extension points (18 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /Users/tomdimino/ghidra/Ghidra/Debug/Debugger/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Processors/JVM/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Processors/PIC/ghidra_scripts
+    /Users/tomdimino/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/Base/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/VersionTracking/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Processors/Atmel/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/BSim/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/Jython/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/FunctionID/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/BytePatterns/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Debug/Debugger-agent-frida/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/Decompiler/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Processors/DATA/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/FileFormats/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/PDB/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Debug/Debugger-agent-dbgmodel-traceloader/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /Users/tomdimino/ghidra/Ghidra/Processors/8051/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /Users/tomdimino/ghidra_projects/BG3Analysis (HeadlessAnalyzer)  
+INFO  Opening project: /Users/tomdimino/ghidra_projects/BG3Analysis (HeadlessProject)  
+INFO  REPORT: Processing read-only project file: /libOsiris_arm64_thin.dylib (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: /libOsiris_arm64_thin.dylib (HeadlessAnalyzer)  
+INFO  Packed database cache: /var/tmp/tomdimino-ghidra/packed-db-cache (PackedDatabaseCache)  
+INFO  Applied data type archive: mac_osx (ApplyDataArchiveAnalyzer)  
+INFO  -----------------------------------------------------
+    AARCH64 ELF PLT Thunks                     0.000 secs
+    ASCII Strings                              0.224 secs
+    Apply Data Archives                        0.172 secs
+    Basic Constant Reference Analyzer          3.053 secs
+    Call Convention ID                         2.234 secs
+    Call-Fixup Installer                       0.005 secs
+    Create Address Tables                      0.084 secs
+    Create Function                            0.000 secs
+    Data Reference                             0.051 secs
+    Decompiler Switch Analysis                 2.518 secs
+    Demangler GNU                              0.028 secs
+    Disassemble Entry Points                   0.122 secs
+    Embedded Media                             0.012 secs
+    External Entry References                  0.006 secs
+    External Symbol Resolver                   0.003 secs
+    Function Start Search                      0.083 secs
+    Function Start Search After Code           0.039 secs
+    Function Start Search After Data           0.027 secs
+    Mach-O Function Starts                     0.051 secs
+    Non-Returning Functions - Discovered       0.207 secs
+    Non-Returning Functions - Known            0.013 secs
+    Reference                                  0.112 secs
+    Shared Return Calls                        0.185 secs
+    Stack                                      0.094 secs
+    Subroutine References                      0.142 secs
+-----------------------------------------------------
+     Total Time   9 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: /libOsiris_arm64_thin.dylib (HeadlessAnalyzer)  
+INFO  SCRIPT: /Users/tomdimino/ghidra_scripts/analyze_funcdef_struct.py (HeadlessAnalyzer)  
+============================================================
+Analyzing COsiFunctionDef structure
+============================================================
+
+Key Offsets:
+  _OsiFunctionMan global: 0x0009f348
+  COsiFunctionMan::pFunctionData: 0x0002a04c
+  COsiFunctionDef constructor: 0x00026bb8
+
+COsiFunctionDef Constructor Analysis:
+  Function: COsiFunctionDef
+  Size: 484 bytes
+
+  Member access patterns (str/stp instructions):
+    0x26bb8: stp x26,x25,[sp, #-0x50]!
+    0x26bbc: stp x24,x23,[sp, #0x10]
+    0x26bc0: stp x22,x21,[sp, #0x20]
+    0x26bc4: stp x20,x19,[sp, #0x30]
+    0x26bc8: stp x29,x30,[sp, #0x40]
+    0x26be4: str x8,[x0]
+    0x26bec: str xzr,[x25, #0x10]!
+    0x26bf4: str xzr,[x20, #0x18]!
+    0x26bf8: str wzr,[x0, #0x20]
+    0x26c38: str x24,[x19, #0x8]
+    0x26cb8: str x22,[x19, #0x18]
+    0x26cbc: str w24,[x19, #0x20]
+    0x26d04: stp x8,xzr,[x0, #0x10]
+    0x26d10: stp x9,x8,[x0]
+    0x26d14: str x0,[x25]
+    0x26d50: str xzr,[x0]
+    0x26d5c: stp x8,x23,[x0]
+    0x26d60: str x0,[x8, #0x8]
+    0x26d64: str x0,[x23]
+    0x26d70: str x8,[x23, #0x10]
+    0x26dc8: stp x22,x21,[sp, #-0x30]!
+    0x26dcc: stp x20,x19,[sp, #0x10]
+    0x26dd0: stp x29,x30,[sp, #0x20]
+    0x26de4: str x8,[x0]
+    0x26e6c: stp x20,x19,[sp, #-0x20]!
+    0x26e70: stp x29,x30,[sp, #0x10]
+    0x26ed0: stp x22,x21,[sp, #0x10]
+    0x26ed4: stp x20,x19,[sp, #0x20]
+    0x26ed8: stp x29,x30,[sp, #0x30]
+    0x26ef0: str x8,[x0]
+
+pFunctionData Analysis:
+  Function: pFunctionData
+  Size: 284 bytes
+
+  Instructions (first 40):
+    0x2a04c: stp x22,x21,[sp, #-0x30]!
+    0x2a050: stp x20,x19,[sp, #0x10]
+    0x2a054: stp x29,x30,[sp, #0x20]
+    0x2a058: add x29,sp,#0x20
+    0x2a05c: mov w8,#0x5ff0
+    0x2a060: add x20,x0,x8
+    0x2a064: ldr x9,[x20, #0x5ff0]
+    0x2a068: cbz x9,0x0002a0a4
+    0x2a06c: add x8,x20,x8
+    0x2a070: mov x21,x8
+    0x2a074: ldr w10,[x9, #0x1c]
+    0x2a078: add x11,x9,#0x8
+    0x2a07c: cmp w10,w1
+    0x2a080: csel x10,x11,x9,cc
+    0x2a084: csel x21,x21,x9,cc
+    0x2a088: ldr x9,[x10]
+    0x2a08c: cbnz x9,0x0002a074
+    0x2a090: cmp x21,x8
+    0x2a094: b.eq 0x0002a0a4
+    0x2a098: ldr w8,[x21, #0x1c]
+    0x2a09c: cmp w8,w1
+    0x2a0a0: b.ls 0x0002a0b8
+    0x2a0a4: mov x0,#0x0
+    0x2a0a8: ldp x29,x30,[sp, #0x20]
+    0x2a0ac: ldp x20,x19,[sp, #0x10]
+    0x2a0b0: ldp x22,x21,[sp], #0x30
+    0x2a0b4: ret
+    0x2a0b8: adrp x19,0x9a000
+    0x2a0bc: ldr x8,[x19, #0x510]
+    0x2a0c0: adrp x1,0x82000
+    0x2a0c4: add x1,x1,#0x1e3
+    0x2a0c8: mov w0,#0x1
+    0x2a0cc: mov w2,#0x1
+    0x2a0d0: blr x8
+    0x2a0d4: ldr w8,[x21, #0x1c]
+    0x2a0d8: mov w9,#0x1005
+    0x2a0dc: movk w9,#0x40, LSL #16
+    0x2a0e0: umull x9,w8,w9
+    0x2a0e4: lsr x9,x9,#0x20
+    0x2a0e8: sub w10,w8,w9
+
+_OsiFunctionMan global at 0x0009f348:
+  Type: undefined8
+  Value: None
+
+References TO _OsiFunctionMan:
+  EXTERNAL -> 0x0
+  READ -> 0x57a94
+  READ -> 0x57e34
+  READ -> 0x581d4
+  READ -> 0x48318
+  READ -> 0x484f4
+  READ -> 0x48884
+  READ -> 0x492bc
+  READ -> 0x21328
+  READ -> 0x2169c
+
+============================================================
+Summary for main.c update:
+============================================================
+
+#define OSIFUNCMAN_OFFSET 0x0009f348  // _OsiFunctionMan global in libOsiris.dylib
+
+// To get OsiFunctionMan at runtime:
+// 1. Get libOsiris base address from any hook
+// 2. Add OSIFUNCMAN_OFFSET to get pointer location
+// 3. Dereference to get actual OsiFunctionMan instance
+
+INFO  ANALYZING changes made by post scripts: /libOsiris_arm64_thin.dylib (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: /libOsiris_arm64_thin.dylib (HeadlessAnalyzer)  
+INFO  REPORT: Discarding changes to the following read-only file: /libOsiris_arm64_thin.dylib (HeadlessAnalyzer)  

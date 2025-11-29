@@ -21,6 +21,8 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Ext.Osiris | ✅ Complete | Event listener registration |
 | Osiris Event Hook | ✅ Complete | COsiris::Event() hooked, 2000+ events captured |
 | Osi.* Functions | ✅ Partial | Key functions return real data (see below) |
+| Ghidra RE Analysis | ✅ Complete | Headless analysis for offset discovery |
+| Function Enumeration | 🔄 Testing | OsiFunctionMan offset-based lookup |
 
 ### Verified Working (Nov 28, 2025)
 
@@ -54,6 +56,10 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - Baldur's Gate 3 (Steam version)
 - Xcode Command Line Tools (`xcode-select --install`)
 - CMake (`brew install cmake`) - for building Dobby
+
+**For maintenance/RE work (optional):**
+- Ghidra 11.x (`brew install ghidra` or download from ghidra-sre.org)
+- Java 21 (`brew install openjdk@21`)
 
 ## Quick Start
 
@@ -105,8 +111,8 @@ BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
 Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
 ```
-=== BG3SE-macOS v0.9.4 ===
-[timestamp] === BG3SE-macOS v0.9.0 initialized ===
+=== BG3SE-macOS v0.9.8 ===
+[timestamp] === BG3SE-macOS v0.9.8 initialized ===
 [timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
 [timestamp] Architecture: ARM64 (Apple Silicon)
 [timestamp] Dobby inline hooking: enabled
@@ -234,6 +240,11 @@ bg3se-macos/
 │   └── lua/                    # Lua 5.4 source and build scripts
 │       ├── src/                # Lua 5.4.7 source code
 │       └── build_universal.sh  # Builds universal static library
+├── ghidra/                     # Reverse engineering analysis
+│   ├── find_osiris_offsets.py  # Ghidra script for symbol discovery
+│   ├── analyze_funcdef_struct.py # Ghidra script for struct analysis
+│   ├── ghidra_analysis.log     # Analysis output (offsets discovered)
+│   └── OFFSETS.md              # Documentation of key offsets
 ├── scripts/
 │   ├── build.sh                # Build script (universal binary)
 │   ├── bg3-wrapper.sh.example  # Example Steam wrapper
@@ -322,12 +333,16 @@ This is useful for examining mod structure and Lua scripts. Note: BG3SE-macOS no
 
 ### Next Steps
 
-1. **Direct Osiris Calls** - Implement osiris_query() and osiris_call() wrappers for full Windows BG3SE parity
-2. **Replace Stubs** - Implement real GetDistanceTo, IsTagged, etc. using direct Osiris queries
-3. **Full MRC Testing** - Verify visible companion behavior changes in-game
+1. **Dynamic Osi.* Metatable** - Lazy function lookup like Windows (`Osi.AnyFunction()` resolves at call time)
+2. **Entity/Component System** - Access game entities via `Ext.Entity.Get()`
+3. **Stats System** - Read/write game stats via `Ext.Stats`
+4. **Full MRC Testing** - Verify visible companion behavior changes in-game
 
 ### Completed
 
+- ✅ Ghidra headless RE analysis - discovered OsiFunctionMan offset (v0.9.8)
+- ✅ Offset-based symbol resolution for unexported symbols (v0.9.8)
+- ✅ Function enumeration via pFunctionData (v0.9.8)
 - ✅ Direct Osiris query/call wrappers - real Osi.* function calls (v0.9.4)
 - ✅ ARM64 pattern database with fallback symbol resolution (v0.9.3)
 - ✅ Pattern scanning infrastructure for cross-version compatibility (v0.9.3)
@@ -379,9 +394,32 @@ If you see "incompatible architecture" in crash reports:
 
 When BG3 updates:
 
-1. Run `nm -gU` on the new libOsiris.dylib
-2. Compare with previous symbol addresses
-3. Update any hardcoded offsets
+1. Run `nm -gU` on the new libOsiris.dylib to check exported symbols
+2. If offsets have changed, re-run Ghidra headless analysis:
+
+```bash
+# Extract ARM64 slice from universal binary
+lipo -thin arm64 \
+  "/Users/$USER/Library/Application Support/Steam/steamapps/common/Baldurs Gate 3/Baldur's Gate 3.app/Contents/Frameworks/libOsiris.dylib" \
+  -output ~/ghidra_projects/libOsiris_arm64_thin.dylib
+
+# Run Ghidra headless analysis
+JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
+/path/to/ghidra/support/analyzeHeadless \
+  ~/ghidra_projects BG3Analysis \
+  -import ~/ghidra_projects/libOsiris_arm64_thin.dylib \
+  -processor "AARCH64:LE:64:v8A" \
+  -postScript ghidra/find_osiris_offsets.py \
+  -postScript ghidra/analyze_funcdef_struct.py \
+  -analysisTimeoutPerFile 300
+```
+
+3. Update offsets in `src/injector/main.c`:
+   - `OSIFUNCMAN_OFFSET` - `_OsiFunctionMan` global variable
+   - `PFUNCTIONDATA_OFFSET` - `COsiFunctionMan::pFunctionData()` method
+   - `COSIRIS_EVENT_OFFSET` - `COsiris::Event()` method
+   - `COSIRIS_INITGAME_OFFSET` - `COsiris::InitGame()` method
+
 4. Rebuild and test
 
 ## License
