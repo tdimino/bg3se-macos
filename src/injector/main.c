@@ -40,18 +40,25 @@ extern "C" {
 }
 #endif
 
-// Version info
-#define BG3SE_VERSION "0.10.0"
-#define BG3SE_NAME "BG3SE-macOS"
+// Entity Component System
+#include "entity_system.h"
 
-// Log file for debugging
-#define LOG_FILE "/tmp/bg3se_macos.log"
+// Core modules
+#include "version.h"
+#include "logging.h"
+
+// Osiris modules
+#include "osiris_types.h"
+#include "osiris_functions.h"
+#include "pattern_scan.h"
+
+// PAK file reading
+#include "pak_reader.h"
 
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
 // Forward declarations
-static void log_message(const char *format, ...);
 static void enumerate_loaded_images(void);
 static void check_osiris_library(void);
 static void install_hooks(void);
@@ -60,20 +67,14 @@ static void shutdown_lua(void);
 static void detect_enabled_mods(void);
 
 // Forward declarations for Osiris wrappers (defined later in file)
-struct OsiArgumentDesc;  // Forward declare for function signatures
-static uint32_t lookup_function_by_name(const char *name);
-static struct OsiArgumentDesc *alloc_args(int count);
-static void set_arg_string(struct OsiArgumentDesc *arg, const char *value, int isGuid);
-static void set_arg_int(struct OsiArgumentDesc *arg, int32_t value);
-static void set_arg_real(struct OsiArgumentDesc *arg, float value);
-static int osiris_query_by_id(uint32_t funcId, struct OsiArgumentDesc *args);
+static OsiArgumentDesc *alloc_args(int count);
+static void set_arg_string(OsiArgumentDesc *arg, const char *value, int isGuid);
+static void set_arg_int(OsiArgumentDesc *arg, int32_t value);
+static void set_arg_real(OsiArgumentDesc *arg, float value);
+static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args);
 static int osi_is_tagged(const char *character, const char *tag);
 static float osi_get_distance_to(const char *char1, const char *char2);
 static void osi_dialog_request_stop(const char *dialog);
-static void enumerate_osiris_functions(void);
-static void try_cache_function_from_event(uint32_t funcId);
-static const char *get_function_name(uint32_t funcId);
-static int get_function_info(const char *name, uint8_t *out_arity, uint8_t *out_type);
 
 // Original function pointers (filled by Dobby)
 static void *orig_InitGame = NULL;
@@ -86,42 +87,8 @@ static int load_call_count = 0;
 static int event_call_count = 0;
 
 // ============================================================================
-// Osiris Data Structures (based on Windows BG3SE, validated via logging)
+// Osiris Runtime State
 // ============================================================================
-
-// Value types in Osiris
-typedef enum {
-    OSI_TYPE_NONE = 0,
-    OSI_TYPE_INTEGER = 1,
-    OSI_TYPE_INTEGER64 = 2,
-    OSI_TYPE_REAL = 3,
-    OSI_TYPE_STRING = 4,
-    OSI_TYPE_GUIDSTRING = 5
-} OsiValueType;
-
-// Argument value - tagged union (structure layout TBD via logging)
-typedef struct OsiArgumentValue {
-    union {
-        int32_t int32Val;
-        int64_t int64Val;
-        float floatVal;
-        char *stringVal;
-    };
-    uint16_t typeId;
-    uint16_t flags;
-} OsiArgumentValue;
-
-// Argument linked list node
-typedef struct OsiArgumentDesc {
-    struct OsiArgumentDesc *nextParam;  // offset 0 (8 bytes on ARM64)
-    OsiArgumentValue value;              // offset 8
-} OsiArgumentDesc;
-
-// Function pointers for Osiris calls
-typedef void (*OsiEventFn)(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args);
-typedef int (*InternalQueryFn)(uint32_t funcId, OsiArgumentDesc *args);
-typedef int (*InternalCallFn)(uint32_t funcId, void *params);
-typedef void* (*pFunctionDataFn)(void *funcMan, uint32_t funcId);
 
 // Global function pointers (resolved at runtime)
 static InternalQueryFn pfn_InternalQuery = NULL;
@@ -148,58 +115,7 @@ static int g_currentDialogPlayerCount = 1;       // Number of players in dialog 
 static char g_dialogParticipants[MAX_DIALOG_PARTICIPANTS][128];
 static int g_dialogParticipantCount = 0;
 
-// Function cache for name->ID lookup
-#define MAX_CACHED_FUNCTIONS 4096
-#define INVALID_FUNCTION_ID 0xFFFFFFFF
-#define OSI_FUNCTION_TYPE_MASK 0x80000000  // High bit indicates function type
-
-// Function types (based on Windows BG3SE)
-typedef enum {
-    OSI_FUNC_UNKNOWN = 0,
-    OSI_FUNC_EVENT = 1,
-    OSI_FUNC_QUERY = 2,
-    OSI_FUNC_CALL = 3,
-    OSI_FUNC_DATABASE = 4,
-    OSI_FUNC_PROC = 5,
-    OSI_FUNC_SYSCALL = 6,
-    OSI_FUNC_SYSQUERY = 7
-} OsiFunctionType;
-
-// Function definition structure (layout determined empirically)
-// This is the structure returned by pFunctionData()
-// Note: Layout may need adjustment based on actual memory dumps
-typedef struct {
-    void *vtable;           // offset 0: C++ vtable pointer
-    void *name_ptr;         // offset 8: pointer to std::string or char*
-    uint32_t funcId;        // offset 16: function ID
-    uint8_t  funcType;      // offset 20: function type
-    uint8_t  numInParams;   // offset 21: number of input parameters
-    uint8_t  numOutParams;  // offset 22: number of output parameters
-    uint8_t  reserved1;     // offset 23: padding
-    // More fields follow but we don't need them
-} OsiFunctionDef;
-
-typedef struct {
-    char name[128];
-    uint8_t arity;
-    uint8_t type;  // FunctionType: 1=Event, 2=Query, 3=Call, 4=Database
-    uint32_t id;
-} CachedFunction;
-
-static CachedFunction g_funcCache[MAX_CACHED_FUNCTIONS];
-static int g_funcCacheCount = 0;
-
-// Reverse lookup: funcId -> cache index (for fast event dispatch)
-#define FUNC_HASH_SIZE 8192
-static int16_t g_funcIdHashTable[FUNC_HASH_SIZE];  // -1 = empty, else index into g_funcCache
-
 // Known event names we want to track (for MRC compatibility)
-// We'll learn the function IDs by observing events and matching patterns
-typedef struct {
-    const char *name;
-    uint32_t funcId;        // 0 = not yet discovered
-    uint8_t expectedArity;
-} KnownEvent;
 
 static KnownEvent g_knownEvents[] = {
     // Discovered via runtime observation on macOS ARM64
@@ -217,232 +133,8 @@ static KnownEvent g_knownEvents[] = {
     {NULL, 0, 0}  // Sentinel
 };
 
-// Track unique function IDs we've seen (for analysis)
-#define MAX_SEEN_FUNC_IDS 256
-static uint32_t g_seenFuncIds[MAX_SEEN_FUNC_IDS];
-static uint8_t g_seenFuncArities[MAX_SEEN_FUNC_IDS];
-static int g_seenFuncIdCount = 0;
-
 // Track if hooks are already installed
 static int hooks_installed = 0;
-
-// ============================================================================
-// Pattern Scanning Infrastructure
-// ============================================================================
-
-// Pattern structure for byte pattern matching
-// Supports Ghidra/IDA style patterns like "48 8D 05 ?? ?? ?? ?? E8"
-typedef struct {
-    unsigned char *bytes;   // Pattern bytes to match
-    unsigned char *mask;    // Mask: 0xFF = must match, 0x00 = wildcard
-    size_t length;          // Pattern length
-} BytePattern;
-
-/**
- * Parse a pattern string into a BytePattern structure.
- * Format: "48 8D 05 ?? ?? ?? ?? E8" where ?? = wildcard byte
- * Returns NULL on parse error. Caller must free with free_pattern().
- */
-static BytePattern *parse_pattern(const char *pattern_str) {
-    if (!pattern_str || !*pattern_str) return NULL;
-
-    // First pass: count bytes
-    size_t count = 0;
-    const char *p = pattern_str;
-    while (*p) {
-        // Skip whitespace
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p) break;
-
-        // Check for wildcard or hex byte
-        if (p[0] == '?' && p[1] == '?') {
-            count++;
-            p += 2;
-        } else if ((p[0] >= '0' && p[0] <= '9') ||
-                   (p[0] >= 'A' && p[0] <= 'F') ||
-                   (p[0] >= 'a' && p[0] <= 'f')) {
-            if ((p[1] >= '0' && p[1] <= '9') ||
-                (p[1] >= 'A' && p[1] <= 'F') ||
-                (p[1] >= 'a' && p[1] <= 'f')) {
-                count++;
-                p += 2;
-            } else {
-                return NULL;  // Invalid hex
-            }
-        } else if (*p) {
-            return NULL;  // Invalid character
-        }
-    }
-
-    if (count == 0) return NULL;
-
-    // Allocate pattern structure
-    BytePattern *pat = (BytePattern *)malloc(sizeof(BytePattern));
-    if (!pat) return NULL;
-
-    pat->bytes = (unsigned char *)malloc(count);
-    pat->mask = (unsigned char *)malloc(count);
-    pat->length = count;
-
-    if (!pat->bytes || !pat->mask) {
-        free(pat->bytes);
-        free(pat->mask);
-        free(pat);
-        return NULL;
-    }
-
-    // Second pass: fill bytes and mask
-    p = pattern_str;
-    size_t i = 0;
-    while (*p && i < count) {
-        // Skip whitespace
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p) break;
-
-        if (p[0] == '?' && p[1] == '?') {
-            pat->bytes[i] = 0x00;
-            pat->mask[i] = 0x00;  // Wildcard
-            p += 2;
-            i++;
-        } else {
-            // Parse hex byte
-            unsigned int byte = 0;
-            sscanf(p, "%2x", &byte);
-            pat->bytes[i] = (unsigned char)byte;
-            pat->mask[i] = 0xFF;  // Must match
-            p += 2;
-            i++;
-        }
-    }
-
-    return pat;
-}
-
-/**
- * Free a BytePattern allocated by parse_pattern()
- */
-static void free_pattern(BytePattern *pat) {
-    if (pat) {
-        free(pat->bytes);
-        free(pat->mask);
-        free(pat);
-    }
-}
-
-/**
- * Scan memory for a byte pattern.
- * Returns pointer to first match, or NULL if not found.
- */
-static void *find_pattern(const void *start, size_t size, const BytePattern *pattern) {
-    if (!start || !pattern || size < pattern->length) return NULL;
-
-    const unsigned char *base = (const unsigned char *)start;
-    size_t scan_size = size - pattern->length + 1;
-
-    for (size_t i = 0; i < scan_size; i++) {
-        int found = 1;
-        for (size_t j = 0; j < pattern->length; j++) {
-            // Check if byte matches or is wildcard (mask == 0)
-            if (pattern->mask[j] != 0x00 && base[i + j] != pattern->bytes[j]) {
-                found = 0;
-                break;
-            }
-        }
-        if (found) {
-            return (void *)&base[i];
-        }
-    }
-
-    return NULL;
-}
-
-/**
- * Convenience function: parse pattern string and scan in one call.
- * Returns pointer to first match, or NULL if not found.
- */
-static void *find_pattern_str(const void *start, size_t size, const char *pattern_str) {
-    BytePattern *pat = parse_pattern(pattern_str);
-    if (!pat) return NULL;
-
-    void *result = find_pattern(start, size, pat);
-    free_pattern(pat);
-    return result;
-}
-
-/**
- * Get the __TEXT,__text section bounds from a loaded Mach-O image.
- * This is where code resides in the binary.
- */
-static int get_macho_text_section(const char *image_name, void **start, size_t *size) {
-    if (!start || !size) return 0;
-    *start = NULL;
-    *size = 0;
-
-    // Find the image by name
-    uint32_t image_count = _dyld_image_count();
-    const struct mach_header_64 *header = NULL;
-    intptr_t slide = 0;
-
-    for (uint32_t i = 0; i < image_count; i++) {
-        const char *name = _dyld_get_image_name(i);
-        if (name && strstr(name, image_name)) {
-            header = (const struct mach_header_64 *)_dyld_get_image_header(i);
-            slide = _dyld_get_image_vmaddr_slide(i);
-            break;
-        }
-    }
-
-    if (!header) {
-        return 0;  // Image not found
-    }
-
-    // Make sure it's a 64-bit Mach-O
-    if (header->magic != MH_MAGIC_64) {
-        return 0;
-    }
-
-    // Walk load commands to find __TEXT segment, then __text section
-    const uint8_t *ptr = (const uint8_t *)header + sizeof(struct mach_header_64);
-    for (uint32_t i = 0; i < header->ncmds; i++) {
-        const struct load_command *lc = (const struct load_command *)ptr;
-
-        if (lc->cmd == LC_SEGMENT_64) {
-            const struct segment_command_64 *seg = (const struct segment_command_64 *)ptr;
-
-            if (strcmp(seg->segname, "__TEXT") == 0) {
-                // Found __TEXT segment - now find __text section
-                const struct section_64 *sections = (const struct section_64 *)(ptr + sizeof(struct segment_command_64));
-                for (uint32_t j = 0; j < seg->nsects; j++) {
-                    if (strcmp(sections[j].sectname, "__text") == 0) {
-                        *start = (void *)(sections[j].addr + slide);
-                        *size = sections[j].size;
-                        return 1;
-                    }
-                }
-                // If no __text section, use whole __TEXT segment
-                *start = (void *)(seg->vmaddr + slide);
-                *size = seg->vmsize;
-                return 1;
-            }
-        }
-
-        ptr += lc->cmdsize;
-    }
-
-    return 0;
-}
-
-/**
- * Debug helper: Log a pattern scan result
- */
-__attribute__((unused))
-static void log_pattern_scan(const char *name, const char *pattern, void *result) {
-    if (result) {
-        log_message("[PatternScan] %s found at %p (pattern: %s)", name, result, pattern);
-    } else {
-        log_message("[PatternScan] %s NOT FOUND (pattern: %s)", name, pattern);
-    }
-}
 
 // ============================================================================
 // ARM64 Pattern Database for Fallback Symbol Resolution
@@ -450,13 +142,6 @@ static void log_pattern_scan(const char *name, const char *pattern, void *result
 // These patterns are unique byte sequences found in function bodies.
 // They're used when dlsym fails (e.g., after game updates change symbol names).
 // Pattern offset is bytes from function start where pattern is found.
-
-typedef struct {
-    const char *name;           // Function name (for logging)
-    const char *symbol;         // Mangled symbol name for dlsym
-    const char *pattern;        // Unique byte pattern (body, not prologue)
-    int pattern_offset;         // Offset from function start where pattern appears
-} FunctionPattern;
 
 // Patterns discovered from libOsiris.dylib ARM64 (BG3 Patch 7)
 // These patterns are at offset +28 (after function prologue)
@@ -546,255 +231,8 @@ static int se_mod_count = 0;
 static char current_mod_pak_path[MAX_PATH_LEN] = "";
 
 // ============================================================================
-// PAK File Reading (LSPK v18 format)
+// PAK File Helpers (higher-level functions using pak_reader module)
 // ============================================================================
-
-// LSPK signature: "LSPK" = 0x4B50534C
-#define LSPK_SIGNATURE 0x4B50534C
-#define LSPK_ENTRY_SIZE 272
-
-// PAK file entry
-typedef struct {
-    char name[256];
-    uint64_t offset;
-    uint8_t archive_part;
-    uint8_t compression;  // 0=none, 1=zlib, 2=LZ4
-    uint32_t disk_size;
-    uint32_t uncompressed_size;
-} PakEntry;
-
-// PAK file handle
-typedef struct {
-    FILE *file;
-    uint32_t version;
-    uint64_t file_list_offset;
-    uint32_t file_list_size;
-    uint32_t num_files;
-    PakEntry *entries;
-} PakFile;
-
-/**
- * Open a PAK file and read its header and file list
- * Returns NULL on failure
- */
-static PakFile *pak_open(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-
-    // Read header (40 bytes)
-    uint8_t header[40];
-    if (fread(header, 1, 40, f) != 40) {
-        fclose(f);
-        return NULL;
-    }
-
-    // Check signature
-    uint32_t signature;
-    memcpy(&signature, header, 4);
-    if (signature != LSPK_SIGNATURE) {
-        fclose(f);
-        return NULL;
-    }
-
-    // Parse header
-    uint32_t version;
-    uint64_t file_list_offset;
-    uint32_t file_list_size;
-
-    memcpy(&version, header + 4, 4);
-    memcpy(&file_list_offset, header + 8, 8);
-    memcpy(&file_list_size, header + 16, 4);
-
-    // Seek to file list
-    fseek(f, file_list_offset, SEEK_SET);
-
-    // Read file count and compressed size
-    uint32_t num_files, compressed_size;
-    if (fread(&num_files, 4, 1, f) != 1 || fread(&compressed_size, 4, 1, f) != 1) {
-        fclose(f);
-        return NULL;
-    }
-
-    // Read compressed file list
-    uint8_t *compressed_data = (uint8_t *)malloc(compressed_size);
-    if (!compressed_data) {
-        fclose(f);
-        return NULL;
-    }
-
-    if (fread(compressed_data, 1, compressed_size, f) != compressed_size) {
-        free(compressed_data);
-        fclose(f);
-        return NULL;
-    }
-
-    // Decompress file list (LZ4)
-    uint32_t uncompressed_size = num_files * LSPK_ENTRY_SIZE;
-    uint8_t *decompressed = (uint8_t *)malloc(uncompressed_size);
-    if (!decompressed) {
-        free(compressed_data);
-        fclose(f);
-        return NULL;
-    }
-
-    int result = LZ4_decompress_safe((const char *)compressed_data, (char *)decompressed,
-                                      compressed_size, uncompressed_size);
-    free(compressed_data);
-
-    if (result < 0) {
-        free(decompressed);
-        fclose(f);
-        return NULL;
-    }
-
-    // Parse entries
-    PakEntry *entries = (PakEntry *)calloc(num_files, sizeof(PakEntry));
-    if (!entries) {
-        free(decompressed);
-        fclose(f);
-        return NULL;
-    }
-
-    for (uint32_t i = 0; i < num_files; i++) {
-        uint8_t *entry_data = decompressed + (i * LSPK_ENTRY_SIZE);
-
-        // Name: 256 bytes, null-terminated
-        memcpy(entries[i].name, entry_data, 255);
-        entries[i].name[255] = '\0';
-
-        // Offset: 48-bit value (bytes 256-261)
-        uint32_t offset_lo;
-        uint16_t offset_hi;
-        memcpy(&offset_lo, entry_data + 256, 4);
-        memcpy(&offset_hi, entry_data + 260, 2);
-        entries[i].offset = offset_lo | ((uint64_t)offset_hi << 32);
-
-        entries[i].archive_part = entry_data[262];
-        entries[i].compression = entry_data[263] & 0x0F;
-
-        memcpy(&entries[i].disk_size, entry_data + 264, 4);
-        memcpy(&entries[i].uncompressed_size, entry_data + 268, 4);
-    }
-
-    free(decompressed);
-
-    // Create PakFile struct
-    PakFile *pak = (PakFile *)malloc(sizeof(PakFile));
-    if (!pak) {
-        free(entries);
-        fclose(f);
-        return NULL;
-    }
-
-    pak->file = f;
-    pak->version = version;
-    pak->file_list_offset = file_list_offset;
-    pak->file_list_size = file_list_size;
-    pak->num_files = num_files;
-    pak->entries = entries;
-
-    return pak;
-}
-
-/**
- * Close a PAK file and free resources
- */
-static void pak_close(PakFile *pak) {
-    if (pak) {
-        if (pak->file) fclose(pak->file);
-        if (pak->entries) free(pak->entries);
-        free(pak);
-    }
-}
-
-/**
- * Find an entry in a PAK file by path
- * Returns entry index or -1 if not found
- */
-static int pak_find_entry(PakFile *pak, const char *path) {
-    if (!pak || !path) return -1;
-
-    for (uint32_t i = 0; i < pak->num_files; i++) {
-        if (strcmp(pak->entries[i].name, path) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-/**
- * Read a file from a PAK archive
- * Returns allocated buffer with file contents, or NULL on failure
- * Caller must free the returned buffer
- * Sets *out_size to the uncompressed size
- */
-static char *pak_read_file(PakFile *pak, int entry_idx, size_t *out_size) {
-    if (!pak || entry_idx < 0 || entry_idx >= (int)pak->num_files) return NULL;
-
-    PakEntry *entry = &pak->entries[entry_idx];
-
-    // Seek to file data
-    fseek(pak->file, entry->offset, SEEK_SET);
-
-    // Read compressed/raw data
-    uint8_t *disk_data = (uint8_t *)malloc(entry->disk_size);
-    if (!disk_data) return NULL;
-
-    if (fread(disk_data, 1, entry->disk_size, pak->file) != entry->disk_size) {
-        free(disk_data);
-        return NULL;
-    }
-
-    char *content = NULL;
-
-    if (entry->compression == 0) {
-        // Uncompressed
-        content = (char *)malloc(entry->uncompressed_size + 1);
-        if (content) {
-            memcpy(content, disk_data, entry->uncompressed_size);
-            content[entry->uncompressed_size] = '\0';
-            if (out_size) *out_size = entry->uncompressed_size;
-        }
-    } else if (entry->compression == 1) {
-        // zlib
-        content = (char *)malloc(entry->uncompressed_size + 1);
-        if (content) {
-            uLongf dest_len = entry->uncompressed_size;
-            if (uncompress((Bytef *)content, &dest_len, disk_data, entry->disk_size) == Z_OK) {
-                content[dest_len] = '\0';
-                if (out_size) *out_size = dest_len;
-            } else {
-                free(content);
-                content = NULL;
-            }
-        }
-    } else if (entry->compression == 2) {
-        // LZ4
-        content = (char *)malloc(entry->uncompressed_size + 1);
-        if (content) {
-            int result = LZ4_decompress_safe((const char *)disk_data, content,
-                                              entry->disk_size, entry->uncompressed_size);
-            if (result > 0) {
-                content[result] = '\0';
-                if (out_size) *out_size = result;
-            } else {
-                free(content);
-                content = NULL;
-            }
-        }
-    }
-
-    free(disk_data);
-    return content;
-}
-
-/**
- * Check if a PAK file contains a specific file path
- */
-__attribute__((unused))
-static int pak_contains_file(PakFile *pak, const char *path) {
-    return pak_find_entry(pak, path) >= 0;
-}
 
 /**
  * Check if a PAK file contains ScriptExtender/Config.json with "Lua" feature
@@ -906,32 +344,6 @@ static int load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua
     free(content);
     log_message("[Lua] Loaded from PAK: %s", lua_path);
     return 1;
-}
-
-/**
- * Write to both syslog and our log file
- */
-static void log_message(const char *format, ...) {
-    va_list args;
-    char buffer[1024];
-
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-
-    // Write to syslog
-    syslog(LOG_ERR, "[%s] %s", BG3SE_NAME, buffer);
-
-    // Write to log file
-    FILE *f = fopen(LOG_FILE, "a");
-    if (f) {
-        time_t now = time(NULL);
-        struct tm *t = localtime(&now);
-        fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d] %s\n",
-                t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-                t->tm_hour, t->tm_min, t->tm_sec, buffer);
-        fclose(f);
-    }
 }
 
 // ============================================================================
@@ -1969,7 +1381,7 @@ static int lua_osi_qry_startdialog_fixed(lua_State *L) {
 
     // Try real Osiris query first
     if (pfn_InternalQuery && resource && character) {
-        uint32_t funcId = lookup_function_by_name("QRY_StartDialog_Fixed");
+        uint32_t funcId = osi_func_lookup_id("QRY_StartDialog_Fixed");
         if (funcId != INVALID_FUNCTION_ID) {
             OsiArgumentDesc *args = alloc_args(2);
             if (args) {
@@ -2094,7 +1506,7 @@ static int osi_dynamic_call(lua_State *L) {
     }
 
     // Look up function ID
-    uint32_t funcId = lookup_function_by_name(funcName);
+    uint32_t funcId = osi_func_lookup_id(funcName);
     if (funcId == INVALID_FUNCTION_ID) {
         // Function not yet discovered - return nil gracefully
         log_message("[Osi.%s] Function not found in cache (not yet discovered)", funcName);
@@ -2105,7 +1517,7 @@ static int osi_dynamic_call(lua_State *L) {
     // Get function info to determine type
     uint8_t arity = 0;
     uint8_t funcType = OSI_FUNC_UNKNOWN;
-    get_function_info(funcName, &arity, &funcType);
+    osi_func_get_info(funcName, &arity, &funcType);
 
     int numArgs = lua_gettop(L);
     log_message("[Osi.%s] Called with %d args (funcId=0x%x, type=%d)",
@@ -2258,7 +1670,7 @@ static int osi_index_handler(lua_State *L) {
     }
 
     // Check if function is in our cache
-    uint32_t funcId = lookup_function_by_name(key);
+    uint32_t funcId = osi_func_lookup_id(key);
     if (funcId == INVALID_FUNCTION_ID) {
         // Function not discovered yet - return a closure anyway
         // It will return nil when called if still not found
@@ -2556,6 +1968,9 @@ static void init_lua(void) {
     // Register global debug functions
     register_global_functions(L);
 
+    // Register Entity system API (Ext.Entity.*)
+    entity_register_lua(L);
+
     // Run a test script
     const char *test_script =
         "Ext.Print('BG3SE-macOS Lua runtime initialized!')\n"
@@ -2632,7 +2047,7 @@ static void fake_InitGame(void *thisPtr) {
     static int functions_enumerated = 0;
     if (!functions_enumerated && g_pOsiFunctionMan && *g_pOsiFunctionMan) {
         functions_enumerated = 1;
-        enumerate_osiris_functions();
+        osi_func_enumerate();
     }
 
     // Notify Lua that Osiris is initialized
@@ -2678,345 +2093,6 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
     }
 
     return result;
-}
-
-/**
- * Initialize the function hash table
- */
-static void init_func_hash_table(void) {
-    for (int i = 0; i < FUNC_HASH_SIZE; i++) {
-        g_funcIdHashTable[i] = -1;
-    }
-}
-
-/**
- * Hash function for function ID lookup
- */
-static inline int func_id_hash(uint32_t funcId) {
-    // Simple hash - use lower bits, handling type flag
-    return (int)((funcId ^ (funcId >> 13)) & (FUNC_HASH_SIZE - 1));
-}
-
-/**
- * Add a function to the cache
- */
-static void cache_function(const char *name, uint32_t funcId, uint8_t arity, uint8_t type) {
-    if (g_funcCacheCount >= MAX_CACHED_FUNCTIONS) {
-        return;
-    }
-
-    // Check for duplicate
-    int hash = func_id_hash(funcId);
-    if (g_funcIdHashTable[hash] >= 0) {
-        // Linear probe to check if already exists
-        for (int i = 0; i < g_funcCacheCount; i++) {
-            if (g_funcCache[i].id == funcId) {
-                return;  // Already cached
-            }
-        }
-    }
-
-    CachedFunction *cf = &g_funcCache[g_funcCacheCount];
-    strncpy(cf->name, name, sizeof(cf->name) - 1);
-    cf->name[sizeof(cf->name) - 1] = '\0';
-    cf->id = funcId;
-    cf->arity = arity;
-    cf->type = type;
-
-    // Add to hash table (simple - just store first match at hash location)
-    if (g_funcIdHashTable[hash] < 0) {
-        g_funcIdHashTable[hash] = (int16_t)g_funcCacheCount;
-    }
-
-    g_funcCacheCount++;
-}
-
-/**
- * Try to extract function name from a function definition pointer
- * The structure layout is empirically determined
- */
-static const char *extract_func_name_from_def(void *funcDef) {
-    if (!funcDef) return NULL;
-
-    // The function definition structure varies by Osiris version
-    // We'll try multiple offsets to find the name
-    uint8_t *p = (uint8_t *)funcDef;
-
-    // Try offset 8 (common for std::string* or char*)
-    void *name_candidate = *(void **)(p + 8);
-    if (name_candidate) {
-        // Check if it's a direct char* (starts with printable ASCII)
-        char *str = (char *)name_candidate;
-        if (str[0] >= 'A' && str[0] <= 'z') {
-            return str;
-        }
-
-        // It might be std::string (SSO or heap)
-        // For small strings, data is inline at offset 0
-        // For large strings, there's a pointer
-        // Try reading as std::string internal layout
-        char *sso_data = (char *)name_candidate;
-        if (sso_data[0] >= 'A' && sso_data[0] <= 'z') {
-            return sso_data;
-        }
-    }
-
-    // Try offset 16
-    name_candidate = *(void **)(p + 16);
-    if (name_candidate) {
-        char *str = (char *)name_candidate;
-        if (str[0] >= 'A' && str[0] <= 'z') {
-            return str;
-        }
-    }
-
-    return NULL;
-}
-
-/**
- * Probe structure layout by dumping bytes from a function definition
- * This is called once during cache building for debugging
- */
-__attribute__((unused))
-static void probe_funcdef_structure(void *funcDef, uint32_t funcId) {
-    if (!funcDef) return;
-
-    uint8_t *p = (uint8_t *)funcDef;
-    log_message("[FuncDef] Probing structure for funcId=%u at %p", funcId, funcDef);
-
-    // Dump first 64 bytes
-    log_message("  bytes[0-31]:  %02x%02x%02x%02x %02x%02x%02x%02x "
-               "%02x%02x%02x%02x %02x%02x%02x%02x "
-               "%02x%02x%02x%02x %02x%02x%02x%02x "
-               "%02x%02x%02x%02x %02x%02x%02x%02x",
-               p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],
-               p[8],p[9],p[10],p[11],p[12],p[13],p[14],p[15],
-               p[16],p[17],p[18],p[19],p[20],p[21],p[22],p[23],
-               p[24],p[25],p[26],p[27],p[28],p[29],p[30],p[31]);
-    log_message("  bytes[32-63]: %02x%02x%02x%02x %02x%02x%02x%02x "
-               "%02x%02x%02x%02x %02x%02x%02x%02x "
-               "%02x%02x%02x%02x %02x%02x%02x%02x "
-               "%02x%02x%02x%02x %02x%02x%02x%02x",
-               p[32],p[33],p[34],p[35],p[36],p[37],p[38],p[39],
-               p[40],p[41],p[42],p[43],p[44],p[45],p[46],p[47],
-               p[48],p[49],p[50],p[51],p[52],p[53],p[54],p[55],
-               p[56],p[57],p[58],p[59],p[60],p[61],p[62],p[63]);
-
-    // Try to interpret as pointers
-    void **ptrs = (void **)p;
-    log_message("  ptr[0] (vtable?): %p", ptrs[0]);
-    log_message("  ptr[1] (name?):   %p", ptrs[1]);
-    log_message("  ptr[2]:           %p", ptrs[2]);
-    log_message("  ptr[3]:           %p", ptrs[3]);
-
-    // Try to read strings at various offsets
-    for (int off = 8; off <= 32; off += 8) {
-        void *candidate = *(void **)(p + off);
-        if (candidate && (uintptr_t)candidate > 0x100000000ULL) {
-            // Looks like a valid pointer, try to read as string
-            char *str = (char *)candidate;
-            // Check if first char is printable
-            if (str[0] >= 0x20 && str[0] < 0x7f) {
-                log_message("  offset %d -> possible string: %.40s", off, str);
-            }
-        }
-    }
-}
-
-/**
- * Track a function ID we've seen (for analysis purposes)
- */
-static void track_seen_func_id(uint32_t funcId, uint8_t arity) {
-    // Check if already seen
-    for (int i = 0; i < g_seenFuncIdCount; i++) {
-        if (g_seenFuncIds[i] == funcId) return;
-    }
-
-    // Add to list
-    if (g_seenFuncIdCount < MAX_SEEN_FUNC_IDS) {
-        g_seenFuncIds[g_seenFuncIdCount] = funcId;
-        g_seenFuncArities[g_seenFuncIdCount] = arity;
-        g_seenFuncIdCount++;
-
-        // Log new unique function ID
-        log_message("[FuncID] New unique: id=%u (0x%08x), arity=%d, total_unique=%d",
-                   funcId, funcId, arity, g_seenFuncIdCount);
-    }
-}
-
-/**
- * Try to get function definition and cache it
- * Uses the global OsiFunctionMan if available
- */
-static int try_cache_function_by_id(uint32_t funcId) {
-    // Need both the function pointer and the manager instance
-    if (!pfn_pFunctionData || !g_pOsiFunctionMan || !*g_pOsiFunctionMan) {
-        return 0;
-    }
-
-    void *funcMan = *g_pOsiFunctionMan;
-    void *funcDef = pfn_pFunctionData(funcMan, funcId);
-
-    if (funcDef) {
-        const char *name = extract_func_name_from_def(funcDef);
-        if (name && name[0]) {
-            // Determine arity from structure (offset 21 based on OsiFunctionDef)
-            uint8_t *p = (uint8_t *)funcDef;
-            uint8_t arity = p[21];  // numInParams
-            uint8_t type = p[20];   // funcType
-
-            cache_function(name, funcId, arity, type);
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-/**
- * Enumerate Osiris functions by probing ID ranges
- * Called once during initialization to build the function cache
- */
-static void enumerate_osiris_functions(void) {
-    if (!pfn_pFunctionData || !g_pOsiFunctionMan || !*g_pOsiFunctionMan) {
-        log_message("[FuncEnum] Cannot enumerate - pFunctionData or OsiFunctionMan not available");
-        return;
-    }
-
-    log_message("[FuncEnum] Starting function enumeration...");
-    int found_count = 0;
-
-    // Osiris function IDs are split into two ranges:
-    // 1. Regular functions: 0 to ~64K (low IDs)
-    // 2. Registered functions: 0x80000000 + offset (high bit set)
-
-    // Probe low range (regular functions) - usually 0-10000
-    for (uint32_t id = 1; id < 10000 && found_count < 1000; id++) {
-        if (try_cache_function_by_id(id)) {
-            found_count++;
-        }
-    }
-
-    // Probe high range (registered functions) - 0x80000000 + 0 to ~30000
-    for (uint32_t offset = 0; offset < 30000 && found_count < 2000; offset++) {
-        uint32_t id = 0x80000000 | offset;
-        if (try_cache_function_by_id(id)) {
-            found_count++;
-        }
-    }
-
-    log_message("[FuncEnum] Enumeration complete: %d functions cached", found_count);
-
-    // Log some key functions we're looking for
-    const char *key_funcs[] = {
-        "QRY_IsTagged", "IsTagged", "GetDistanceTo", "QRY_GetDistance",
-        "DialogRequestStop", "QRY_StartDialog_Fixed", "StartDialog",
-        "DB_Players", "CharacterGetDisplayName", NULL
-    };
-
-    log_message("[FuncEnum] Checking key functions:");
-    for (int i = 0; key_funcs[i]; i++) {
-        uint32_t fid = lookup_function_by_name(key_funcs[i]);
-        if (fid != INVALID_FUNCTION_ID) {
-            log_message("  %s -> 0x%08x", key_funcs[i], fid);
-        }
-    }
-}
-
-/**
- * Cache function from observed event (called from event handler)
- * This is a fallback when enumeration didn't find everything
- */
-static void try_cache_function_from_event(uint32_t funcId) {
-    // Skip if already cached
-    if (get_function_name(funcId) != NULL) {
-        return;
-    }
-
-    // Try to get the function definition
-    try_cache_function_by_id(funcId);
-}
-
-/**
- * Get function name from function ID
- * First checks known events table, then the dynamic cache
- */
-static const char *get_function_name(uint32_t funcId) {
-    // Check known events table first (hardcoded mappings)
-    for (int i = 0; g_knownEvents[i].name != NULL; i++) {
-        if (g_knownEvents[i].funcId == funcId) {
-            return g_knownEvents[i].name;
-        }
-    }
-
-    // Check hash table (fast path for dynamic cache)
-    int hash = func_id_hash(funcId);
-    int16_t idx = g_funcIdHashTable[hash];
-    if (idx >= 0 && g_funcCache[idx].id == funcId) {
-        return g_funcCache[idx].name;
-    }
-
-    // Linear search (for hash collisions)
-    for (int i = 0; i < g_funcCacheCount; i++) {
-        if (g_funcCache[i].id == funcId) {
-            return g_funcCache[i].name;
-        }
-    }
-
-    return NULL;
-}
-
-/**
- * Look up function ID by name
- * Returns INVALID_FUNCTION_ID if not found
- */
-static uint32_t lookup_function_by_name(const char *name) {
-    if (!name) return INVALID_FUNCTION_ID;
-
-    // Check known events first (fast path for common names)
-    for (int i = 0; g_knownEvents[i].name != NULL; i++) {
-        if (strcmp(g_knownEvents[i].name, name) == 0 && g_knownEvents[i].funcId != 0) {
-            return g_knownEvents[i].funcId;
-        }
-    }
-
-    // Search dynamic cache
-    for (int i = 0; i < g_funcCacheCount; i++) {
-        if (strcmp(g_funcCache[i].name, name) == 0) {
-            return g_funcCache[i].id;
-        }
-    }
-
-    return INVALID_FUNCTION_ID;
-}
-
-/**
- * Get function info (arity and type) by name
- * Returns 1 on success, 0 if not found
- */
-__attribute__((unused))
-static int get_function_info(const char *name, uint8_t *out_arity, uint8_t *out_type) {
-    if (!name) return 0;
-
-    // Check known events
-    for (int i = 0; g_knownEvents[i].name != NULL; i++) {
-        if (strcmp(g_knownEvents[i].name, name) == 0) {
-            if (out_arity) *out_arity = g_knownEvents[i].expectedArity;
-            if (out_type) *out_type = OSI_FUNC_EVENT;
-            return 1;
-        }
-    }
-
-    // Search dynamic cache
-    for (int i = 0; i < g_funcCacheCount; i++) {
-        if (strcmp(g_funcCache[i].name, name) == 0) {
-            if (out_arity) *out_arity = g_funcCache[i].arity;
-            if (out_type) *out_type = g_funcCache[i].type;
-            return 1;
-        }
-    }
-
-    return 0;
 }
 
 // ============================================================================
@@ -3102,7 +2178,7 @@ static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args) {
  */
 __attribute__((unused))
 static int osiris_query(const char *funcName, OsiArgumentDesc *args) {
-    uint32_t funcId = lookup_function_by_name(funcName);
+    uint32_t funcId = osi_func_lookup_id(funcName);
     if (funcId == INVALID_FUNCTION_ID) {
         log_message("[OsiQuery] Function '%s' not found in cache", funcName);
         return 0;
@@ -3134,7 +2210,7 @@ static int osiris_call_by_id(uint32_t funcId, OsiArgumentDesc *args) {
  */
 __attribute__((unused))
 static int osiris_call(const char *funcName, OsiArgumentDesc *args) {
-    uint32_t funcId = lookup_function_by_name(funcName);
+    uint32_t funcId = osi_func_lookup_id(funcName);
     if (funcId == INVALID_FUNCTION_ID) {
         log_message("[OsiCall] Function '%s' not found in cache", funcName);
         return 0;
@@ -3154,9 +2230,9 @@ static int osiris_call(const char *funcName, OsiArgumentDesc *args) {
  */
 static int osi_is_tagged(const char *character, const char *tag) {
     // Look up QRY_IsTagged or IsTagged
-    uint32_t funcId = lookup_function_by_name("QRY_IsTagged");
+    uint32_t funcId = osi_func_lookup_id("QRY_IsTagged");
     if (funcId == INVALID_FUNCTION_ID) {
-        funcId = lookup_function_by_name("IsTagged");
+        funcId = osi_func_lookup_id("IsTagged");
     }
     if (funcId == INVALID_FUNCTION_ID) {
         // Function not yet discovered
@@ -3177,9 +2253,9 @@ static int osi_is_tagged(const char *character, const char *tag) {
  * Returns distance in meters, or -1.0 on error
  */
 static float osi_get_distance_to(const char *char1, const char *char2) {
-    uint32_t funcId = lookup_function_by_name("QRY_GetDistance");
+    uint32_t funcId = osi_func_lookup_id("QRY_GetDistance");
     if (funcId == INVALID_FUNCTION_ID) {
-        funcId = lookup_function_by_name("GetDistanceTo");
+        funcId = osi_func_lookup_id("GetDistanceTo");
     }
     if (funcId == INVALID_FUNCTION_ID) {
         return -1.0f;
@@ -3204,9 +2280,9 @@ static float osi_get_distance_to(const char *char1, const char *char2) {
  * DialogRequestStop(dialog) - Stop a dialog
  */
 static void osi_dialog_request_stop(const char *dialog) {
-    uint32_t funcId = lookup_function_by_name("DialogRequestStop");
+    uint32_t funcId = osi_func_lookup_id("DialogRequestStop");
     if (funcId == INVALID_FUNCTION_ID) {
-        funcId = lookup_function_by_name("Proc_DialogRequestStop");
+        funcId = osi_func_lookup_id("Proc_DialogRequestStop");
     }
     if (funcId == INVALID_FUNCTION_ID) {
         log_message("[OsiCall] DialogRequestStop not found");
@@ -3316,17 +2392,17 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     }
 
     // Get function name if available (may trigger cache lookup)
-    const char *funcName = get_function_name(funcId);
+    const char *funcName = osi_func_get_name(funcId);
     int arity = count_osi_args(args);
 
     // Try to cache this function if we don't know it yet
     if (!funcName) {
-        try_cache_function_from_event(funcId);
-        funcName = get_function_name(funcId);  // Try again after caching
+        osi_func_cache_from_event(funcId);
+        funcName = osi_func_get_name(funcId);  // Try again after caching
     }
 
     // Track unique function IDs for analysis
-    track_seen_func_id(funcId, (uint8_t)arity);
+    osi_func_track_seen(funcId, (uint8_t)arity);
 
     // Track player GUIDs from event arguments (learn as we observe events)
     OsiArgumentDesc *scanArg = args;
@@ -3555,6 +2631,10 @@ static void install_hooks(void) {
     // Get the global OsiFunctionMan pointer
     g_pOsiFunctionMan = (void **)dlsym(osiris, "_OsiFunctionMan");
 
+    // Initialize function cache module with runtime pointers
+    osi_func_cache_set_runtime(pfn_pFunctionData, g_pOsiFunctionMan);
+    osi_func_cache_set_known_events(g_knownEvents);
+
     log_message("Osiris function pointers:");
     log_message("  InternalQuery: %p%s", (void*)pfn_InternalQuery,
                 pfn_InternalQuery ? "" : " (NOT FOUND)");
@@ -3609,6 +2689,29 @@ static void install_hooks(void) {
 
     log_message("Hooks installed: %d/3", hook_count);
     hooks_installed = 1;
+
+    // Initialize Entity System
+    // Find main game binary base address
+    uint32_t image_count = _dyld_image_count();
+    for (uint32_t i = 0; i < image_count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, "Baldur") && strstr(name, "Gate 3")) {
+            const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(i);
+            intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+            // The base address is the header address minus the slide
+            // But for function offsets, we need to add slide to Ghidra addresses
+            void *binary_base = (void *)((uintptr_t)header);
+            log_message("Found main game binary at: %p (slide: 0x%lx)", binary_base, (long)slide);
+
+            int result = entity_system_init(binary_base);
+            if (result == 0) {
+                log_message("Entity system initialized (hook installed, waiting for combat)");
+            } else {
+                log_message("WARNING: Entity system initialization failed: %d", result);
+            }
+            break;
+        }
+    }
 #else
     log_message("Hooks DISABLED (ENABLE_HOOKS=0)");
 #endif
@@ -3692,17 +2795,11 @@ static void image_added_callback(const struct mach_header *mh, intptr_t slide) {
  */
 __attribute__((constructor))
 static void bg3se_init(void) {
-    // Clear log file
-    FILE *f = fopen(LOG_FILE, "w");
-    if (f) {
-        fprintf(f, "=== %s v%s ===\n", BG3SE_NAME, BG3SE_VERSION);
-        fprintf(f, "Injection timestamp: %ld\n", (long)time(NULL));
-        fprintf(f, "Process ID: %d\n", getpid());
-        fclose(f);
-    }
+    // Initialize logging
+    log_init();
 
-    // Initialize function cache hash table
-    init_func_hash_table();
+    // Initialize function cache module
+    osi_func_cache_init();
 
     log_message("=== %s v%s initialized ===", BG3SE_NAME, BG3SE_VERSION);
     log_message("Running in process: %s (PID: %d)", getprogname(), getpid());
@@ -3752,15 +2849,9 @@ static void bg3se_cleanup(void) {
     log_message("  COsiris::Load: %d calls", load_call_count);
     log_message("  COsiris::Event: %d calls", event_call_count);
 
-    // Log unique function IDs summary
-    log_message("Unique function IDs observed: %d", g_seenFuncIdCount);
-    for (int i = 0; i < g_seenFuncIdCount && i < 50; i++) {
-        log_message("  [%d] id=%u (0x%08x) arity=%d",
-                   i, g_seenFuncIds[i], g_seenFuncIds[i], g_seenFuncArities[i]);
-    }
-    if (g_seenFuncIdCount > 50) {
-        log_message("  ... and %d more", g_seenFuncIdCount - 50);
-    }
+    // Log function cache summary
+    log_message("Osiris functions: %d cached, %d unique IDs observed",
+                osi_func_get_cache_count(), osi_func_get_seen_count());
 
     // Shutdown Lua
     shutdown_lua();

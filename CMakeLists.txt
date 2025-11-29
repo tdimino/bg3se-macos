@@ -22,10 +22,19 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/lib
     ${CMAKE_SOURCE_DIR}/lib/Dobby/include
     ${CMAKE_SOURCE_DIR}/lib/lua/src
+    ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/src/entity
+    ${CMAKE_SOURCE_DIR}/src/osiris
+    ${CMAKE_SOURCE_DIR}/src/pak
 )
 
 add_library(bg3se SHARED
     src/injector/main.c
+    src/core/logging.c
+    src/osiris/pattern_scan.c
+    src/osiris/osiris_functions.c
+    src/pak/pak_reader.c
+    src/entity/entity_system.c
     lib/lz4/lz4.c
 )
 
