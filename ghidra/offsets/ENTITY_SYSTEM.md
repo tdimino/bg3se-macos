@@ -174,3 +174,73 @@ EntityHandle lookup(HashMap *map, Guid *guid) {
 | `EocServerSDM::Init` | `0x1049b1444` | Creates EoCServer singleton |
 | `EocServerSDM::Shutdown` | `0x1049ba808` | Destroys EoCServer singleton |
 | `EocServerSDM::s_IsInitialized` | `0x108a374c0` | Initialization flag |
+
+## ARM64 Calling Convention for TryGetSingleton
+
+### The Problem
+
+`TryGetSingleton` at `0x1010dc924` returns `ls::Result<ComponentPtr, ls::Error>` which is a
+64-byte struct. On ARM64 AAPCS64:
+
+- Structs ≤16 bytes return in x0/x1 registers
+- Structs >16 bytes require caller to pass buffer address in **x8 register**
+
+If we call without providing x8, the function writes to garbage memory → crash.
+
+### ls::Result Layout (64 bytes)
+
+From Ghidra analysis of stores to x19 (saved x8 buffer):
+
+```
+offset 0x00: void* value        (8 bytes) - Component pointer on success
+offset 0x08: uint64_t reserved  (8 bytes) - Zeroed on success
+offset 0x10: uint64_t[4] data   (32 bytes) - Additional data
+offset 0x30: uint8_t has_error  (1 byte)  - 0=success, 1=error
+offset 0x31: padding            (15 bytes) - Alignment padding
+```
+
+### Key Instructions in TryGetSingleton
+
+```asm
+0x1010dc944: mov x19,x8          ; Save return buffer pointer
+...
+; On success path:
+0x1010dca90: stp x10,xzr,[x19]   ; Store component pointer at offset 0x00
+0x1010dca94: str x9,[x19, #0x18] ; Store additional data
+...
+; On error path:
+0x1010dcab4: strb w8,[x19, #0x30]; Store error=1 at offset 0x30
+```
+
+### Correct Calling Convention
+
+```c
+typedef struct __attribute__((aligned(16))) {
+    void* value;
+    uint64_t reserved1;
+    uint64_t reserved2[4];
+    uint8_t has_error;
+    uint8_t _pad[15];
+} LsResult;
+
+void* call_try_get_singleton_with_x8(void *fn, void *entityWorld) {
+    LsResult result = {0};
+    result.has_error = 1;
+
+    __asm__ volatile (
+        "mov x8, %[buf]\n"
+        "mov x0, %[world]\n"
+        "blr %[fn]\n"
+        : "+m"(result)
+        : [buf] "r"(&result), [world] "r"(entityWorld), [fn] "r"(fn)
+        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
+          "x14", "x15", "x16", "x17", "x19", "x20",
+          "x21", "x22", "x23", "x24", "x25", "x26",
+          "x30", "memory"
+    );
+
+    return (result.has_error == 0) ? result.value : NULL;
+}
+```
+
+**Note:** Do NOT clobber x18 (platform register) or x29 (frame pointer).

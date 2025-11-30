@@ -24,7 +24,8 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Ghidra RE Analysis | ✅ Complete | Headless analysis for offset discovery |
 | Function Enumeration | 🔄 Testing | OsiFunctionMan offset-based lookup |
 | EntityWorld Capture | ✅ Complete | Direct memory read from `esv::EocServer::m_ptr` |
-| GUID → Entity Lookup | 🔄 Blocked | [TryGetSingleton crash](#1) needs fix |
+| GUID → Entity Lookup | ✅ Complete | ARM64 ABI fix for TryGetSingleton (see below) |
+| Component Access | 🔄 Partial | GetComponent addresses need Ghidra verification |
 
 ### Verified Working (Nov 29, 2025)
 
@@ -52,7 +53,8 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **MRC mod receiving real game data and identifying dialog participants**
 - ✅ **EntityWorld capture via direct memory read** (macOS Hardened Runtime workaround)
 - ✅ **EoCServer singleton discovered at `esv::EocServer::m_ptr`** via Ghidra analysis
-- ✅ **Component accessors for Transform, Level, Physics, Visual**
+- ✅ **TryGetSingleton ARM64 ABI fix** - 64-byte ls::Result requires x8 register for indirect return
+- ✅ **GUID → EntityHandle lookup working** - HashMap with 1873 entity GUIDs successfully queried
 - ✅ **Ext.Entity Lua API registered and functional**
 
 ## Requirements
@@ -172,6 +174,44 @@ BG3 can run either natively (ARM64) or under Rosetta (x86_64). The `open --env` 
 #### 4. Return Values Must Be Preserved
 
 When hooking C++ member functions, the return value must be captured and returned from the hook. Failing to do so causes the game to fail silently (e.g., returning to main menu after load).
+
+#### 5. ARM64 ABI for Large Struct Returns
+
+Functions returning structs larger than 16 bytes on ARM64 use **indirect return** via the x8 register. The caller must:
+1. Allocate a buffer for the return value
+2. Pass the buffer address in x8 before calling
+3. Read the result from the buffer after the call
+
+BG3's `TryGetSingleton<T>` returns `ls::Result<ComponentPtr, ls::Error>` which is a 64-byte struct:
+
+```c
+typedef struct __attribute__((aligned(16))) {
+    void* value;           // 0x00: Component pointer on success
+    uint64_t reserved1;    // 0x08: Reserved
+    uint64_t reserved2[4]; // 0x10-0x2F: Additional data
+    uint8_t has_error;     // 0x30: Error flag (0=success, 1=error)
+    uint8_t _pad[15];      // 0x31-0x3F: Padding
+} LsResult;
+
+// Correct ARM64 calling convention
+void* call_with_x8_buffer(void* fn, void* arg) {
+    LsResult result = {0};
+    result.has_error = 1;
+    __asm__ volatile (
+        "mov x8, %[buf]\n"   // x8 = return buffer address
+        "mov x0, %[arg]\n"   // x0 = function argument
+        "blr %[fn]\n"        // call function
+        : "+m"(result)
+        : [buf] "r"(&result), [arg] "r"(arg), [fn] "r"(fn)
+        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
+          "x14", "x15", "x16", "x17", "x19", "x20", "x21", "x22",
+          "x23", "x24", "x25", "x26", "x30", "memory"
+    );
+    return (result.has_error == 0) ? result.value : NULL;
+}
+```
+
+This was discovered through Ghidra analysis of `TryGetSingleton` which saves x8 to x19 at entry (`mov x19, x8`) and writes the result via `stp x10, xzr, [x19]` and error flag via `strb w8, [x19, #0x30]`.
 
 ### Architecture
 
@@ -362,13 +402,9 @@ This is useful for examining mod structure and Lua scripts. Note: BG3SE-macOS no
 
 See [GitHub Issues](https://github.com/tdimino/bg3se-macos/issues) for detailed task tracking.
 
-### Current Blockers
-
-1. **[#1 - TryGetSingleton crash](https://github.com/tdimino/bg3se-macos/issues/1)** - Blocks GUID → EntityHandle lookup
-
 ### Next Steps
 
-1. **[#2 - Component Discovery](https://github.com/tdimino/bg3se-macos/issues/2)** - Find eoc:: component addresses (Stats, Health, Armor)
+1. **[#2 - Component Discovery](https://github.com/tdimino/bg3se-macos/issues/2)** - Find correct GetComponent addresses via Ghidra
 2. **[#3 - Stats System](https://github.com/tdimino/bg3se-macos/issues/3)** - Read/write game stats via `Ext.Stats`
 3. **[#5 - Debug Console](https://github.com/tdimino/bg3se-macos/issues/5)** - In-game Lua REPL
 
@@ -381,6 +417,7 @@ See [GitHub Issues](https://github.com/tdimino/bg3se-macos/issues) for detailed 
 
 ### Completed
 
+- ✅ **[#1 - TryGetSingleton ARM64 ABI fix](https://github.com/tdimino/bg3se-macos/issues/1)** - GUID → EntityHandle lookup working (v0.10.3)
 - ✅ EntityWorld capture via direct memory read - bypasses Hardened Runtime (v0.10.2)
 - ✅ Entity/Component System - Ext.Entity API, component accessors (v0.10.0)
 - ✅ Ghidra headless RE analysis - discovered OsiFunctionMan offset (v0.9.8)

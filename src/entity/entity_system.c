@@ -92,20 +92,23 @@ static int g_GuidCacheCount = 0;
 // ecs::EntityWorld::GetComponent<T> template instances
 // These are direct function addresses from Ghidra analysis
 //
-// ls:: components (working - addresses verified)
-#define OFFSET_GET_TRANSFORM_COMPONENT 0x10010d5b00
-#define OFFSET_GET_LEVEL_COMPONENT     0x10010d588c
-#define OFFSET_GET_PHYSICS_COMPONENT   0x101ba0898
-#define OFFSET_GET_VISUAL_COMPONENT    0x102e56350
+// DISABLED: These offsets were malformed (11 hex digits instead of ~10).
+// The addresses like 0x10010d5b00 cause crashes due to invalid function pointers.
+// TODO: Re-verify these addresses via Ghidra and re-enable
+//
+// ls:: components - DISABLED until addresses verified
+#define OFFSET_GET_TRANSFORM_COMPONENT 0  // Was 0x10010d5b00 - WRONG
+#define OFFSET_GET_LEVEL_COMPONENT     0  // Was 0x10010d588c - WRONG
+#define OFFSET_GET_PHYSICS_COMPONENT   0  // Was 0x101ba0898 - needs verification
+#define OFFSET_GET_VISUAL_COMPONENT    0  // Was 0x102e56350 - needs verification
 
-// eoc:: components - addresses discovered via Ghidra analysis of template instantiations
-// These are ecs::EntityWorld::GetComponent<T> instantiations
-// Discovered by searching for "__ZN3ecs11EntityWorld12GetComponent" in mangled symbols
-#define OFFSET_GET_STATS_COMPONENT    0x10b2ff516  // GetComponent<eoc::StatsComponent>
-#define OFFSET_GET_BASEHP_COMPONENT   0x10b460744  // GetComponent<eoc::BaseHpComponent>
-#define OFFSET_GET_HEALTH_COMPONENT   0x10b2f2f47  // GetComponent<eoc::HealthComponent>
-#define OFFSET_GET_ARMOR_COMPONENT    0x10b2fe2c4  // GetComponent<eoc::ArmorComponent>
-#define OFFSET_GET_CLASSES_COMPONENT  0  // TODO: Find - not yet located
+// eoc:: components - DISABLED until addresses verified
+// The 11-digit hex values (0x10b2ff516 etc) are clearly wrong
+#define OFFSET_GET_STATS_COMPONENT    0  // Was 0x10b2ff516 - WRONG
+#define OFFSET_GET_BASEHP_COMPONENT   0  // Was 0x10b460744 - WRONG
+#define OFFSET_GET_HEALTH_COMPONENT   0  // Was 0x10b2f2f47 - WRONG
+#define OFFSET_GET_ARMOR_COMPONENT    0  // Was 0x10b2fe2c4 - WRONG
+#define OFFSET_GET_CLASSES_COMPONENT  0  // Not yet located
 
 // Ghidra base address (macOS ARM64)
 #define GHIDRA_BASE_ADDRESS 0x100000000
@@ -190,11 +193,66 @@ typedef struct {
     HashMapGuidEntityHandle Mappings;
 } UuidToHandleMappingComponent;
 
-// TryGetSingleton returns a ls::Result<ComponentPtr, ls::Error>
-// In practice, this appears to return the component pointer directly
-// or NULL on failure (based on ARM64 calling convention)
-typedef void* (*TryGetSingletonFn)(void *entityWorld);
-static TryGetSingletonFn g_TryGetUuidMappingSingleton = NULL;
+// TryGetSingleton returns ls::Result<ComponentPtr, ls::Error>
+// This is a 64-byte struct on ARM64 that requires indirect return via x8 register.
+// Layout (from Ghidra analysis of stores to x19 = saved x8):
+//   offset 0x00: void* value (component pointer, or garbage on error)
+//   offset 0x08: reserved/zeroed on success
+//   offset 0x10-0x2F: additional data
+//   offset 0x30: uint8_t error flag (0=success, 1=error)
+typedef struct __attribute__((aligned(16))) {
+    void* value;               // 0x00: Component pointer
+    uint64_t reserved1;        // 0x08: Reserved
+    uint64_t reserved2[4];     // 0x10-0x2F: Additional data (32 bytes)
+    uint8_t has_error;         // 0x30: Error flag (0=success, 1=error)
+    uint8_t _pad[15];          // 0x31-0x3F: Padding to 64 bytes
+} LsResult;
+
+// Raw function type - do NOT call directly, use call_try_get_singleton_with_x8()
+typedef void (*TryGetSingletonRawFn)(void *entityWorld);
+static TryGetSingletonRawFn g_TryGetUuidMappingSingleton = NULL;
+
+// Wrapper to call TryGetSingleton with proper ARM64 ABI
+// ARM64 calling convention: indirect return structs >16 bytes use x8 for buffer address
+#if defined(__aarch64__) || defined(__arm64__)
+static void* call_try_get_singleton_with_x8(void *fn, void *entityWorld) {
+    LsResult result;
+    memset(&result, 0, sizeof(result));
+    result.has_error = 1;  // Assume error until function sets success
+
+    __asm__ volatile (
+        "mov x8, %[buf]\n"        // x8 = pointer to result buffer (ARM64 ABI for large struct return)
+        "mov x0, %[world]\n"      // x0 = entityWorld parameter
+        "blr %[fn]\n"             // Call the function
+        : "+m"(result)            // result may be modified
+        : [buf] "r"(&result),
+          [world] "r"(entityWorld),
+          [fn] "r"(fn)
+        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
+          "x14", "x15", "x16", "x17", "x19", "x20",
+          "x21", "x22", "x23", "x24", "x25", "x26",
+          "x30", "memory"
+    );
+
+    // Check result
+    if (result.has_error == 0 && result.value != NULL) {
+        log_entity("TryGetSingleton succeeded: value=%p", result.value);
+        return result.value;
+    } else {
+        log_entity("TryGetSingleton failed: has_error=%d, value=%p",
+                   result.has_error, result.value);
+        return NULL;
+    }
+}
+#else
+// x86_64 fallback - struct returns work differently
+static void* call_try_get_singleton_with_x8(void *fn, void *entityWorld) {
+    (void)fn;
+    (void)entityWorld;
+    log_entity("TryGetSingleton not implemented for x86_64");
+    return NULL;
+}
+#endif
 
 // Cached pointer to the UUID mapping component
 static void *g_UuidMappingComponent = NULL;
@@ -659,9 +717,11 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
 
     // Try to get UUID mapping singleton if not cached
     if (!g_UuidMappingComponent && g_TryGetUuidMappingSingleton && g_EntityWorld) {
-        // Attempt to get the singleton component
-        // Note: TryGetSingleton returns ls::Result which may need unpacking
-        g_UuidMappingComponent = g_TryGetUuidMappingSingleton(g_EntityWorld);
+        // TryGetSingleton returns ls::Result<T,E> via x8 buffer (ARM64 ABI)
+        // Use wrapper that properly sets x8 to the result buffer address
+        log_entity("Calling TryGetSingleton with x8 ABI wrapper...");
+        g_UuidMappingComponent = call_try_get_singleton_with_x8(
+            (void*)g_TryGetUuidMappingSingleton, g_EntityWorld);
         if (g_UuidMappingComponent) {
             log_entity("Got UuidToHandleMappingComponent: %p", g_UuidMappingComponent);
         } else {
@@ -681,12 +741,48 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
         UuidToHandleMappingComponent *mapping = (UuidToHandleMappingComponent*)g_UuidMappingComponent;
         HashMapGuidEntityHandle *hashmap = &mapping->Mappings;
 
+        // Debug: dump raw bytes at component pointer
+        static bool dumped = false;
+        if (!dumped) {
+            dumped = true;
+            log_entity("=== UuidToHandleMappingComponent raw dump ===");
+            log_entity("Component ptr: %p", g_UuidMappingComponent);
+            uint8_t *bytes = (uint8_t*)g_UuidMappingComponent;
+            for (int i = 0; i < 128; i += 8) {
+                log_entity("  +0x%02x: %02x %02x %02x %02x %02x %02x %02x %02x",
+                           i, bytes[i], bytes[i+1], bytes[i+2], bytes[i+3],
+                           bytes[i+4], bytes[i+5], bytes[i+6], bytes[i+7]);
+            }
+            log_entity("=== HashMap field values ===");
+            log_entity("  HashKeys.buf: %p, size: %u", (void*)hashmap->HashKeys.buf, hashmap->HashKeys.size);
+            log_entity("  NextIds.buf: %p, cap: %u, size: %u", (void*)hashmap->NextIds.buf, hashmap->NextIds.capacity, hashmap->NextIds.size);
+            log_entity("  Keys.buf: %p, cap: %u, size: %u", (void*)hashmap->Keys.buf, hashmap->Keys.capacity, hashmap->Keys.size);
+            log_entity("  Values.buf: %p, size: %u", (void*)hashmap->Values.buf, hashmap->Values.size);
+
+            // Dump first few keys if available
+            if (hashmap->Keys.buf && hashmap->Keys.size > 0) {
+                int dump_count = hashmap->Keys.size < 5 ? hashmap->Keys.size : 5;
+                log_entity("  First %d keys:", dump_count);
+                for (int i = 0; i < dump_count; i++) {
+                    char guid_str_buf[64];
+                    guid_to_string(&hashmap->Keys.buf[i], guid_str_buf);
+                    log_entity("    [%d] %s (hi=0x%llx, lo=0x%llx)", i, guid_str_buf,
+                               (unsigned long long)hashmap->Keys.buf[i].hi,
+                               (unsigned long long)hashmap->Keys.buf[i].lo);
+                }
+            }
+        }
+
         // Validate HashMap structure
         if (!hashmap->HashKeys.buf || hashmap->HashKeys.size == 0) {
             log_entity("HashMap not initialized (HashKeys.buf=%p, size=%u)",
                        (void*)hashmap->HashKeys.buf, hashmap->HashKeys.size);
             return ENTITY_HANDLE_INVALID;
         }
+
+        // Debug: show parsed GUID
+        log_entity("Looking up GUID: %s (hi=0x%llx, lo=0x%llx)", guid_str,
+                   (unsigned long long)guid.hi, (unsigned long long)guid.lo);
 
         // Hash the GUID: hash = lo ^ hi
         uint64_t hash = guid.lo ^ guid.hi;
@@ -885,16 +981,24 @@ int entity_system_init(void *main_binary_base) {
 
     // Set up function pointers for component accessors and singleton getters
     // These don't need hooks - we just need to know where to call
-    g_TryGetUuidMappingSingleton = (TryGetSingletonFn)(OFFSET_TRY_GET_UUID_MAPPING_SINGLETON - ghidra_base + actual_base);
+    g_TryGetUuidMappingSingleton = (TryGetSingletonRawFn)(OFFSET_TRY_GET_UUID_MAPPING_SINGLETON - ghidra_base + actual_base);
 
-    // ls:: components (working - addresses verified via Ghidra)
-    g_GetTransformComponent = (GetComponentFn)(OFFSET_GET_TRANSFORM_COMPONENT - ghidra_base + actual_base);
-    g_GetLevelComponent = (GetComponentFn)(OFFSET_GET_LEVEL_COMPONENT - ghidra_base + actual_base);
-    g_GetPhysicsComponent = (GetComponentFn)(OFFSET_GET_PHYSICS_COMPONENT - ghidra_base + actual_base);
-    g_GetVisualComponent = (GetComponentFn)(OFFSET_GET_VISUAL_COMPONENT - ghidra_base + actual_base);
+    // ls:: components - all DISABLED until addresses are verified via Ghidra
+    // When offset is 0, pointer stays NULL (safe)
+    if (OFFSET_GET_TRANSFORM_COMPONENT != 0) {
+        g_GetTransformComponent = (GetComponentFn)(OFFSET_GET_TRANSFORM_COMPONENT - ghidra_base + actual_base);
+    }
+    if (OFFSET_GET_LEVEL_COMPONENT != 0) {
+        g_GetLevelComponent = (GetComponentFn)(OFFSET_GET_LEVEL_COMPONENT - ghidra_base + actual_base);
+    }
+    if (OFFSET_GET_PHYSICS_COMPONENT != 0) {
+        g_GetPhysicsComponent = (GetComponentFn)(OFFSET_GET_PHYSICS_COMPONENT - ghidra_base + actual_base);
+    }
+    if (OFFSET_GET_VISUAL_COMPONENT != 0) {
+        g_GetVisualComponent = (GetComponentFn)(OFFSET_GET_VISUAL_COMPONENT - ghidra_base + actual_base);
+    }
 
-    // eoc:: components (TODO: addresses not yet discovered)
-    // When addresses are found, update OFFSET_GET_*_COMPONENT defines and uncomment:
+    // eoc:: components - all DISABLED until addresses are verified
     if (OFFSET_GET_STATS_COMPONENT != 0) {
         g_GetStatsComponent = (GetComponentFn)(OFFSET_GET_STATS_COMPONENT - ghidra_base + actual_base);
     }
@@ -1001,11 +1105,11 @@ static int lua_entity_test(lua_State *L) {
 
     log_entity("EntityWorld: %p", g_EntityWorld);
 
-    // Test GUIDs (common companions)
+    // Test GUIDs - use ones from HashMap dump plus template GUIDs
     const char *test_guids[] = {
-        "c7c13742-bacd-460a-8f65-f864fe41f255",  // Astarion
-        "3ed74f06-3c60-42dc-83f6-f034cb47c679",  // Shadowheart
-        "58a69333-40bf-8358-1d17-fff240d7fb12",  // Lae'zel
+        "a5eaeafe-220d-bc4d-4cc3-b94574d334c7",  // From HashMap dump [0]
+        "6e250e36-614a-a8dc-4104-45dabb8405f2",  // From HashMap dump [1]
+        "c7c13742-bacd-460a-8f65-f864fe41f255",  // Astarion template
         NULL
     };
 
@@ -1016,7 +1120,7 @@ static int lua_entity_test(lua_State *L) {
         log_entity("Testing GUID: %s", guid);
 
         EntityHandle handle = entity_get_by_guid(guid);
-        if (handle == 0) {
+        if (!entity_is_valid(handle)) {
             log_entity("  Entity not found");
             continue;
         }
