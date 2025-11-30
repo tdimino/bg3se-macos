@@ -347,6 +347,53 @@ void mod_detect_enabled(void) {
         log_message("Total SE mods: %d", se_mod_count);
     }
     log_message("============================");
+
+    // Development feature: Also scan /tmp/ for test mods not in modsettings.lsx
+    log_message("=== Scanning for Dev Test Mods ===");
+    DIR *tmp_dir = opendir("/tmp");
+    if (tmp_dir) {
+        struct dirent *entry;
+        while ((entry = readdir(tmp_dir)) != NULL) {
+            // Look for directories ending in _extracted
+            size_t name_len = strlen(entry->d_name);
+            if (name_len > 10 && strcmp(entry->d_name + name_len - 10, "_extracted") == 0) {
+                // Extract mod name (everything before _extracted)
+                char mod_name[MAX_MOD_NAME_LEN];
+                size_t mod_name_len = name_len - 10;
+                if (mod_name_len >= MAX_MOD_NAME_LEN) continue;
+
+                strncpy(mod_name, entry->d_name, mod_name_len);
+                mod_name[mod_name_len] = '\0';
+
+                // Check if already in SE mods list
+                int already_added = 0;
+                for (int i = 0; i < se_mod_count; i++) {
+                    if (strcmp(se_mods[i], mod_name) == 0) {
+                        already_added = 1;
+                        break;
+                    }
+                }
+                if (already_added) continue;
+
+                // Check if this extracted dir has ScriptExtender support
+                char config_path[MAX_PATH_LEN];
+                snprintf(config_path, sizeof(config_path),
+                         "/tmp/%s/Mods/%s/ScriptExtender/Config.json",
+                         entry->d_name, mod_name);
+
+                if (file_contains_string(config_path, "\"Lua\"")) {
+                    if (se_mod_count < MAX_MODS) {
+                        strncpy(se_mods[se_mod_count], mod_name, MAX_MOD_NAME_LEN - 1);
+                        se_mods[se_mod_count][MAX_MOD_NAME_LEN - 1] = '\0';
+                        se_mod_count++;
+                        log_message("  [DEV] %s (from /tmp/%s/)", mod_name, entry->d_name);
+                    }
+                }
+            }
+        }
+        closedir(tmp_dir);
+    }
+    log_message("==================================");
 }
 
 int mod_get_detected_count(void) {

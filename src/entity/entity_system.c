@@ -14,6 +14,10 @@
 #include <string.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#include <mach-o/getsect.h>
+#include <mach/mach.h>
+#include <sys/mman.h>
 
 // Include Dobby for inline hooking (suppress third-party warnings)
 #pragma clang diagnostic push
@@ -42,6 +46,7 @@ static void log_entity(const char *fmt, ...) {
 // Global State
 // ============================================================================
 
+static void *g_EoCServer = NULL;       // esv::EoCServer* singleton
 static EntityWorldPtr g_EntityWorld = NULL;
 static void *g_MainBinaryBase = NULL;
 static bool g_Initialized = false;
@@ -59,8 +64,22 @@ static int g_GuidCacheCount = 0;
 // From Ghidra analysis - see ghidra/ENTITY_OFFSETS.md
 // ============================================================================
 
+// esv::EocServer::StartUp(eoc::ServerInit const&)
+// Called once during server initialization - safe to hook
+// First parameter (x0) is the EoCServer* this pointer
+#define OFFSET_EOC_SERVER_STARTUP 0x10110f0d0
+
+// Offset of EntityWorld* within EoCServer struct (from Windows BG3SE analysis)
+// This matches the Windows offset exactly
+#define OFFSET_ENTITYWORLD_IN_EOCSERVER 0x288
+
+// esv::EocServer::m_ptr - Static member holding the EoCServer singleton pointer
+// Discovered via Ghidra analysis of symbol __ZN3esv9EocServer5m_ptrE
+// This is a global pointer in __DATA that we can read directly without hooks
+#define OFFSET_EOCSERVER_SINGLETON_PTR 0x10898e8b8
+
 // eoc::CombatHelpers::LEGACY_IsInCombat(EntityHandle, EntityWorld&)
-// This is called frequently during combat, gives us EntityWorld
+// Note: Hooking this causes crashes during save load - DO NOT USE
 #define OFFSET_LEGACY_IS_IN_COMBAT 0x10124f92c
 
 // eoc::CombatHelpers::LEGACY_GetCombatFromGuid(Guid&, EntityWorld&)
@@ -79,21 +98,14 @@ static int g_GuidCacheCount = 0;
 #define OFFSET_GET_PHYSICS_COMPONENT   0x101ba0898
 #define OFFSET_GET_VISUAL_COMPONENT    0x102e56350
 
-// eoc:: components (TODO - addresses not yet discovered)
-// These need to be found via:
-// 1. Runtime detection by hooking functions that access them
-// 2. More targeted Ghidra analysis (template instantiations may be elsewhere)
-// String addresses for reference:
-//   eoc::StatsComponent:  0x107b7ca22
-//   eoc::BaseHpComponent: 0x107b84c63
-//   eoc::ArmorComponent:  0x107b7c9e7
-//   eoc::HealthComponent: 0x107ba9b5c
-//   eoc::ClassesComponent: 0x107b7ca5d
-#define OFFSET_GET_STATS_COMPONENT    0  // TODO: Find via RE
-#define OFFSET_GET_BASEHP_COMPONENT   0  // TODO: Find via RE
-#define OFFSET_GET_HEALTH_COMPONENT   0  // TODO: Find via RE
-#define OFFSET_GET_ARMOR_COMPONENT    0  // TODO: Find via RE
-#define OFFSET_GET_CLASSES_COMPONENT  0  // TODO: Find via RE
+// eoc:: components - addresses discovered via Ghidra analysis of template instantiations
+// These are ecs::EntityWorld::GetComponent<T> instantiations
+// Discovered by searching for "__ZN3ecs11EntityWorld12GetComponent" in mangled symbols
+#define OFFSET_GET_STATS_COMPONENT    0x10b2ff516  // GetComponent<eoc::StatsComponent>
+#define OFFSET_GET_BASEHP_COMPONENT   0x10b460744  // GetComponent<eoc::BaseHpComponent>
+#define OFFSET_GET_HEALTH_COMPONENT   0x10b2f2f47  // GetComponent<eoc::HealthComponent>
+#define OFFSET_GET_ARMOR_COMPONENT    0x10b2fe2c4  // GetComponent<eoc::ArmorComponent>
+#define OFFSET_GET_CLASSES_COMPONENT  0  // TODO: Find - not yet located
 
 // Ghidra base address (macOS ARM64)
 #define GHIDRA_BASE_ADDRESS 0x100000000
@@ -188,28 +200,396 @@ static TryGetSingletonFn g_TryGetUuidMappingSingleton = NULL;
 static void *g_UuidMappingComponent = NULL;
 
 // ============================================================================
+// Memory Scanning for EoCServer Singleton
+// ============================================================================
+
+// Helper: Check if a pointer looks like a valid heap/data address
+static bool is_valid_pointer(void *ptr) {
+    if (!ptr) return false;
+
+    uintptr_t addr = (uintptr_t)ptr;
+
+    // On macOS ARM64, valid heap/data addresses are typically in high ranges
+    // Reject obviously invalid addresses
+    if (addr < 0x100000000ULL) return false;  // Too low
+    if (addr > 0x800000000000ULL) return false;  // Too high (beyond typical user space)
+
+    // Try to read from the address to verify it's accessible
+    // Use vm_read to safely check without crashing
+    vm_size_t data_size = sizeof(void*);
+    vm_offset_t data;
+    mach_port_t task = mach_task_self();
+    kern_return_t kr = vm_read(task, (vm_address_t)addr, data_size, &data, (mach_msg_type_number_t*)&data_size);
+
+    if (kr == KERN_SUCCESS) {
+        vm_deallocate(task, data, data_size);
+        return true;
+    }
+
+    return false;
+}
+
+// Helper: Get the main binary's __DATA segment bounds
+static bool get_data_segment_bounds(void *binary_base, uintptr_t *start, uintptr_t *end) {
+    if (!binary_base || !start || !end) return false;
+
+    const struct mach_header_64 *header = (const struct mach_header_64 *)binary_base;
+
+    // Verify it's a 64-bit Mach-O
+    if (header->magic != MH_MAGIC_64) {
+        log_entity("Not a 64-bit Mach-O binary");
+        return false;
+    }
+
+    // Walk load commands to find __DATA segment
+    const uint8_t *ptr = (const uint8_t *)binary_base + sizeof(struct mach_header_64);
+
+    for (uint32_t i = 0; i < header->ncmds; i++) {
+        const struct load_command *cmd = (const struct load_command *)ptr;
+
+        if (cmd->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *seg = (const struct segment_command_64 *)ptr;
+
+            // Look for __DATA or __DATA_CONST segments
+            if (strncmp(seg->segname, "__DATA", 6) == 0) {
+                *start = (uintptr_t)binary_base + seg->vmaddr - 0x100000000ULL;
+                *end = *start + seg->vmsize;
+                log_entity("Found %s segment: 0x%llx - 0x%llx (size: 0x%llx)",
+                           seg->segname, (unsigned long long)*start,
+                           (unsigned long long)*end, (unsigned long long)seg->vmsize);
+                return true;
+            }
+        }
+
+        ptr += cmd->cmdsize;
+    }
+
+    log_entity("__DATA segment not found");
+    return false;
+}
+
+// Scan memory to find EoCServer singleton pointer
+// Strategy: Look for a global pointer that, when dereferenced,
+// contains a pointer at offset 0x288 (EntityWorld)
+static void *scan_for_eocserver_singleton(void) {
+    if (!g_MainBinaryBase) {
+        log_entity("Cannot scan: main binary base not set");
+        return NULL;
+    }
+
+    log_entity("=== Scanning for EoCServer Singleton ===");
+
+    // Get __DATA segment bounds
+    uintptr_t data_start = 0, data_end = 0;
+    if (!get_data_segment_bounds(g_MainBinaryBase, &data_start, &data_end)) {
+        log_entity("Failed to get __DATA segment bounds");
+        return NULL;
+    }
+
+    // Also check __DATA_CONST and other data segments
+    // For now, scan a reasonable range around the main binary
+    uintptr_t scan_start = data_start;
+    uintptr_t scan_end = data_end;
+
+    log_entity("Scanning range: 0x%llx - 0x%llx",
+               (unsigned long long)scan_start, (unsigned long long)scan_end);
+
+    int candidates_checked = 0;
+    int valid_candidates = 0;
+
+    // Scan for pointer-aligned addresses
+    for (uintptr_t addr = scan_start; addr < scan_end; addr += sizeof(void*)) {
+        // Read potential pointer from this address
+        void **potential_global = (void **)addr;
+        void *potential_eocserver = *potential_global;
+
+        // Skip NULL or invalid-looking pointers
+        if (!potential_eocserver) continue;
+        if ((uintptr_t)potential_eocserver < 0x100000000ULL) continue;
+        if ((uintptr_t)potential_eocserver > 0x800000000000ULL) continue;
+
+        candidates_checked++;
+
+        // Check if this looks like EoCServer by verifying offset 0x288 contains a valid pointer
+        if (!is_valid_pointer(potential_eocserver)) continue;
+
+        valid_candidates++;
+
+        // Read what's at offset 0x288 (EntityWorld*)
+        void **entityworld_ptr = (void **)((char *)potential_eocserver + OFFSET_ENTITYWORLD_IN_EOCSERVER);
+
+        // Safely read the EntityWorld pointer
+        vm_size_t data_size = sizeof(void*);
+        vm_offset_t data;
+        kern_return_t kr = vm_read(mach_task_self(), (vm_address_t)entityworld_ptr,
+                                   data_size, &data, (mach_msg_type_number_t*)&data_size);
+
+        if (kr != KERN_SUCCESS) continue;
+
+        void *potential_entityworld = *(void **)data;
+        vm_deallocate(mach_task_self(), data, data_size);
+
+        // Check if EntityWorld pointer looks valid
+        if (!potential_entityworld) continue;
+        if ((uintptr_t)potential_entityworld < 0x100000000ULL) continue;
+        if ((uintptr_t)potential_entityworld > 0x800000000000ULL) continue;
+
+        // Further validation: EntityWorld should also be readable
+        if (!is_valid_pointer(potential_entityworld)) continue;
+
+        log_entity("CANDIDATE FOUND at global 0x%llx:", (unsigned long long)addr);
+        log_entity("  EoCServer*: %p", potential_eocserver);
+        log_entity("  EntityWorld* (at +0x288): %p", potential_entityworld);
+
+        // This looks promising! Return it
+        return potential_eocserver;
+    }
+
+    log_entity("Scan complete: checked %d candidates, %d had valid pointers, none matched pattern",
+               candidates_checked, valid_candidates);
+
+    return NULL;
+}
+
+// Alternative: Scan using known function patterns (ARM64 ADRP/LDR)
+// This looks for the instruction pattern that loads EoCServer from a global
+static void *scan_for_eocserver_via_instructions(void) {
+    if (!g_MainBinaryBase) return NULL;
+
+    log_entity("=== Scanning via instruction patterns ===");
+
+    // The StartUp function at known offset loads EoCServer
+    // We can look at functions that access EoCServer+0x288 (EntityWorld)
+    // Pattern: ADRP Xn, page; LDR Xn, [Xn, #offset]
+
+    uintptr_t ghidra_base = GHIDRA_BASE_ADDRESS;
+    uintptr_t actual_base = (uintptr_t)g_MainBinaryBase;
+
+    // Address of a function we know accesses EoCServer
+    // esv::EocServer::GetEntityWorld would be ideal, but we'll use StartUp
+    uintptr_t startup_addr = OFFSET_EOC_SERVER_STARTUP - ghidra_base + actual_base;
+
+    log_entity("Analyzing function at 0x%llx for EoCServer global reference",
+               (unsigned long long)startup_addr);
+
+    // Read the first 64 instructions of StartUp looking for ADRP pattern
+    uint32_t *instructions = (uint32_t *)startup_addr;
+
+    for (int i = 0; i < 64; i++) {
+        uint32_t instr = instructions[i];
+
+        // Check for ADRP instruction (bits 31, 28-24 = 1x0x0)
+        // ADRP Rd, label: 1|immlo|10000|immhi|Rd
+        if ((instr & 0x9F000000) == 0x90000000) {
+            // This is ADRP
+            uint32_t rd = instr & 0x1F;
+            int64_t immhi = ((int64_t)(instr >> 5) & 0x7FFFF) << 2;
+            int64_t immlo = (instr >> 29) & 0x3;
+            int64_t imm = (immhi | immlo) << 12;
+
+            // Sign extend
+            if (imm & (1ULL << 32)) {
+                imm |= 0xFFFFFFFF00000000ULL;
+            }
+
+            uintptr_t page_addr = ((uintptr_t)&instructions[i] & ~0xFFFULL) + imm;
+
+            // Look for following LDR that uses this register
+            for (int j = i + 1; j < i + 8 && j < 64; j++) {
+                uint32_t ldr_instr = instructions[j];
+
+                // LDR (unsigned offset): 11|111|00|01|0|imm12|Rn|Rt
+                if ((ldr_instr & 0xFFC00000) == 0xF9400000) {
+                    uint32_t rn = (ldr_instr >> 5) & 0x1F;
+                    uint32_t imm12 = ((ldr_instr >> 10) & 0xFFF) << 3;  // Scale by 8 for 64-bit
+
+                    if (rn == rd) {
+                        uintptr_t global_addr = page_addr + imm12;
+
+                        log_entity("Found ADRP+LDR pattern at instruction %d:", i);
+                        log_entity("  Page: 0x%llx, Offset: 0x%x",
+                                   (unsigned long long)page_addr, imm12);
+                        log_entity("  Global address: 0x%llx", (unsigned long long)global_addr);
+
+                        // Try to read from this global
+                        if (is_valid_pointer((void *)global_addr)) {
+                            void *potential_eocserver = *(void **)global_addr;
+                            log_entity("  Value at global: %p", potential_eocserver);
+
+                            if (is_valid_pointer(potential_eocserver)) {
+                                // Check offset 0x288
+                                void *potential_ew = *(void **)((char *)potential_eocserver + 0x288);
+                                log_entity("  Value at +0x288: %p", potential_ew);
+
+                                if (is_valid_pointer(potential_ew)) {
+                                    log_entity("  SUCCESS: Found EoCServer singleton!");
+                                    return potential_eocserver;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log_entity("No EoCServer reference found via instruction analysis");
+    return NULL;
+}
+
+// Direct memory read from known global address (primary method)
+// This is the simplest and most reliable approach now that we have the exact address
+static void *read_eocserver_from_global(void) {
+    if (!g_MainBinaryBase) {
+        log_entity("Cannot read EoCServer: main binary base not set");
+        return NULL;
+    }
+
+    // Calculate runtime address of esv::EocServer::m_ptr
+    uintptr_t ghidra_base = GHIDRA_BASE_ADDRESS;
+    uintptr_t actual_base = (uintptr_t)g_MainBinaryBase;
+    uintptr_t global_addr = OFFSET_EOCSERVER_SINGLETON_PTR - ghidra_base + actual_base;
+
+    log_entity("Reading EoCServer from global at 0x%llx", (unsigned long long)global_addr);
+    log_entity("  (Ghidra offset: 0x%llx, base: %p)",
+               (unsigned long long)OFFSET_EOCSERVER_SINGLETON_PTR, g_MainBinaryBase);
+
+    // Safely read the pointer using vm_read
+    vm_size_t data_size = sizeof(void*);
+    vm_offset_t data;
+    kern_return_t kr = vm_read(mach_task_self(), (vm_address_t)global_addr,
+                               data_size, &data, (mach_msg_type_number_t*)&data_size);
+
+    if (kr != KERN_SUCCESS) {
+        log_entity("Failed to read EoCServer global (kern_return: %d)", kr);
+        return NULL;
+    }
+
+    void *eocserver = *(void **)data;
+    vm_deallocate(mach_task_self(), data, data_size);
+
+    if (!eocserver) {
+        log_entity("EoCServer global is NULL (server not yet initialized)");
+        return NULL;
+    }
+
+    log_entity("Read EoCServer pointer: %p", eocserver);
+
+    // Validate the pointer
+    if (!is_valid_pointer(eocserver)) {
+        log_entity("EoCServer pointer appears invalid");
+        return NULL;
+    }
+
+    return eocserver;
+}
+
+// Public function: Try to discover EntityWorld
+bool entity_discover_world(void) {
+    if (g_EntityWorld) {
+        log_entity("EntityWorld already discovered: %p", g_EntityWorld);
+        return true;
+    }
+
+    log_entity("Attempting to discover EntityWorld...");
+
+    // Method 1 (PRIMARY): Direct read from known global address
+    // This is the most reliable method using the address discovered via Ghidra:
+    // esv::EocServer::m_ptr at 0x10898e8b8
+    void *eocserver = read_eocserver_from_global();
+
+    // Method 2 (FALLBACK): Try instruction pattern analysis
+    if (!eocserver) {
+        log_entity("Direct read failed, trying instruction pattern analysis...");
+        eocserver = scan_for_eocserver_via_instructions();
+    }
+
+    // Method 3 (FALLBACK): Data segment scan
+    if (!eocserver) {
+        log_entity("Pattern analysis failed, trying data segment scan...");
+        eocserver = scan_for_eocserver_singleton();
+    }
+
+    if (eocserver) {
+        g_EoCServer = eocserver;
+
+        // Read EntityWorld from offset 0x288
+        void *entityworld = *(void **)((char *)eocserver + OFFSET_ENTITYWORLD_IN_EOCSERVER);
+
+        if (entityworld && is_valid_pointer(entityworld)) {
+            g_EntityWorld = entityworld;
+            log_entity("SUCCESS: Discovered EoCServer=%p, EntityWorld=%p",
+                       g_EoCServer, g_EntityWorld);
+            return true;
+        } else {
+            log_entity("Found EoCServer but EntityWorld at +0x288 is NULL or invalid");
+            log_entity("(Server may not be fully initialized yet)");
+        }
+    }
+
+    log_entity("Failed to discover EntityWorld");
+    return false;
+}
+
+// ============================================================================
 // Original Function Pointers
 // ============================================================================
 
-typedef bool (*IsInCombatFn)(uint64_t handle, void *entityWorld);
-static IsInCombatFn orig_IsInCombat = NULL;
+// esv::EocServer::StartUp(eoc::ServerInit const&)
+typedef void (*EocServerStartUpFn)(void *eocServer, void *serverInit);
+static EocServerStartUpFn orig_EocServerStartUp = NULL;
 
 // ============================================================================
-// Hook: Capture EntityWorld Pointer
+// Hook: Capture EoCServer Singleton on Startup
 // ============================================================================
 
-static bool hook_IsInCombat(uint64_t handle, void *entityWorld) {
-    // Capture EntityWorld on first call
-    if (!g_EntityWorld && entityWorld) {
-        g_EntityWorld = entityWorld;
-        log_entity("Captured EntityWorld pointer: %p", entityWorld);
+static void hook_EocServerStartUp(void *eocServer, void *serverInit) {
+    // Capture EoCServer pointer (this) on first call
+    if (!g_EoCServer && eocServer) {
+        g_EoCServer = eocServer;
+        log_entity("Captured EoCServer singleton: %p", eocServer);
+
+        // Get EntityWorld from EoCServer + 0x288
+        void **entityWorldPtr = (void**)((char*)eocServer + OFFSET_ENTITYWORLD_IN_EOCSERVER);
+        g_EntityWorld = *entityWorldPtr;
+
+        if (g_EntityWorld) {
+            log_entity("Got EntityWorld from EoCServer+0x%x: %p",
+                       OFFSET_ENTITYWORLD_IN_EOCSERVER, g_EntityWorld);
+        } else {
+            log_entity("EntityWorld at EoCServer+0x%x is NULL (not yet initialized)",
+                       OFFSET_ENTITYWORLD_IN_EOCSERVER);
+        }
     }
 
     // Call original function
-    if (orig_IsInCombat) {
-        return orig_IsInCombat(handle, entityWorld);
+    if (orig_EocServerStartUp) {
+        orig_EocServerStartUp(eocServer, serverInit);
     }
-    return false;
+
+    // After StartUp completes, EntityWorld should be initialized
+    // Try to get it again if it was NULL before
+    if (g_EoCServer && !g_EntityWorld) {
+        void **entityWorldPtr = (void**)((char*)g_EoCServer + OFFSET_ENTITYWORLD_IN_EOCSERVER);
+        g_EntityWorld = *entityWorldPtr;
+
+        if (g_EntityWorld) {
+            log_entity("Got EntityWorld after StartUp: %p", g_EntityWorld);
+        } else {
+            log_entity("EntityWorld still NULL after StartUp");
+        }
+    }
+}
+
+// Helper: Update EntityWorld from stored EoCServer
+static void update_entity_world_from_server(void) {
+    if (g_EoCServer && !g_EntityWorld) {
+        void **entityWorldPtr = (void**)((char*)g_EoCServer + OFFSET_ENTITYWORLD_IN_EOCSERVER);
+        if (entityWorldPtr && *entityWorldPtr) {
+            g_EntityWorld = *entityWorldPtr;
+            log_entity("Updated EntityWorld from EoCServer: %p", g_EntityWorld);
+        }
+    }
 }
 
 // ============================================================================
@@ -488,23 +868,20 @@ int entity_system_init(void *main_binary_base) {
     uintptr_t ghidra_base = 0x100000000;
     uintptr_t actual_base = (uintptr_t)main_binary_base;
 
-    uintptr_t is_in_combat_addr = OFFSET_LEGACY_IS_IN_COMBAT - ghidra_base + actual_base;
-
-    log_entity("Installing hook at IsInCombat: %p", (void*)is_in_combat_addr);
-
-    // Install Dobby hook
-    int result = DobbyHook(
-        (void*)is_in_combat_addr,
-        (void*)hook_IsInCombat,
-        (void**)&orig_IsInCombat
-    );
-
-    if (result != 0) {
-        log_entity("ERROR: Failed to install IsInCombat hook (result: %d)", result);
-        return -1;
-    }
-
-    log_entity("Hook installed successfully");
+    // NOTE: Inline hooking of main binary functions causes KERN_PROTECTION_FAILURE
+    // on macOS due to Hardened Runtime memory protection. Dobby hooks in __TEXT
+    // segments fail even when reported as successful.
+    //
+    // For now, EntityWorld must be captured via a different approach:
+    // 1. Hook a function in libOsiris.dylib instead (different memory protections)
+    // 2. Use Lua event callbacks to trigger EntityWorld discovery
+    // 3. Scan for known patterns in memory at runtime
+    //
+    // The old approach of hooking EocServer::StartUp is disabled:
+    // uintptr_t startup_addr = OFFSET_EOC_SERVER_STARTUP - ghidra_base + actual_base;
+    // DobbyHook((void*)startup_addr, (void*)hook_EocServerStartUp, (void**)&orig_EocServerStartUp);
+    log_entity("Main binary hooks disabled (macOS memory protection issues)");
+    log_entity("EntityWorld must be set manually via Ext.Entity.SetWorldPtr() or discovered via Osiris hooks");
 
     // Set up function pointers for component accessors and singleton getters
     // These don't need hooks - we just need to know where to call
@@ -538,7 +915,10 @@ int entity_system_init(void *main_binary_base) {
     log_entity("  TryGetUuidMappingSingleton: %p", (void*)g_TryGetUuidMappingSingleton);
     log_entity("  GetTransformComponent: %p", (void*)g_GetTransformComponent);
     log_entity("  GetLevelComponent: %p", (void*)g_GetLevelComponent);
-    log_entity("  eoc:: components: %s", (g_GetStatsComponent ? "enabled" : "pending discovery"));
+    log_entity("  GetStatsComponent: %p", (void*)g_GetStatsComponent);
+    log_entity("  GetBaseHpComponent: %p", (void*)g_GetBaseHpComponent);
+    log_entity("  GetHealthComponent: %p", (void*)g_GetHealthComponent);
+    log_entity("  GetArmorComponent: %p", (void*)g_GetArmorComponent);
 
     g_Initialized = true;
 
@@ -546,6 +926,10 @@ int entity_system_init(void *main_binary_base) {
 }
 
 bool entity_system_ready(void) {
+    // Try to get EntityWorld from EoCServer if not yet available
+    if (!g_EntityWorld && g_EoCServer) {
+        update_entity_world_from_server();
+    }
     return g_EntityWorld != NULL;
 }
 
@@ -594,6 +978,79 @@ static int lua_entity_get_world(lua_State *L) {
 // Ext.Entity.IsReady() -> boolean
 static int lua_entity_is_ready(lua_State *L) {
     lua_pushboolean(L, entity_system_ready());
+    return 1;
+}
+
+// Ext.Entity.Discover() -> boolean
+// Attempts to find EntityWorld via memory scanning
+static int lua_entity_discover(lua_State *L) {
+    bool success = entity_discover_world();
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+// Ext.Entity.Test() - Test component accessors with known GUIDs
+static int lua_entity_test(lua_State *L) {
+    log_entity("=== Entity Component Test ===");
+
+    if (!entity_system_ready()) {
+        log_entity("Entity system not ready - enter combat first");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    log_entity("EntityWorld: %p", g_EntityWorld);
+
+    // Test GUIDs (common companions)
+    const char *test_guids[] = {
+        "c7c13742-bacd-460a-8f65-f864fe41f255",  // Astarion
+        "3ed74f06-3c60-42dc-83f6-f034cb47c679",  // Shadowheart
+        "58a69333-40bf-8358-1d17-fff240d7fb12",  // Lae'zel
+        NULL
+    };
+
+    int success_count = 0;
+
+    for (int i = 0; test_guids[i] != NULL; i++) {
+        const char *guid = test_guids[i];
+        log_entity("Testing GUID: %s", guid);
+
+        EntityHandle handle = entity_get_by_guid(guid);
+        if (handle == 0) {
+            log_entity("  Entity not found");
+            continue;
+        }
+
+        log_entity("  Handle: 0x%llx", (unsigned long long)handle);
+
+        // Test Transform (ls:: component)
+        void *transform = entity_get_component(handle, COMPONENT_TRANSFORM);
+        log_entity("  Transform: %s", transform ? "FOUND" : "nil");
+
+        // Test Stats (eoc:: component)
+        void *stats = entity_get_component(handle, COMPONENT_STATS);
+        log_entity("  Stats: %s", stats ? "FOUND" : "nil");
+
+        // Test Health (eoc:: component)
+        void *health = entity_get_component(handle, COMPONENT_HEALTH);
+        log_entity("  Health: %s", health ? "FOUND" : "nil");
+
+        // Test BaseHp (eoc:: component)
+        void *basehp = entity_get_component(handle, COMPONENT_BASE_HP);
+        log_entity("  BaseHp: %s", basehp ? "FOUND" : "nil");
+
+        // Test Armor (eoc:: component)
+        void *armor = entity_get_component(handle, COMPONENT_ARMOR);
+        log_entity("  Armor: %s", armor ? "FOUND" : "nil");
+
+        if (transform || stats || health) {
+            success_count++;
+        }
+    }
+
+    log_entity("=== Test Complete: %d entities with components ===", success_count);
+
+    lua_pushboolean(L, success_count > 0);
     return 1;
 }
 
@@ -810,6 +1267,12 @@ void entity_register_lua(lua_State *L) {
 
     lua_pushcfunction(L, lua_entity_is_ready);
     lua_setfield(L, -2, "IsReady");
+
+    lua_pushcfunction(L, lua_entity_discover);
+    lua_setfield(L, -2, "Discover");
+
+    lua_pushcfunction(L, lua_entity_test);
+    lua_setfield(L, -2, "Test");
 
     lua_setfield(L, -2, "Entity");  // Ext.Entity = table
 

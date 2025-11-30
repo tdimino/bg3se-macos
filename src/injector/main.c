@@ -122,23 +122,74 @@ static int g_currentDialogPlayerCount = 1;       // Number of players in dialog 
 static char g_dialogParticipants[MAX_DIALOG_PARTICIPANTS][128];
 static int g_dialogParticipantCount = 0;
 
-// Known event names we want to track (for MRC compatibility)
+// Known functions we want to track (events, queries, calls)
+// Format: {name, funcId (0=discover at runtime), arity, type}
 
-static KnownEvent g_knownEvents[] = {
-    // Discovered via runtime observation on macOS ARM64
-    {"AutomatedDialogStarted", 2147492339, 4},   // 0x800021f3 - Main event MRC uses
-    {"AutomatedDialogEnded", 2147492347, 4},     // 0x800021fb - Dialog end event
-    // These still need to be discovered:
-    {"DialogStarted", 0, 2},
-    {"DialogEnded", 0, 2},
-    {"CharacterJoinedParty", 0, 1},
-    {"CharacterLeftParty", 0, 1},
-    {"CombatStarted", 0, 1},
-    {"CombatEnded", 0, 1},
-    {"TurnStarted", 0, 1},
-    {"TurnEnded", 0, 1},
-    {NULL, 0, 0}  // Sentinel
+static KnownFunction g_knownFunctions[] = {
+    // =========================================================================
+    // Events (OSI_FUNC_EVENT = 1) - discovered via runtime observation
+    // =========================================================================
+    {"AutomatedDialogStarted", 2147492339, 4, OSI_FUNC_EVENT},  // 0x800021f3
+    {"AutomatedDialogEnded", 2147492347, 4, OSI_FUNC_EVENT},    // 0x800021fb
+    {"DialogStarted", 0, 2, OSI_FUNC_EVENT},
+    {"DialogEnded", 0, 2, OSI_FUNC_EVENT},
+    {"CharacterJoinedParty", 0, 1, OSI_FUNC_EVENT},
+    {"CharacterLeftParty", 0, 1, OSI_FUNC_EVENT},
+    {"CombatStarted", 0, 1, OSI_FUNC_EVENT},
+    {"CombatEnded", 0, 1, OSI_FUNC_EVENT},
+    {"CombatRoundStarted", 0, 1, OSI_FUNC_EVENT},
+    {"TurnStarted", 0, 1, OSI_FUNC_EVENT},
+    {"TurnEnded", 0, 1, OSI_FUNC_EVENT},
+    {"LevelGameplayStarted", 0, 2, OSI_FUNC_EVENT},
+    {"CharacterDied", 0, 1, OSI_FUNC_EVENT},
+    {"CharacterResurrected", 0, 1, OSI_FUNC_EVENT},
+
+    // =========================================================================
+    // Queries (OSI_FUNC_QUERY = 2) - return values
+    // =========================================================================
+    {"CharacterGetLevel", 0, 2, OSI_FUNC_QUERY},
+    {"GetDistanceTo", 0, 3, OSI_FUNC_QUERY},
+    {"IsTagged", 0, 2, OSI_FUNC_QUERY},
+    {"GetUUID", 0, 2, OSI_FUNC_QUERY},
+    {"CharacterGetDisplayName", 0, 2, OSI_FUNC_QUERY},
+    {"IsAlive", 0, 1, OSI_FUNC_QUERY},
+    {"IsDead", 0, 1, OSI_FUNC_QUERY},
+    {"CharacterIsPartyMember", 0, 1, OSI_FUNC_QUERY},
+    {"CharacterIsPlayer", 0, 1, OSI_FUNC_QUERY},
+    {"CharacterIsInCombat", 0, 1, OSI_FUNC_QUERY},
+    {"CharacterGetAbility", 0, 3, OSI_FUNC_QUERY},
+    {"CharacterGetHostCharacter", 0, 1, OSI_FUNC_QUERY},
+    {"HasActiveStatus", 0, 2, OSI_FUNC_QUERY},
+    {"GetPosition", 0, 4, OSI_FUNC_QUERY},
+    {"QRY_IsTagged", 0, 2, OSI_FUNC_QUERY},
+    {"QRY_StartDialog_Fixed", 0, 4, OSI_FUNC_QUERY},
+
+    // =========================================================================
+    // Calls (OSI_FUNC_CALL = 3) - no return value
+    // =========================================================================
+    {"ApplyStatus", 0, 4, OSI_FUNC_CALL},
+    {"RemoveStatus", 0, 2, OSI_FUNC_CALL},
+    {"PlaySound", 0, 2, OSI_FUNC_CALL},
+    {"ShowNotification", 0, 2, OSI_FUNC_CALL},
+    {"TeleportToPosition", 0, 5, OSI_FUNC_CALL},
+    {"AddExperience", 0, 4, OSI_FUNC_CALL},
+    {"SetTag", 0, 2, OSI_FUNC_CALL},
+    {"ClearTag", 0, 2, OSI_FUNC_CALL},
+    {"CharacterAddSpell", 0, 2, OSI_FUNC_CALL},
+    {"DialogRequestStop", 0, 1, OSI_FUNC_CALL},
+    {"StartDialog", 0, 4, OSI_FUNC_CALL},
+
+    // =========================================================================
+    // Databases (OSI_FUNC_DATABASE = 4)
+    // =========================================================================
+    {"DB_Players", 0, 1, OSI_FUNC_DATABASE},
+    {"DB_PartyCriminals", 0, 2, OSI_FUNC_DATABASE},
+
+    {NULL, 0, 0, 0}  // Sentinel
 };
+
+// Legacy alias for compatibility
+#define g_knownEvents g_knownFunctions
 
 // Track if hooks are already installed
 static int hooks_installed = 0;
@@ -388,6 +439,139 @@ static int lua_ext_require(lua_State *L) {
     return 1;
 }
 
+// ============================================================================
+// Ext.Events - Simple Event System
+// ============================================================================
+
+// Event types
+typedef enum {
+    EVENT_SESSION_LOADING = 0,
+    EVENT_SESSION_LOADED,
+    EVENT_RESET_COMPLETED,
+    EVENT_MAX
+} EventType;
+
+// Storage for event callbacks (Lua registry references)
+#define MAX_EVENT_CALLBACKS 32
+static int g_eventCallbacks[EVENT_MAX][MAX_EVENT_CALLBACKS];
+static int g_eventCallbackCounts[EVENT_MAX] = {0};
+
+// Event names for logging
+static const char *g_eventNames[EVENT_MAX] = {
+    "SessionLoading",
+    "SessionLoaded",
+    "ResetCompleted"
+};
+
+/**
+ * Fire an event, calling all registered callbacks
+ */
+static void fire_event(lua_State *L, EventType event) {
+    if (!L || event >= EVENT_MAX) return;
+
+    int count = g_eventCallbackCounts[event];
+    if (count == 0) return;
+
+    log_message("[Events] Firing %s (%d callbacks)", g_eventNames[event], count);
+
+    for (int i = 0; i < count; i++) {
+        int ref = g_eventCallbacks[event][i];
+        if (ref != LUA_NOREF && ref != LUA_REFNIL) {
+            // Get callback from registry
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+            if (lua_isfunction(L, -1)) {
+                // Create event args table
+                lua_newtable(L);
+
+                // Call the callback with args table
+                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                    const char *err = lua_tostring(L, -1);
+                    log_message("[Events] Error in %s callback: %s", g_eventNames[event], err ? err : "unknown");
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+    }
+}
+
+/**
+ * Event:Subscribe(callback) - Register a callback for an event
+ * The event type is stored as upvalue
+ * Note: Called with colon syntax, so arg 1 is self, arg 2 is callback
+ */
+static int lua_event_subscribe(lua_State *L) {
+    // Get event type from upvalue
+    int event = (int)lua_tointeger(L, lua_upvalueindex(1));
+    if (event < 0 || event >= EVENT_MAX) {
+        return luaL_error(L, "Invalid event type");
+    }
+
+    // Check callback (arg 2 because of colon syntax - arg 1 is self)
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+
+    // Check if we have room
+    if (g_eventCallbackCounts[event] >= MAX_EVENT_CALLBACKS) {
+        return luaL_error(L, "Too many callbacks for event %s", g_eventNames[event]);
+    }
+
+    // Store callback in registry
+    lua_pushvalue(L, 2);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    // Add to callbacks array
+    g_eventCallbacks[event][g_eventCallbackCounts[event]++] = ref;
+
+    log_message("[Events] Subscribed to %s (callback #%d, ref=%d)",
+                g_eventNames[event], g_eventCallbackCounts[event], ref);
+
+    return 0;
+}
+
+/**
+ * Create an event object with :Subscribe method
+ */
+static void create_event_object(lua_State *L, EventType event) {
+    lua_newtable(L);
+
+    // Add Subscribe method with event type as upvalue
+    lua_pushinteger(L, event);
+    lua_pushcclosure(L, lua_event_subscribe, 1);
+    lua_setfield(L, -2, "Subscribe");
+}
+
+/**
+ * Register Ext.Events namespace
+ */
+static void register_ext_events(lua_State *L, int ext_index) {
+    // Initialize callback storage
+    for (int i = 0; i < EVENT_MAX; i++) {
+        g_eventCallbackCounts[i] = 0;
+        for (int j = 0; j < MAX_EVENT_CALLBACKS; j++) {
+            g_eventCallbacks[i][j] = LUA_NOREF;
+        }
+    }
+
+    // Create Ext.Events table
+    lua_newtable(L);
+
+    // Add event objects
+    create_event_object(L, EVENT_SESSION_LOADING);
+    lua_setfield(L, -2, "SessionLoading");
+
+    create_event_object(L, EVENT_SESSION_LOADED);
+    lua_setfield(L, -2, "SessionLoaded");
+
+    create_event_object(L, EVENT_RESET_COMPLETED);
+    lua_setfield(L, -2, "ResetCompleted");
+
+    // Set as Ext.Events
+    lua_setfield(L, ext_index - 1, "Events");
+
+    log_message("[Events] Ext.Events registered");
+}
+
 /**
  * Register the Ext API in Lua
  */
@@ -407,6 +591,9 @@ static void register_ext_api(lua_State *L) {
 
     // Ext.Json namespace (via lua_json module)
     lua_json_register(L, -1);
+
+    // Ext.Events namespace (event system)
+    register_ext_events(L, -1);
 
     // Set Ext as global
     lua_setglobal(L, "Ext");
@@ -731,8 +918,8 @@ static int osi_dynamic_call(lua_State *L) {
     osi_func_get_info(funcName, &arity, &funcType);
 
     int numArgs = lua_gettop(L);
-    log_message("[Osi.%s] Called with %d args (funcId=0x%x, type=%d)",
-                funcName, numArgs, funcId, funcType);
+    log_message("[Osi.%s] Called with %d args (funcId=0x%x, type=%s[%d])",
+                funcName, numArgs, funcId, osi_func_type_str(funcType), funcType);
 
     // Check if we have the required function pointers
     if (!pfn_InternalQuery && !pfn_InternalCall) {
@@ -791,63 +978,120 @@ static int osi_dynamic_call(lua_State *L) {
     }
 
     // Call the appropriate function based on type
+    // Per Windows BG3SE Function.inl dispatch logic:
+    // - Query, SysQuery, UserQuery → InternalQuery
+    // - Call, SysCall → InternalCall
+    // - Event, Proc → Event dispatch
+    // - Database → Special handling (can be data insert or user query)
     int result = 0;
-    if (funcType == OSI_FUNC_QUERY && pfn_InternalQuery) {
-        result = pfn_InternalQuery(funcId, args);
-        log_message("[Osi.%s] InternalQuery returned %d", funcName, result);
 
-        if (result && numArgs > 0) {
-            // Query succeeded - return all argument values (OUT params will have been filled)
-            // Convention: queries return their arguments, with OUT params updated
-            int returnCount = 0;
-            for (int i = 0; i < numArgs; i++) {
-                osi_value_to_lua(L, &args[i].value);
-                returnCount++;
-            }
-            log_message("[Osi.%s] Returning %d values from query", funcName, returnCount);
-            return returnCount;
-        } else if (result) {
-            // Query succeeded but no args - return true
-            lua_pushboolean(L, 1);
-            return 1;
-        } else {
-            // Query failed - return nil
-            lua_pushnil(L);
-            return 1;
-        }
-    } else if (funcType == OSI_FUNC_CALL && pfn_InternalCall) {
-        result = pfn_InternalCall(funcId, (void *)args);
-        log_message("[Osi.%s] InternalCall returned %d", funcName, result);
-        // Calls don't return values
-        return 0;
-    }
+    switch (funcType) {
+        case OSI_FUNC_QUERY:
+        case OSI_FUNC_SYSQUERY:
+        case OSI_FUNC_USERQUERY:
+            // Query types - use InternalQuery
+            if (pfn_InternalQuery) {
+                result = pfn_InternalQuery(funcId, args);
+                log_message("[Osi.%s] InternalQuery returned %d", funcName, result);
 
-    // Unknown type - try query first, then call
-    if (pfn_InternalQuery) {
-        result = pfn_InternalQuery(funcId, args);
-        if (result) {
-            log_message("[Osi.%s] Query (fallback) succeeded", funcName);
-            // Return all argument values
-            if (numArgs > 0) {
-                int returnCount = 0;
-                for (int i = 0; i < numArgs; i++) {
-                    osi_value_to_lua(L, &args[i].value);
-                    returnCount++;
+                if (result && numArgs > 0) {
+                    // Query succeeded - return all argument values (OUT params filled)
+                    int returnCount = 0;
+                    for (int i = 0; i < numArgs; i++) {
+                        osi_value_to_lua(L, &args[i].value);
+                        returnCount++;
+                    }
+                    log_message("[Osi.%s] Returning %d values from query", funcName, returnCount);
+                    return returnCount;
+                } else if (result) {
+                    // Query succeeded but no args - return true
+                    lua_pushboolean(L, 1);
+                    return 1;
+                } else {
+                    // Query failed - return nil
+                    lua_pushnil(L);
+                    return 1;
                 }
-                return returnCount;
             }
-            lua_pushboolean(L, 1);
-            return 1;
-        }
-    }
+            break;
 
-    // Try as a call
-    if (pfn_InternalCall) {
-        result = pfn_InternalCall(funcId, (void *)args);
-        if (result) {
-            log_message("[Osi.%s] Call (fallback) succeeded", funcName);
-            return 0;
-        }
+        case OSI_FUNC_CALL:
+        case OSI_FUNC_SYSCALL:
+            // Call types - use InternalCall
+            if (pfn_InternalCall) {
+                result = pfn_InternalCall(funcId, (void *)args);
+                log_message("[Osi.%s] InternalCall returned %d", funcName, result);
+                // Calls don't return values
+                return 0;
+            }
+            break;
+
+        case OSI_FUNC_EVENT:
+        case OSI_FUNC_PROC:
+            // Event/Proc types - these trigger events, use InternalCall
+            if (pfn_InternalCall) {
+                result = pfn_InternalCall(funcId, (void *)args);
+                log_message("[Osi.%s] Event/Proc dispatch returned %d", funcName, result);
+                return 0;
+            }
+            break;
+
+        case OSI_FUNC_DATABASE:
+            // Database can be data insert or user query
+            // For now, treat as query first, then call
+            if (pfn_InternalQuery) {
+                result = pfn_InternalQuery(funcId, args);
+                if (result) {
+                    log_message("[Osi.%s] Database query returned %d", funcName, result);
+                    if (numArgs > 0) {
+                        int returnCount = 0;
+                        for (int i = 0; i < numArgs; i++) {
+                            osi_value_to_lua(L, &args[i].value);
+                            returnCount++;
+                        }
+                        return returnCount;
+                    }
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            }
+            // Fall through to try as insert
+            if (pfn_InternalCall) {
+                result = pfn_InternalCall(funcId, (void *)args);
+                log_message("[Osi.%s] Database insert returned %d", funcName, result);
+                return 0;
+            }
+            break;
+
+        case OSI_FUNC_UNKNOWN:
+        default:
+            // Unknown type - try query first, then call (fallback heuristic)
+            log_message("[Osi.%s] Unknown type %d, trying query then call", funcName, funcType);
+            if (pfn_InternalQuery) {
+                result = pfn_InternalQuery(funcId, args);
+                if (result) {
+                    log_message("[Osi.%s] Query (fallback) succeeded", funcName);
+                    if (numArgs > 0) {
+                        int returnCount = 0;
+                        for (int i = 0; i < numArgs; i++) {
+                            osi_value_to_lua(L, &args[i].value);
+                            returnCount++;
+                        }
+                        return returnCount;
+                    }
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            }
+            // Try as a call
+            if (pfn_InternalCall) {
+                result = pfn_InternalCall(funcId, (void *)args);
+                if (result) {
+                    log_message("[Osi.%s] Call (fallback) succeeded", funcName);
+                    return 0;
+                }
+            }
+            break;
     }
 
     lua_pushnil(L);
@@ -1294,6 +1538,9 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
             mod_scripts_loaded = 1;
             load_mod_scripts(L);
         }
+
+        // Fire SessionLoaded event after mod scripts are loaded
+        fire_event(L, EVENT_SESSION_LOADED);
     }
 
     return result;
@@ -1897,25 +2144,41 @@ static void install_hooks(void) {
     hooks_installed = 1;
 
     // Initialize Entity System
-    // Find main game binary base address
-    uint32_t image_count = _dyld_image_count();
-    for (uint32_t i = 0; i < image_count; i++) {
-        const char *name = _dyld_get_image_name(i);
-        if (name && strstr(name, "Baldur") && strstr(name, "Gate 3")) {
-            const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(i);
-            intptr_t slide = _dyld_get_image_vmaddr_slide(i);
-            // The base address is the header address minus the slide
-            // But for function offsets, we need to add slide to Ghidra addresses
-            void *binary_base = (void *)((uintptr_t)header);
-            log_message("Found main game binary at: %p (slide: 0x%lx)", binary_base, (long)slide);
+    // Find the BG3 main executable (not our injected dylib)
+    // With DYLD_INSERT_LIBRARIES, our dylib is at index 0, so we need to search
+    {
+        uint32_t image_count = _dyld_image_count();
+        bool found = false;
 
-            int result = entity_system_init(binary_base);
-            if (result == 0) {
-                log_message("Entity system initialized (hook installed, waiting for combat)");
-            } else {
-                log_message("WARNING: Entity system initialization failed: %d", result);
+        for (uint32_t i = 0; i < image_count && !found; i++) {
+            const char *name = _dyld_get_image_name(i);
+            if (!name) continue;
+
+            // Skip dylibs - we want the main executable
+            if (strstr(name, ".dylib")) continue;
+
+            // Look for the BG3 executable specifically
+            // Path ends with: .app/Contents/MacOS/Baldur's Gate 3
+            if (strstr(name, "Baldur") && strstr(name, "MacOS")) {
+                const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(i);
+                intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+                void *binary_base = (void *)((uintptr_t)header);
+
+                log_message("Found BG3 executable (index %u): %s", i, name);
+                log_message("  Base: %p, Slide: 0x%lx", binary_base, (long)slide);
+
+                int result = entity_system_init(binary_base);
+                if (result == 0) {
+                    log_message("Entity system initialized (function pointers ready)");
+                } else {
+                    log_message("WARNING: Entity system initialization failed: %d", result);
+                }
+                found = true;
             }
-            break;
+        }
+
+        if (!found) {
+            log_message("WARNING: Could not find BG3 main executable for entity system");
         }
     }
 #else

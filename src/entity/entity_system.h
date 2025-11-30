@@ -216,6 +216,13 @@ int entity_system_init(void *main_binary_base);
  */
 bool entity_system_ready(void);
 
+/**
+ * Attempt to discover EntityWorld via memory scanning.
+ * Call this after the game server is initialized (e.g., after loading a save).
+ * Returns true if EntityWorld was found, false otherwise.
+ */
+bool entity_discover_world(void);
+
 // ============================================================================
 // Lua Bindings
 // ============================================================================

@@ -38,9 +38,25 @@ typedef enum {
     OSI_FUNC_CALL = 3,
     OSI_FUNC_DATABASE = 4,
     OSI_FUNC_PROC = 5,
-    OSI_FUNC_SYSCALL = 6,
-    OSI_FUNC_SYSQUERY = 7
+    OSI_FUNC_SYSQUERY = 6,   // System-provided queries
+    OSI_FUNC_SYSCALL = 7,    // System-provided calls
+    OSI_FUNC_USERQUERY = 8   // User-defined queries
 } OsiFunctionType;
+
+// Helper to convert function type to string
+static inline const char *osi_func_type_str(uint8_t type) {
+    switch (type) {
+        case OSI_FUNC_EVENT:     return "Event";
+        case OSI_FUNC_QUERY:     return "Query";
+        case OSI_FUNC_CALL:      return "Call";
+        case OSI_FUNC_DATABASE:  return "Database";
+        case OSI_FUNC_PROC:      return "Proc";
+        case OSI_FUNC_SYSQUERY:  return "SysQuery";
+        case OSI_FUNC_SYSCALL:   return "SysCall";
+        case OSI_FUNC_USERQUERY: return "UserQuery";
+        default:                 return "Unknown";
+    }
+}
 
 // ============================================================================
 // Argument Structures
@@ -96,11 +112,16 @@ typedef struct {
 // Known Event Entry
 // ============================================================================
 
+// Known function entry (events, queries, calls)
 typedef struct {
     const char *name;
     uint32_t funcId;        // 0 = not yet discovered
     uint8_t expectedArity;
-} KnownEvent;
+    uint8_t funcType;       // OsiFunctionType
+} KnownFunction;
+
+// Legacy alias for compatibility
+typedef KnownFunction KnownEvent;
 
 // ============================================================================
 // Function Pointer Types

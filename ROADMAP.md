@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.10.0
+## Current Status: v0.10.1
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -12,6 +12,8 @@ This document tracks the development roadmap for achieving feature parity with W
 - Osiris listener callbacks (before/after event dispatch)
 - Dynamic Osi.* metatable with lazy function lookup
 - Query output parameters (queries return values, not just bool)
+- **Function type detection** - Proper dispatch for Query/Call/Event/Proc/Database types
+- **Pre-populated common functions** - 40+ functions seeded at startup
 - PAK file extraction and Lua script loading
 - Player GUID tracking from observed events
 - **Entity Component System** - EntityWorld capture, GUID lookup, component access
@@ -22,7 +24,7 @@ This document tracks the development roadmap for achieving feature parity with W
 ## Phase 1: Core Osiris Integration (Current)
 
 ### 1.1 Dynamic Osi.* Metatable
-**Status:** Implemented (v0.9.9)
+**Status:** ✅ Complete (v0.10.0)
 
 Lazy function lookup matching Windows BG3SE's OsirisBinding pattern:
 - [x] `__index` metamethod intercepts unknown property accesses
@@ -30,16 +32,18 @@ Lazy function lookup matching Windows BG3SE's OsirisBinding pattern:
 - [x] Automatic Lua-to-Osiris argument type conversion
 - [x] Result caching in Osi table for subsequent accesses
 - [x] **Query output parameters** - Return values from queries (v0.10.0)
-- [ ] **Function type detection** - Distinguish Query vs Call vs Event
+- [x] **Function type detection** - Distinguish Query vs Call vs Event (v0.10.1)
 
-### 1.2 Function Discovery
-**Status:** Partial
+### 1.2 Function Discovery & Type Detection
+**Status:** ✅ Complete (v0.10.1)
 
 - [x] Event observation captures function IDs at runtime
 - [x] Function name extraction from event arguments
 - [x] Hash table cache for fast ID→name lookup
+- [x] **Proper type-based dispatch** - Query/SysQuery/UserQuery use InternalQuery; Call/SysCall use InternalCall; Event/Proc trigger events
+- [x] **Pre-populated common functions** - 40+ common functions (queries, calls, events, databases) seeded at startup
+- [x] **Type string helper** - `osi_func_type_str()` for debug logging
 - [ ] **Safe enumeration via Ghidra offsets** - Use discovered offsets (0x9f348) without crashes
-- [ ] **Pre-populate common functions** - Build initial cache from known function signatures
 
 ---
 
@@ -290,6 +294,7 @@ Complete Lua type annotations for IDE support and runtime validation.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.10.1 | 2025-11-29 | Function type detection - proper Query/Call/Event dispatch, 40+ pre-populated functions |
 | v0.10.0 | 2025-11-29 | Entity System complete - EntityWorld capture, GUID lookup, Ext.Entity API |
 | v0.9.9 | 2025-11-28 | Dynamic Osi.* metatable, lazy function lookup |
 | v0.9.5 | 2025-11-28 | Stable event observation, MRC mod support |

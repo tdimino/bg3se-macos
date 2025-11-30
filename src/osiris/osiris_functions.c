@@ -283,12 +283,12 @@ uint32_t osi_func_lookup_id(const char *name) {
 int osi_func_get_info(const char *name, uint8_t *out_arity, uint8_t *out_type) {
     if (!name) return 0;
 
-    // Check known events
+    // Check known functions table first (includes events, queries, calls)
     if (s_knownEvents) {
         for (int i = 0; s_knownEvents[i].name != NULL; i++) {
             if (strcmp(s_knownEvents[i].name, name) == 0) {
                 if (out_arity) *out_arity = s_knownEvents[i].expectedArity;
-                if (out_type) *out_type = OSI_FUNC_EVENT;
+                if (out_type) *out_type = s_knownEvents[i].funcType;
                 return 1;
             }
         }

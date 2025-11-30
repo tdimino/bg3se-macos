@@ -4,7 +4,7 @@
 
 BG3SE-macOS is a macOS port of Norbyte's Script Extender for Baldur's Gate 3. The goal is feature parity with the Windows BG3SE, enabling Lua mods to run on macOS.
 
-**Current Version:** v0.10.0
+**Current Version:** v0.10.1
 **Target:** Full compatibility with Windows BG3SE mods
 
 ## Architecture
@@ -116,22 +116,20 @@ tail -f /tmp/bg3se_macos.log  # Watch logs in real-time
 
 ## Current Status (from ROADMAP.md)
 
-### Phase 1: Core Osiris Integration - MOSTLY COMPLETE
+### Phase 1: Core Osiris Integration - COMPLETE
 - [x] Dynamic Osi.* metatable with lazy function lookup
 - [x] Query output parameters
-- [ ] Function type detection (Query vs Call vs Event)
+- [x] Function type detection (Query/Call/Event/Proc/Database dispatch)
+- [x] Pre-populated common functions (40+ seeded at startup)
 - [ ] Safe enumeration via Ghidra offsets
-- [ ] Pre-populate common functions
 
-### Phase 2: Entity/Component System - IN PROGRESS
-Core infrastructure complete, needs live game testing:
+### Phase 2: Entity/Component System - COMPLETE
 - [x] EntityWorld capture via LEGACY_IsInCombat hook
 - [x] TryGetSingleton for UuidToHandleMappingComponent
 - [x] HashMap<Guid, EntityHandle> reverse engineered & implemented
 - [x] Component accessors (Transform, Level, Physics, Visual)
 - [x] Lua bindings: `Ext.Entity.Get(guid)`, `entity.Transform`, etc.
-- [ ] Live game testing to verify offsets
-- [ ] Additional eoc:: component addresses (Stats, Health, Armor)
+- [ ] Additional eoc:: component addresses (Stats, Health, Armor) - pending runtime discovery
 
 ### Phase 3-7: See ROADMAP.md for details
 
