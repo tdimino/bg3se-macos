@@ -15,54 +15,33 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "guid_lookup.h"  // EntityHandle, Guid, HashMap types
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // ============================================================================
-// EntityHandle - 64-bit packed entity reference
+// EntityHandle Helper Functions
 // ============================================================================
 
-typedef uint64_t EntityHandle;
-
-// EntityHandle bit layout (same as Windows):
-// - Bits 0-31:  Entity Index (within type)
-// - Bits 32-47: Salt (generation counter for reuse detection)
-// - Bits 48-63: Type Index (entity archetype)
-
-#define ENTITY_HANDLE_INVALID 0xFFFFFFFFFFFFFFFFULL
+// Note: EntityHandle and Guid types are defined in guid_lookup.h
 
 static inline uint32_t entity_get_index(EntityHandle h) {
-    return (uint32_t)(h & 0xFFFFFFFF);
+    return entity_handle_get_index(h);
 }
 
 static inline uint16_t entity_get_salt(EntityHandle h) {
-    return (uint16_t)((h >> 32) & 0xFFFF);
+    return entity_handle_get_salt(h);
 }
 
 static inline uint16_t entity_get_type(EntityHandle h) {
-    return (uint16_t)((h >> 48) & 0xFFFF);
+    return entity_handle_get_type(h);
 }
 
 static inline bool entity_is_valid(EntityHandle h) {
-    return h != ENTITY_HANDLE_INVALID;
+    return entity_handle_is_valid(h);
 }
-
-// ============================================================================
-// GUID - 128-bit unique identifier
-// ============================================================================
-
-typedef struct {
-    uint64_t lo;
-    uint64_t hi;
-} Guid;
-
-// Parse GUID from string format: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-bool guid_parse(const char *str, Guid *out);
-
-// Format GUID to string (buffer must be at least 37 bytes)
-void guid_to_string(const Guid *guid, char *out);
 
 // ============================================================================
 // Component Types

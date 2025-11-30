@@ -18,7 +18,10 @@ BG3SE-macOS is a macOS port of Norbyte's Script Extender for Baldur's Gate 3. Th
 ```
 src/
 ├── core/           # Logging, version info
-├── entity/         # Entity Component System (Phase 2)
+├── entity/         # Entity Component System (modular)
+│   ├── entity_system.c/h  # Core ECS, Lua bindings
+│   ├── guid_lookup.c/h    # GUID parsing, HashMap operations
+│   └── arm64_call.c/h     # ARM64 ABI wrappers (x8 indirect return)
 ├── hooks/          # Legacy hook stubs (actual hooks in main.c)
 ├── injector/       # Main injection logic (main.c)
 ├── lua/            # Lua API modules (lua_ext, lua_json, lua_osiris)
@@ -32,7 +35,9 @@ src/
 - `src/mod/mod_loader.c` - Mod detection from modsettings.lsx, PAK loading
 - `src/lua/lua_*.c` - Ext.* API implementations
 - `src/osiris/osiris_functions.c` - Osiris function enumeration
-- `src/entity/entity_system.c` - Entity Component System with Lua bindings
+- `src/entity/entity_system.c` - Core ECS, EntityWorld capture, Lua bindings
+- `src/entity/guid_lookup.c` - GUID→EntityHandle lookup, HashMap implementation
+- `src/entity/arm64_call.c` - ARM64 calling conventions for large struct returns
 - `ghidra/offsets/` - Modular offset documentation (Osiris, Entity, Components, Structures)
 
 ## Modular Architecture
@@ -82,7 +87,9 @@ void module_init(void) { ... }
 |--------|---------|-------------|
 | `mod_loader` | Mod detection & PAK loading | State encapsulation via static variables |
 | `pak_reader` | LSPK v18 archive parsing | Opaque struct (`PakFile*`) with accessor functions |
-| `entity_system` | ECS access & Lua bindings | Singleton capture via hooks |
+| `entity_system` | Core ECS, Lua bindings | Singleton capture via hooks |
+| `guid_lookup` | GUID parsing, HashMap ops | Pure data operations, no global state |
+| `arm64_call` | ARM64 ABI wrappers | Platform-specific calling conventions |
 | `lua_ext` | Ext.* API registration | Registration functions per API group |
 
 ### When to Extract Code from main.c
@@ -191,19 +198,26 @@ See **Modular Architecture** section above for the design pattern. Steps:
 5. Replace direct state access with module accessors
 
 ### Ghidra Analysis
+
+For the 1GB+ BG3 binary, use the optimized analysis workflow:
+
 ```bash
-# Run headless analysis with a script
+# OPTIMIZED: Run with prescript to disable slow analyzers
 JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
   ~/ghidra/support/analyzeHeadless ~/ghidra_projects BG3Analysis \
   -process BG3_arm64_thin \
-  -postScript find_uuid_mapping.py \
-  -noanalysis
+  -scriptPath /Users/tomdimino/Desktop/Programming/bg3se-macos/ghidra/scripts \
+  -preScript optimize_analysis.py \
+  -postScript quick_component_search.py
 
-# Available scripts in ghidra/scripts/:
-# - find_entity_offsets.py   - Discover Entity system offsets and component strings
+# Key scripts in ghidra/scripts/:
+# - optimize_analysis.py     - Prescript that disables slow analyzers (Stack, Decompiler, etc.)
+# - quick_component_search.py - Find XREFs to component strings (needs analysis complete)
 # - find_uuid_mapping.py     - Find UuidToHandleMappingComponent for GUID lookup
-# - find_osiris_offsets.py   - Discover Osiris scripting engine offsets
+# - find_entity_offsets.py   - Discover Entity system offsets and component strings
 ```
+
+**Note:** The prescript disables slow analyzers (ARM Constant Reference, Decompiler Parameter ID, Stack) that would cause analysis to hang. Reference and Data Reference analyzers are kept enabled for XREF discovery.
 
 ## Codebase Search
 

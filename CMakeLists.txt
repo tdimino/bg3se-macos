@@ -41,6 +41,8 @@ add_library(bg3se SHARED
     src/osiris/osiris_functions.c
     src/pak/pak_reader.c
     src/entity/entity_system.c
+    src/entity/guid_lookup.c
+    src/entity/arm64_call.c
     lib/lz4/lz4.c
 )
 

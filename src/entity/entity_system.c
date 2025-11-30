@@ -6,6 +6,7 @@
  */
 
 #include "entity_system.h"
+#include "arm64_call.h"
 #include "logging.h"
 
 #include <stdio.h>
@@ -135,124 +136,13 @@ static GetComponentFn g_GetArmorComponent = NULL;
 static GetComponentFn g_GetClassesComponent = NULL;
 
 // ============================================================================
-// HashMap Memory Layout (from Windows BG3SE reference)
+// TryGetSingleton Function Pointer
 // ============================================================================
 
-// StaticArray<T> layout (16 bytes on 64-bit):
-//   offset 0x00: T* buf_ (8 bytes)
-//   offset 0x08: uint32_t size_ (4 bytes)
-//   offset 0x0C: padding (4 bytes)
-
-// Array<T> layout (16 bytes on 64-bit):
-//   offset 0x00: T* buf_ (8 bytes)
-//   offset 0x08: uint32_t capacity_ (4 bytes)
-//   offset 0x0C: uint32_t size_ (4 bytes)
-
-// HashMap<Guid, EntityHandle> layout (64 bytes total):
-//   offset 0x00: StaticArray<int32_t> HashKeys   (bucket table)
-//   offset 0x10: Array<int32_t> NextIds          (collision chain)
-//   offset 0x20: Array<Guid> Keys                (key storage)
-//   offset 0x30: UninitializedStaticArray<EntityHandle> Values
-
-typedef struct {
-    int32_t *buf;
-    uint32_t size;
-    uint32_t _pad;
-} StaticArrayInt32;
-
-typedef struct {
-    int32_t *buf;
-    uint32_t capacity;
-    uint32_t size;
-} ArrayInt32;
-
-typedef struct {
-    Guid *buf;
-    uint32_t capacity;
-    uint32_t size;
-} ArrayGuid;
-
-typedef struct {
-    EntityHandle *buf;
-    uint32_t size;
-    uint32_t _pad;
-} StaticArrayEntityHandle;
-
-// HashMap<Guid, EntityHandle> structure
-typedef struct {
-    StaticArrayInt32 HashKeys;         // offset 0x00
-    ArrayInt32 NextIds;                // offset 0x10
-    ArrayGuid Keys;                    // offset 0x20
-    StaticArrayEntityHandle Values;    // offset 0x30
-} HashMapGuidEntityHandle;
-
-// UuidToHandleMappingComponent contains HashMap<Guid, EntityHandle> Mappings
-// The Mappings field is at offset 0 (first field after vtable if any)
-// Note: May need adjustment if there's a vtable pointer
-typedef struct {
-    HashMapGuidEntityHandle Mappings;
-} UuidToHandleMappingComponent;
-
-// TryGetSingleton returns ls::Result<ComponentPtr, ls::Error>
-// This is a 64-byte struct on ARM64 that requires indirect return via x8 register.
-// Layout (from Ghidra analysis of stores to x19 = saved x8):
-//   offset 0x00: void* value (component pointer, or garbage on error)
-//   offset 0x08: reserved/zeroed on success
-//   offset 0x10-0x2F: additional data
-//   offset 0x30: uint8_t error flag (0=success, 1=error)
-typedef struct __attribute__((aligned(16))) {
-    void* value;               // 0x00: Component pointer
-    uint64_t reserved1;        // 0x08: Reserved
-    uint64_t reserved2[4];     // 0x10-0x2F: Additional data (32 bytes)
-    uint8_t has_error;         // 0x30: Error flag (0=success, 1=error)
-    uint8_t _pad[15];          // 0x31-0x3F: Padding to 64 bytes
-} LsResult;
-
 // Raw function type - do NOT call directly, use call_try_get_singleton_with_x8()
+// from arm64_call.h module
 typedef void (*TryGetSingletonRawFn)(void *entityWorld);
 static TryGetSingletonRawFn g_TryGetUuidMappingSingleton = NULL;
-
-// Wrapper to call TryGetSingleton with proper ARM64 ABI
-// ARM64 calling convention: indirect return structs >16 bytes use x8 for buffer address
-#if defined(__aarch64__) || defined(__arm64__)
-static void* call_try_get_singleton_with_x8(void *fn, void *entityWorld) {
-    LsResult result;
-    memset(&result, 0, sizeof(result));
-    result.has_error = 1;  // Assume error until function sets success
-
-    __asm__ volatile (
-        "mov x8, %[buf]\n"        // x8 = pointer to result buffer (ARM64 ABI for large struct return)
-        "mov x0, %[world]\n"      // x0 = entityWorld parameter
-        "blr %[fn]\n"             // Call the function
-        : "+m"(result)            // result may be modified
-        : [buf] "r"(&result),
-          [world] "r"(entityWorld),
-          [fn] "r"(fn)
-        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
-          "x14", "x15", "x16", "x17", "x19", "x20",
-          "x21", "x22", "x23", "x24", "x25", "x26",
-          "x30", "memory"
-    );
-
-    // Check result
-    if (result.has_error == 0 && result.value != NULL) {
-        log_entity("TryGetSingleton succeeded: value=%p", result.value);
-        return result.value;
-    } else {
-        log_entity("TryGetSingleton failed: has_error=%d, value=%p",
-                   result.has_error, result.value);
-        return NULL;
-    }
-}
-#else
-// x86_64 fallback - struct returns work differently
-static void* call_try_get_singleton_with_x8(void *fn, void *entityWorld) {
-    (void)fn;
-    (void)entityWorld;
-    log_entity("TryGetSingleton not implemented for x86_64");
-    return NULL;
-}
-#endif
 
 // Cached pointer to the UUID mapping component
 static void *g_UuidMappingComponent = NULL;
@@ -648,51 +538,6 @@ static void update_entity_world_from_server(void) {
             log_entity("Updated EntityWorld from EoCServer: %p", g_EntityWorld);
         }
     }
-}
-
-// ============================================================================
-// GUID Parsing
-// ============================================================================
-
-bool guid_parse(const char *str, Guid *out) {
-    if (!str || !out) return false;
-
-    // Format: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-    // Total length: 36 characters
-    if (strlen(str) != 36) return false;
-
-    // Parse as two 64-bit values
-    // First 16 hex chars (with dashes) = high
-    // Last 20 hex chars (with dashes) = low
-
-    uint32_t a;
-    uint16_t b, c, d;
-    uint64_t e;
-
-    if (sscanf(str, "%08x-%04hx-%04hx-%04hx-%012llx",
-               &a, &b, &c, &d, &e) != 5) {
-        return false;
-    }
-
-    // Pack into Guid structure
-    // Note: Byte order matches Windows BG3SE
-    out->hi = ((uint64_t)a << 32) | ((uint64_t)b << 16) | c;
-    out->lo = ((uint64_t)d << 48) | e;
-
-    return true;
-}
-
-void guid_to_string(const Guid *guid, char *out) {
-    if (!guid || !out) return;
-
-    uint32_t a = (uint32_t)(guid->hi >> 32);
-    uint16_t b = (uint16_t)((guid->hi >> 16) & 0xFFFF);
-    uint16_t c = (uint16_t)(guid->hi & 0xFFFF);
-    uint16_t d = (uint16_t)(guid->lo >> 48);
-    uint64_t e = guid->lo & 0xFFFFFFFFFFFFULL;
-
-    snprintf(out, 37, "%08x-%04hx-%04hx-%04hx-%012llx",
-             a, b, c, d, e);
 }
 
 // ============================================================================
@@ -1093,6 +938,96 @@ static int lua_entity_discover(lua_State *L) {
     return 1;
 }
 
+// Ext.Entity.DumpWorld(offset, size) -> string
+// Dumps bytes from EntityWorld at given offset for debugging structure layouts
+// Usage: Ext.Entity.DumpWorld(0, 64) -- dump first 64 bytes
+static int lua_entity_dump_world(lua_State *L) {
+    if (!g_EntityWorld) {
+        lua_pushnil(L);
+        lua_pushstring(L, "EntityWorld not captured");
+        return 2;
+    }
+
+    int offset = luaL_optinteger(L, 1, 0);
+    int size = luaL_optinteger(L, 2, 64);
+
+    // Clamp size to reasonable limits
+    if (size < 0) size = 0;
+    if (size > 1024) size = 1024;
+
+    log_entity("=== EntityWorld Memory Dump ===");
+    log_entity("EntityWorld base: %p", g_EntityWorld);
+    log_entity("Dumping offset 0x%x, size %d bytes:", offset, size);
+
+    uint8_t *base = (uint8_t *)g_EntityWorld;
+
+    // Build hex dump string
+    char dump[4096] = {0};
+    char *p = dump;
+    int remaining = sizeof(dump) - 1;
+
+    for (int i = 0; i < size && remaining > 50; i += 16) {
+        int n = snprintf(p, remaining, "%04x: ", offset + i);
+        p += n;
+        remaining -= n;
+
+        // Hex bytes
+        for (int j = 0; j < 16 && i + j < size; j++) {
+            uint8_t byte = base[offset + i + j];
+            n = snprintf(p, remaining, "%02x ", byte);
+            p += n;
+            remaining -= n;
+        }
+
+        // Pad if needed
+        for (int j = (i + 16 < size) ? 0 : 16 - (size - i); j < 16 && remaining > 1; j++) {
+            n = snprintf(p, remaining, "   ");
+            p += n;
+            remaining -= n;
+        }
+
+        n = snprintf(p, remaining, " | ");
+        p += n;
+        remaining -= n;
+
+        // ASCII
+        for (int j = 0; j < 16 && i + j < size && remaining > 1; j++) {
+            uint8_t byte = base[offset + i + j];
+            char c = (byte >= 32 && byte < 127) ? byte : '.';
+            *p++ = c;
+            remaining--;
+        }
+
+        n = snprintf(p, remaining, "\n");
+        p += n;
+        remaining -= n;
+
+        // Log each line
+        char line[128];
+        snprintf(line, sizeof(line), "%04x:", offset + i);
+        for (int j = 0; j < 16 && i + j < size; j++) {
+            char hex[4];
+            snprintf(hex, sizeof(hex), " %02x", base[offset + i + j]);
+            strncat(line, hex, sizeof(line) - strlen(line) - 1);
+        }
+        log_entity("%s", line);
+    }
+
+    // Also log potential pointer values at 8-byte intervals
+    log_entity("Potential pointers:");
+    for (int i = 0; i < size && i + 8 <= size; i += 8) {
+        void *ptr = *(void **)(base + offset + i);
+        // Check if it looks like a valid pointer (in reasonable address range)
+        uintptr_t val = (uintptr_t)ptr;
+        if (val > 0x100000000ULL && val < 0x200000000ULL) {
+            log_entity("  +0x%03x: %p (valid pointer)", offset + i, ptr);
+        }
+    }
+
+    lua_pushstring(L, dump);
+    return 1;
+}
+
 // Ext.Entity.Test() - Test component accessors with known GUIDs
 static int lua_entity_test(lua_State *L) {
     log_entity("=== Entity Component Test ===");
@@ -1377,6 +1312,9 @@ void entity_register_lua(lua_State *L) {
 
     lua_pushcfunction(L, lua_entity_test);
     lua_setfield(L, -2, "Test");
+
+    lua_pushcfunction(L, lua_entity_dump_world);
+    lua_setfield(L, -2, "DumpWorld");
 
     lua_setfield(L, -2, "Entity");  // Ext.Entity = table
 

@@ -284,7 +284,10 @@ Key Osiris functions now return real game data. Player GUIDs and dialog state ar
 bg3se-macos/
 ├── src/
 │   ├── core/                   # Logging, version info
-│   ├── entity/                 # Entity Component System
+│   ├── entity/                 # Entity Component System (modular)
+│   │   ├── entity_system.c/h   # Core ECS, EntityWorld capture, Lua bindings
+│   │   ├── guid_lookup.c/h     # GUID parsing, HashMap operations
+│   │   └── arm64_call.c/h      # ARM64 ABI wrappers (x8 indirect return)
 │   ├── injector/               # Main injection logic
 │   ├── lua/                    # Lua API modules
 │   ├── mod/                    # Mod detection and loading
@@ -296,9 +299,15 @@ bg3se-macos/
 │   ├── lz4/                    # LZ4 decompression (for PAK file reading)
 │   └── lua/                    # Lua 5.4 source and build scripts
 ├── ghidra/                     # Reverse engineering analysis
-│   ├── scripts/                # Ghidra Python scripts
-│   ├── OFFSETS.md              # Osiris offset documentation
-│   └── ENTITY_OFFSETS.md       # Entity system offset documentation
+│   ├── scripts/                # Ghidra Python scripts (optimized workflow)
+│   │   ├── optimize_analysis.py    # Prescript: disable slow analyzers
+│   │   ├── quick_component_search.py # Postscript: find component XREFs
+│   │   └── archive/            # Exploratory scripts (reference only)
+│   └── offsets/                # Modular offset documentation
+│       ├── OSIRIS.md           # Osiris function offsets
+│       ├── ENTITY_SYSTEM.md    # ECS architecture, EntityWorld
+│       ├── COMPONENTS.md       # GetComponent addresses
+│       └── STRUCTURES.md       # C structure definitions
 ├── scripts/
 │   ├── build.sh                # Build script (universal binary)
 │   └── *.example               # Example wrapper scripts
@@ -478,6 +487,22 @@ When BG3 updates:
 2. If offsets have changed, re-run Ghidra headless analysis:
 
 ```bash
+# For the 1GB+ BG3 binary, use the optimized workflow with prescript
+JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
+~/ghidra/support/analyzeHeadless ~/ghidra_projects BG3Analysis \
+  -process BG3_arm64_thin \
+  -scriptPath /path/to/bg3se-macos/ghidra/scripts \
+  -preScript optimize_analysis.py \
+  -postScript quick_component_search.py
+
+# The prescript disables slow analyzers (Stack, Decompiler Parameter ID, etc.)
+# that would cause analysis to hang on large binaries.
+# The postscript finds XREFs to component strings for GetComponent discovery.
+```
+
+For libOsiris.dylib (smaller binary), the standard workflow works:
+
+```bash
 # Extract ARM64 slice from universal binary
 lipo -thin arm64 \
   "/Users/$USER/Library/Application Support/Steam/steamapps/common/Baldurs Gate 3/Baldur's Gate 3.app/Contents/Frameworks/libOsiris.dylib" \
@@ -485,12 +510,11 @@ lipo -thin arm64 \
 
 # Run Ghidra headless analysis
 JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-/path/to/ghidra/support/analyzeHeadless \
+~/ghidra/support/analyzeHeadless \
   ~/ghidra_projects BG3Analysis \
   -import ~/ghidra_projects/libOsiris_arm64_thin.dylib \
   -processor "AARCH64:LE:64:v8A" \
-  -postScript ghidra/find_osiris_offsets.py \
-  -postScript ghidra/analyze_funcdef_struct.py \
+  -postScript ghidra/scripts/find_osiris_offsets.py \
   -analysisTimeoutPerFile 300
 ```
 
@@ -505,6 +529,11 @@ JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
 ## License
 
 MIT License
+
+## Authors
+
+- Tom di Mino (the artist formerly known as [Pnutmaster](https://wiki.twcenter.net/index.php?title=Blood_Broads_%26_Bastards) / [Nexus](https://next.nexusmods.com/profile/Pnutmaster/mods?gameId=130))
+- [Claude Code](https://claude.ai/claude-code) (Anthropic)
 
 ## Acknowledgments
 
