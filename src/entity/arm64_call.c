@@ -62,6 +62,36 @@ bool arm64_call_available(void) {
     return true;
 }
 
+void* call_get_raw_component(void *fn, void *entityWorld, uint64_t entityHandle,
+                              uint16_t typeIndex, size_t componentSize, bool isProxy) {
+    if (!fn || !entityWorld) {
+        return NULL;
+    }
+
+    // ARM64 calling convention:
+    // x0 = entityWorld
+    // x1 = entityHandle (64-bit)
+    // w2 = typeIndex (16-bit, zero-extended to 32-bit)
+    // x3 = componentSize (64-bit)
+    // w4 = isProxy (bool, zero-extended to 32-bit)
+    // Return: x0 = component pointer
+    //
+    // This is a standard call - no x8 indirect return needed since
+    // GetRawComponent returns a pointer (8 bytes)
+
+    typedef void* (*GetRawComponentFn)(void*, uint64_t, uint32_t, uint64_t, uint32_t);
+    GetRawComponentFn func = (GetRawComponentFn)fn;
+
+    void *result = func(entityWorld, entityHandle, (uint32_t)typeIndex,
+                        (uint64_t)componentSize, isProxy ? 1 : 0);
+
+    if (result) {
+        log_arm64("GetRawComponent returned: %p (typeIndex=%u)", result, typeIndex);
+    }
+
+    return result;
+}
+
 #else
 // x86_64 fallback - struct returns work differently
 
@@ -74,6 +104,18 @@ void* call_try_get_singleton_with_x8(void *fn, void *entityWorld) {
 
 bool arm64_call_available(void) {
     return false;
+}
+
+void* call_get_raw_component(void *fn, void *entityWorld, uint64_t entityHandle,
+                              uint16_t typeIndex, size_t componentSize, bool isProxy) {
+    (void)fn;
+    (void)entityWorld;
+    (void)entityHandle;
+    (void)typeIndex;
+    (void)componentSize;
+    (void)isProxy;
+    log_arm64("call_get_raw_component not implemented for x86_64");
+    return NULL;
 }
 
 #endif

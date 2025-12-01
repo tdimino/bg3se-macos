@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 // ============================================================================
 // LsResult - Result type for TryGetSingleton and similar functions
@@ -52,5 +53,28 @@ void* call_try_get_singleton_with_x8(void *fn, void *entityWorld);
  * @return true on ARM64, false on other architectures
  */
 bool arm64_call_available(void);
+
+// ============================================================================
+// GetRawComponent Call Wrapper
+// ============================================================================
+
+/**
+ * Call GetRawComponent with proper ARM64 ABI.
+ *
+ * GetRawComponent signature:
+ *   void* GetRawComponent(EntityWorld* world, EntityHandle handle,
+ *                         ComponentTypeIndex type, size_t componentSize,
+ *                         bool isProxy)
+ *
+ * @param fn GetRawComponent function pointer
+ * @param entityWorld Pointer to EntityWorld
+ * @param entityHandle Entity handle (64-bit packed value)
+ * @param typeIndex Component type index (uint16_t)
+ * @param componentSize Expected component size
+ * @param isProxy Whether this is a proxy component access
+ * @return Pointer to component data, or NULL
+ */
+void* call_get_raw_component(void *fn, void *entityWorld, uint64_t entityHandle,
+                              uint16_t typeIndex, size_t componentSize, bool isProxy);
 
 #endif // ARM64_CALL_H

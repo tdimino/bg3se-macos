@@ -25,7 +25,7 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Function Enumeration | 🔄 Testing | OsiFunctionMan offset-based lookup |
 | EntityWorld Capture | ✅ Complete | Direct memory read from `esv::EocServer::m_ptr` |
 | GUID → Entity Lookup | ✅ Complete | ARM64 ABI fix for TryGetSingleton (see below) |
-| Component Access | 🔄 Partial | GetComponent addresses need Ghidra verification |
+| Component Access | ✅ Complete | Index-based component registry (45+ pre-registered) |
 
 ### Verified Working (Nov 29, 2025)
 
@@ -252,9 +252,13 @@ This was discovered through Ghidra analysis of `TryGetSingleton` which saves x8 
 | `Ext.Entity.Get(guid)` | ✅ Working | Look up entity by GUID string |
 | `Ext.Entity.IsReady()` | ✅ Working | Check if entity system ready |
 | `entity.Transform` | ✅ Working | Get transform component (Position, Rotation, Scale) |
-| `entity:GetComponent(name)` | ✅ Working | Get component by name |
+| `entity:GetComponent(name)` | ✅ Working | Get component by name (short or full) |
 | `entity:IsAlive()` | ✅ Working | Check if entity is valid |
 | `entity:GetHandle()` | ✅ Working | Get raw EntityHandle value |
+| `Ext.Entity.DumpComponentRegistry()` | ✅ Working | Dump all registered components |
+| `Ext.Entity.RegisterComponent(name, idx, size)` | ✅ Working | Register discovered component |
+| `Ext.Entity.LookupComponent(name)` | ✅ Working | Look up component info by name |
+| `Ext.Entity.SetGetRawComponentAddr(addr)` | ✅ Working | Set GetRawComponent address from Frida |
 
 ### Global Functions
 
@@ -287,7 +291,8 @@ bg3se-macos/
 │   ├── entity/                 # Entity Component System (modular)
 │   │   ├── entity_system.c/h   # Core ECS, EntityWorld capture, Lua bindings
 │   │   ├── guid_lookup.c/h     # GUID parsing, HashMap operations
-│   │   └── arm64_call.c/h      # ARM64 ABI wrappers (x8 indirect return)
+│   │   ├── arm64_call.c/h      # ARM64 ABI wrappers (x8 indirect return)
+│   │   └── component_registry.c/h  # Index-based component discovery & access
 │   ├── injector/               # Main injection logic
 │   ├── lua/                    # Lua API modules
 │   ├── mod/                    # Mod detection and loading

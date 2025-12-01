@@ -6,6 +6,7 @@
  */
 
 #include "entity_system.h"
+#include "component_registry.h"
 #include "arm64_call.h"
 #include "logging.h"
 
@@ -1147,14 +1148,36 @@ static void push_transform_component(lua_State *L, void *component) {
 }
 
 // Entity:GetComponent(name) method
+// Supports both short names (e.g., "Transform") and full names (e.g., "ls::TransformComponent")
 static int lua_entity_get_component(lua_State *L) {
     EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
     const char *name = luaL_checkstring(L, 2);
 
+    // First try the new index-based component registry
+    // This supports full qualified names like "eoc::HealthComponent"
+    if (g_EntityWorld && component_registry_ready()) {
+        const ComponentInfo *info = component_registry_lookup(name);
+        if (info && info->discovered) {
+            void *component = component_get_by_name(g_EntityWorld, *ud, name);
+            if (component) {
+                // For Transform, use proper struct conversion
+                if (strstr(name, "TransformComponent") != NULL) {
+                    push_transform_component(L, component);
+                } else {
+                    // Return raw component pointer as light userdata
+                    // Mods can use this with Ext.Entity.DumpComponentRegistry() to understand the layout
+                    lua_pushlightuserdata(L, component);
+                }
+                return 1;
+            }
+        }
+    }
+
+    // Fall back to legacy enum-based lookup for short names
     ComponentType type;
     bool found = true;
 
-    // Map component name to type
+    // Map short component name to type
     if (strcmp(name, "Transform") == 0) {
         type = COMPONENT_TRANSFORM;
     } else if (strcmp(name, "Level") == 0) {
@@ -1176,8 +1199,9 @@ static int lua_entity_get_component(lua_State *L) {
     }
 
     if (!found) {
+        // Not found in legacy enum either
         lua_pushnil(L);
-        lua_pushfstring(L, "Unknown component: %s", name);
+        lua_pushfstring(L, "Unknown component: %s (try full name like 'eoc::HealthComponent')", name);
         return 2;
     }
 
@@ -1275,6 +1299,136 @@ static int lua_entity_tostring(lua_State *L) {
     return 1;
 }
 
+// ============================================================================
+// Component Registry Lua Bindings
+// ============================================================================
+
+// Iterator callback for DumpComponentRegistry
+static bool dump_registry_iterator(const ComponentInfo *info, void *userdata) {
+    lua_State *L = (lua_State *)userdata;
+
+    // Create entry table
+    lua_newtable(L);
+
+    lua_pushinteger(L, info->index);
+    lua_setfield(L, -2, "typeIndex");
+
+    lua_pushinteger(L, info->size);
+    lua_setfield(L, -2, "size");
+
+    lua_pushboolean(L, info->is_proxy);
+    lua_setfield(L, -2, "isProxy");
+
+    lua_pushboolean(L, info->is_one_frame);
+    lua_setfield(L, -2, "isOneFrame");
+
+    lua_pushboolean(L, info->discovered);
+    lua_setfield(L, -2, "discovered");
+
+    // Set in result table with component name as key
+    lua_setfield(L, -2, info->name);
+
+    return true;  // Continue iteration
+}
+
+// Ext.Entity.DumpComponentRegistry() -> table
+// Returns a table mapping component names to their metadata
+static int lua_entity_dump_component_registry(lua_State *L) {
+    // Initialize registry if not done (requires EntityWorld)
+    if (!component_registry_ready() && g_EntityWorld) {
+        component_registry_init(g_EntityWorld);
+    }
+
+    // Create result table
+    lua_newtable(L);
+
+    // Iterate all components
+    component_registry_iterate(dump_registry_iterator, L);
+
+    // Also add metadata
+    lua_newtable(L);
+    lua_pushinteger(L, component_registry_count());
+    lua_setfield(L, -2, "totalComponents");
+    lua_pushboolean(L, component_registry_ready());
+    lua_setfield(L, -2, "initialized");
+    lua_setfield(L, -2, "_meta");
+
+    return 1;
+}
+
+// Ext.Entity.InitComponentRegistry() -> boolean
+// Initializes the component registry with the current EntityWorld
+static int lua_entity_init_component_registry(lua_State *L) {
+    if (!g_EntityWorld) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "EntityWorld not captured yet");
+        return 2;
+    }
+
+    bool success = component_registry_init(g_EntityWorld);
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+// Ext.Entity.SetGetRawComponentAddr(addr) -> boolean
+// Sets the GetRawComponent address discovered via Frida
+static int lua_entity_set_get_raw_component_addr(lua_State *L) {
+    lua_Integer addr = luaL_checkinteger(L, 1);
+
+    component_set_get_raw_component_addr((void *)addr);
+
+    log_entity("GetRawComponent address set to 0x%llx via Lua", (unsigned long long)addr);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Ext.Entity.RegisterComponent(name, index, size) -> boolean
+// Registers a component discovered via Frida
+static int lua_entity_register_component(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    lua_Integer index = luaL_checkinteger(L, 2);
+    lua_Integer size = luaL_optinteger(L, 3, 0);
+
+    bool success = component_registry_register(name, (ComponentTypeIndex)index, (uint16_t)size, false);
+
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+// Ext.Entity.LookupComponent(name) -> table or nil
+// Looks up a component by name and returns its info
+static int lua_entity_lookup_component(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+
+    const ComponentInfo *info = component_registry_lookup(name);
+    if (!info) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+
+    lua_pushstring(L, info->name);
+    lua_setfield(L, -2, "name");
+
+    lua_pushinteger(L, info->index);
+    lua_setfield(L, -2, "typeIndex");
+
+    lua_pushinteger(L, info->size);
+    lua_setfield(L, -2, "size");
+
+    lua_pushboolean(L, info->is_proxy);
+    lua_setfield(L, -2, "isProxy");
+
+    lua_pushboolean(L, info->is_one_frame);
+    lua_setfield(L, -2, "isOneFrame");
+
+    lua_pushboolean(L, info->discovered);
+    lua_setfield(L, -2, "discovered");
+
+    return 1;
+}
+
 void entity_register_lua(lua_State *L) {
     // Create BG3Entity metatable
     luaL_newmetatable(L, "BG3Entity");
@@ -1315,6 +1469,22 @@ void entity_register_lua(lua_State *L) {
 
     lua_pushcfunction(L, lua_entity_dump_world);
     lua_setfield(L, -2, "DumpWorld");
+
+    // Component Registry API
+    lua_pushcfunction(L, lua_entity_dump_component_registry);
+    lua_setfield(L, -2, "DumpComponentRegistry");
+
+    lua_pushcfunction(L, lua_entity_init_component_registry);
+    lua_setfield(L, -2, "InitComponentRegistry");
+
+    lua_pushcfunction(L, lua_entity_set_get_raw_component_addr);
+    lua_setfield(L, -2, "SetGetRawComponentAddr");
+
+    lua_pushcfunction(L, lua_entity_register_component);
+    lua_setfield(L, -2, "RegisterComponent");
+
+    lua_pushcfunction(L, lua_entity_lookup_component);
+    lua_setfield(L, -2, "LookupComponent");
 
     lua_setfield(L, -2, "Entity");  // Ext.Entity = table
 
