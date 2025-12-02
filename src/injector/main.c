@@ -1532,6 +1532,17 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
     if (L && result) {
         luaL_dostring(L, "Ext.Print('Story/save data loaded!')");
 
+        // Try to discover EntityWorld now that the game is fully loaded
+        // This is the best time - EocServer should be initialized
+        if (!entity_system_ready()) {
+            log_message("[Entity] Attempting EntityWorld discovery after save load...");
+            if (entity_discover_world()) {
+                log_message("[Entity] EntityWorld discovered successfully!");
+            } else {
+                log_message("[Entity] EntityWorld discovery failed - try Ext.Entity.Discover() later");
+            }
+        }
+
         // Load mod scripts after save is loaded (if not already loaded)
         // This handles the case where InitGame wasn't called (loading existing save)
         if (!mod_scripts_loaded) {

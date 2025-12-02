@@ -313,16 +313,55 @@ Found many template instantiations in the binary:
 | `GetComponent<navcloud::PathRequestComponent>` | `0x100da66c8` | 588 bytes | |
 | `GetComponent<eoc::controller::LocomotionComponent>` | `0x100e1c66c` | 588 bytes | |
 
-### TypeId<T>::m_TypeIndex Globals
+### TypeId<T>::m_TypeIndex Globals (v0.10.5)
 
-Component type indices are stored in global static variables with mangled names:
+Component type indices are stored in global static variables with mangled names.
 
-| Component | Mangled Global | Notes |
-|-----------|----------------|-------|
-| `ecl::Item` | `__ZN2ls6TypeIdIN3ecl4ItemEN3ecs22ComponentTypeIdContextEE11m_TypeIndexE` | @ `0x1083c6910` |
-| `ecl::Character` | `__ZN2ls6TypeIdIN3ecl9CharacterEN3ecs22ComponentTypeIdContextEE11m_TypeIndexE` | @ `0x1083c7818` |
+**Game Version:** 4.1.1.6995620 (macOS ARM64)
 
-These can be read at runtime to discover component type indices.
+**Mangled Name Pattern:**
+```
+__ZN2ls6TypeIdIN{namespace_len}{namespace}{class_len}{class}EN3ecs22ComponentTypeIdContextEE11m_TypeIndexE
+```
+
+**Known TypeId Addresses (Verified Dec 2025):**
+
+| Component | Address | Verified |
+|-----------|---------|----------|
+| `ecl::Character` | `0x1088ab8e0` | ✅ |
+| `ecl::Item` | `0x1088ab8f0` | ✅ |
+| `eoc::HealthComponent` | `0x10890a360` | ✅ |
+| `eoc::StatsComponent` | `0x10890b058` | ✅ |
+| `eoc::ArmorComponent` | `0x108912e40` | ✅ |
+| `eoc::BaseHpComponent` | `0x108907888` | ✅ |
+| `eoc::DataComponent` | `0x10890b088` | ✅ |
+| `ls::TransformComponent` | `0x108940550` | ✅ |
+| `ls::LevelComponent` | `0x10893e780` | ✅ |
+| `ls::VisualComponent` | `0x108940110` | ✅ |
+| `ls::PhysicsComponent` | `0x10893c8e8` | ✅ |
+
+**Discovery Method:**
+```bash
+nm -gU "Baldur's Gate 3" | c++filt | grep "TypeId.*ecs::ComponentTypeIdContext.*m_TypeIndex"
+```
+
+**How to Find More TypeId Addresses:**
+
+1. Run: `nm -gU "Baldur's Gate 3" | c++filt | grep TypeId | grep ComponentTypeIdContext`
+2. Look for the actual variable (not guard variable): `ls::TypeId<...>::m_TypeIndex`
+3. The value at runtime = address - 0x100000000 + binary_base
+4. Add new entries to `src/entity/component_typeid.c` in `g_KnownTypeIds[]`
+
+**Runtime Discovery API:**
+```lua
+-- Discover indices from known TypeId addresses
+local count = Ext.Entity.DiscoverTypeIds()
+
+-- Dump all TypeId addresses and values
+Ext.Entity.DumpTypeIds()
+```
+
+These globals hold the actual type indices assigned at game startup.
 
 ### Next Implementation Steps
 

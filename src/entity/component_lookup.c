@@ -369,4 +369,61 @@ void component_lookup_dump_storage_data(void *storageData, uint64_t entityHandle
     } else {
         log_lookup("Entity not found in InstanceToPageMap");
     }
+
+    // Enumerate and dump all component types in this storage class
+    log_lookup("Component types in this storage class:");
+    uint16_t indices[256];
+    uint8_t slots[256];
+    int count = storage_data_enumerate_component_types(storageData, indices, slots, 256);
+    for (int i = 0; i < count; i++) {
+        log_lookup("  TypeIndex=%u -> Slot=%u", indices[i], slots[i]);
+    }
+    log_lookup("Total component types: %d", count);
+}
+
+int storage_data_enumerate_component_types(void *storageData,
+                                            uint16_t *outIndices,
+                                            uint8_t *outSlots,
+                                            int maxEntries) {
+    if (!storageData || !outIndices || !outSlots || maxEntries <= 0) {
+        return 0;
+    }
+
+    // ComponentTypeToIndex is at offset 0x180 from EntityStorageData
+    void *map = (char *)storageData + STORAGE_DATA_COMPONENT_TYPE_TO_INDEX;
+
+    // Get HashMap components
+    ArrayHeader *keys = GET_KEYS(map);
+    ArrayHeader *values = GET_VALUES(map);
+
+    if (!keys->buf || !values->buf || keys->size == 0) {
+        log_lookup("ComponentTypeToIndex: Empty or invalid");
+        return 0;
+    }
+
+    // Iterate through all keys (not buckets - keys array contains actual entries)
+    uint16_t *keyArray = (uint16_t *)keys->buf;
+    uint8_t *valueArray = (uint8_t *)values->buf;
+
+    int count = 0;
+    uint64_t size = keys->size;
+    if (size > (uint64_t)maxEntries) {
+        size = (uint64_t)maxEntries;
+    }
+
+    for (uint64_t i = 0; i < size && count < maxEntries; i++) {
+        // In the game's HashMap, all entries in the keys array are valid
+        // (unused slots would have a sentinel key value, but for discovery
+        // we'll just read all of them)
+        uint16_t typeIndex = keyArray[i];
+
+        // Skip obviously invalid entries (likely uninitialized memory)
+        if (typeIndex == 0xFFFF) continue;
+
+        outIndices[count] = typeIndex;
+        outSlots[count] = valueArray[i];
+        count++;
+    }
+
+    return count;
 }

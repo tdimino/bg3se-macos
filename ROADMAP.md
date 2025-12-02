@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.10.3
+## Current Status: v0.10.4
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -19,6 +19,7 @@ This document tracks the development roadmap for achieving feature parity with W
 - **Entity Component System** - EntityWorld capture, GUID lookup, component access
 - **Ext.Entity API** - Get(guid), IsReady(), entity.Transform, GetComponent()
 - **Data Structure Traversal** - TryGet + HashMap traversal for component access (macOS-specific)
+- **TypeId Discovery** - Reading TypeId<T>::m_TypeIndex globals for component index discovery
 
 ---
 
@@ -112,14 +113,35 @@ buffer + (componentSize * EntryIndex) → Component*
 - [x] Component buffer access with page/entry indexing
 - [x] New module: `component_lookup.c/h` with traversal logic
 - [x] `Ext.Entity.DumpStorage(handle)` debug function
-- [ ] **Runtime discovery of component type indices** (currently all UNDEFINED)
+- [x] **TypeId global discovery** - Read `TypeId<T>::m_TypeIndex` globals from binary
+- [ ] **More TypeId addresses** - Need to find more component TypeId addresses via Ghidra
 
 **Why Template Calls Failed:**
 
 On Windows, `GetRawComponent` is a single dispatcher function. On macOS/ARM64, each `GetComponent<T>` template is **completely inlined** at call sites - there are no callable functions, just inlined code.
 
+**TypeId Discovery (v0.10.4):**
+
+Component type indices are stored in global variables with mangled names like:
+```
+__ZN2ls6TypeIdIN3ecl9CharacterEN3ecs22ComponentTypeIdContextEE11m_TypeIndexE
+```
+
+These globals are at known addresses that can be read at runtime:
+- `ecl::Character` @ `0x1083c7818`
+- `ecl::Item` @ `0x1083c6910`
+
+New Lua API:
+```lua
+-- Discover indices from TypeId globals
+Ext.Entity.DiscoverTypeIds()
+
+-- Dump all known TypeId addresses
+Ext.Entity.DumpTypeIds()
+```
+
 **Next Steps:**
-- Discover component type indices at runtime (hook registration or memory scan)
+- Find more TypeId addresses via Ghidra for ls::, eoc:: components
 - Validate TryGet returns valid EntityStorageData
 - Test end-to-end GetComponent with discovered indices
 
@@ -322,6 +344,7 @@ Complete Lua type annotations for IDE support and runtime validation.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.10.4 | 2025-12-02 | TypeId<T>::m_TypeIndex discovery, ComponentTypeToIndex enumeration, Lua bindings for runtime discovery |
 | v0.10.3 | 2025-12-01 | Data structure traversal for GetComponent (TryGet + HashMap), template calls don't work on macOS |
 | v0.10.2 | 2025-12-01 | GUID byte order fix, template-based GetComponent attempt, entity lookup working |
 | v0.10.1 | 2025-11-29 | Function type detection - proper Query/Call/Event dispatch, 40+ pre-populated functions |

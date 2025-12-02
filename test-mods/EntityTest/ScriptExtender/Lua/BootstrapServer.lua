@@ -1,4 +1,4 @@
--- EntityTest: Test GetComponent functionality
+-- EntityTest: Test GetComponent functionality with TypeId discovery
 Ext.Print("[EntityTest] BootstrapServer.lua loaded!")
 
 -- Test GUIDs - player characters (guaranteed to have ecl::Character)
@@ -18,13 +18,41 @@ local testGuids = {}
 for _, g in ipairs(playerGuids) do table.insert(testGuids, g) end
 for _, g in ipairs(hashMapGuids) do table.insert(testGuids, g) end
 
--- Components to test (matching component_templates.h)
+-- Components to test (with discovered indices from TypeId globals)
 local testComponents = {
-    "ecl::Character",
-    "ecl::Item",
+    "ecl::Character",  -- TypeId at 0x1083c7818
+    "ecl::Item",       -- TypeId at 0x1083c6910
     "eoc::combat::ParticipantComponent",
     "ls::anubis::TreeComponent",
 }
+
+-- Test TypeId discovery
+local function testTypeIdDiscovery()
+    Ext.Print("[EntityTest] === TypeId Discovery Test ===")
+
+    -- Dump TypeId addresses and values
+    Ext.Print("[EntityTest] Dumping TypeId globals (check log for details):")
+    Ext.Entity.DumpTypeIds()
+
+    -- Discover indices
+    local count, err = Ext.Entity.DiscoverTypeIds()
+    if err then
+        Ext.Print("[EntityTest] DiscoverTypeIds error: " .. err)
+    else
+        Ext.Print("[EntityTest] DiscoverTypeIds found " .. tostring(count) .. " indices")
+    end
+
+    -- Dump component registry to see what was discovered
+    Ext.Print("[EntityTest] Component registry after discovery:")
+    local registry = Ext.Entity.DumpComponentRegistry()
+    if registry then
+        for name, info in pairs(registry) do
+            if info.discovered and info.typeIndex ~= 0xFFFF then
+                Ext.Print("[EntityTest]   " .. name .. ": index=" .. info.typeIndex .. ", size=" .. info.size)
+            end
+        end
+    end
+end
 
 local function testGetComponent()
     Ext.Print("[EntityTest] === GetComponent Test ===")
@@ -90,6 +118,9 @@ Ext.Events.SessionLoaded:Subscribe(function()
     Ext.Print("[EntityTest] Discover result: " .. tostring(discovered))
 
     if discovered then
+        -- Test TypeId discovery first
+        testTypeIdDiscovery()
+
         -- Test HashMap entities immediately (they exist now)
         testHashMapEntities()
     else

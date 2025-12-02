@@ -123,6 +123,21 @@ void *storage_data_get_component(void *storageData, EntityStorageIndex storageIn
  */
 void component_lookup_dump_storage_data(void *storageData, uint64_t entityHandle);
 
+/**
+ * Enumerate all component type indices from ComponentTypeToIndex HashMap.
+ * This shows what component types are registered in a storage class.
+ *
+ * @param storageData Pointer to EntityStorageData
+ * @param outIndices Output array for type indices
+ * @param outSlots Output array for corresponding slots
+ * @param maxEntries Maximum entries to return
+ * @return Number of entries found
+ */
+int storage_data_enumerate_component_types(void *storageData,
+                                            uint16_t *outIndices,
+                                            uint8_t *outSlots,
+                                            int maxEntries);
+
 #ifdef __cplusplus
 }
 #endif

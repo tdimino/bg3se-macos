@@ -8,6 +8,7 @@
 #include "entity_system.h"
 #include "component_registry.h"
 #include "component_lookup.h"
+#include "component_typeid.h"
 #include "arm64_call.h"
 #include "logging.h"
 
@@ -483,6 +484,15 @@ bool entity_discover_world(void) {
                 log_entity("WARNING: Component lookup init failed - GetComponent may not work");
             }
 
+            // Initialize TypeId discovery and discover component indices
+            if (component_typeid_init(g_MainBinaryBase)) {
+                log_entity("TypeId discovery initialized");
+                int discovered = component_typeid_discover();
+                log_entity("Discovered %d component type indices from TypeId globals", discovered);
+            } else {
+                log_entity("WARNING: TypeId discovery init failed - indices remain UNDEFINED");
+            }
+
             return true;
         } else {
             log_entity("Found EoCServer but EntityWorld at +0x288 is NULL or invalid");
@@ -884,6 +894,16 @@ int entity_system_init(void *main_binary_base) {
     log_entity("  GetBaseHpComponent: %p", (void*)g_GetBaseHpComponent);
     log_entity("  GetHealthComponent: %p", (void*)g_GetHealthComponent);
     log_entity("  GetArmorComponent: %p", (void*)g_GetArmorComponent);
+
+    // Initialize TypeId discovery and read component indices from game memory
+    // This doesn't require EntityWorld - just the binary base address
+    if (component_typeid_init(main_binary_base)) {
+        log_entity("TypeId discovery initialized");
+        int discovered = component_typeid_discover();
+        log_entity("Discovered %d component type indices from TypeId globals", discovered);
+    } else {
+        log_entity("WARNING: TypeId discovery init failed");
+    }
 
     g_Initialized = true;
 
@@ -1477,6 +1497,41 @@ static int lua_entity_dump_storage(lua_State *L) {
     return 2;
 }
 
+// Ext.Entity.DiscoverTypeIds() - Discover component type indices from TypeId globals
+// Usage: local count = Ext.Entity.DiscoverTypeIds()
+static int lua_entity_discover_type_ids(lua_State *L) {
+    if (!component_typeid_ready()) {
+        // Try to initialize first
+        if (g_MainBinaryBase && component_typeid_init(g_MainBinaryBase)) {
+            log_entity("TypeId system initialized on demand");
+        } else {
+            lua_pushinteger(L, 0);
+            lua_pushstring(L, "TypeId system not ready - binary base unknown");
+            return 2;
+        }
+    }
+
+    int discovered = component_typeid_discover();
+
+    lua_pushinteger(L, discovered);
+    lua_pushnil(L);  // No error
+    return 2;
+}
+
+// Ext.Entity.DumpTypeIds() - Dump all known TypeId addresses and values
+// Usage: Ext.Entity.DumpTypeIds()
+static int lua_entity_dump_type_ids(lua_State *L) {
+    (void)L;  // Unused
+
+    if (!component_typeid_ready()) {
+        log_entity("TypeId system not ready for dump");
+        return 0;
+    }
+
+    component_typeid_dump();
+    return 0;
+}
+
 void entity_register_lua(lua_State *L) {
     // Create BG3Entity metatable
     luaL_newmetatable(L, "BG3Entity");
@@ -1520,6 +1575,13 @@ void entity_register_lua(lua_State *L) {
 
     lua_pushcfunction(L, lua_entity_dump_storage);
     lua_setfield(L, -2, "DumpStorage");
+
+    // TypeId Discovery API
+    lua_pushcfunction(L, lua_entity_discover_type_ids);
+    lua_setfield(L, -2, "DiscoverTypeIds");
+
+    lua_pushcfunction(L, lua_entity_dump_type_ids);
+    lua_setfield(L, -2, "DumpTypeIds");
 
     // Component Registry API
     lua_pushcfunction(L, lua_entity_dump_component_registry);
