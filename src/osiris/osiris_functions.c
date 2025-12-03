@@ -4,6 +4,7 @@
 
 #include "osiris_functions.h"
 #include "logging.h"
+#include "safe_memory.h"
 
 #include <string.h>
 #include <stdint.h>
@@ -44,45 +45,122 @@ static inline int func_id_hash(uint32_t funcId) {
 }
 
 /**
- * Try to extract function name from a function definition pointer.
- * The structure layout is empirically determined.
+ * Check if a pointer looks like it points to valid string data.
+ * Must be in a reasonable address range for user-space memory.
  */
+static int is_valid_string_ptr(void *ptr) {
+    if (!ptr) return 0;
+    uintptr_t addr = (uintptr_t)ptr;
+    // Valid user-space addresses on macOS ARM64 are typically 0x100000000 - 0x7FFFFFFFFFFF
+    return addr > 0x100000000ULL && addr < 0x800000000000ULL;
+}
+
+/**
+ * Check if a character is a valid start for a function name.
+ * Osiris function names start with uppercase letters, underscores, or 'PROC_'/'QRY_'/etc.
+ */
+static int is_valid_name_start(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
+/**
+ * Try to extract function name from a function definition pointer.
+ * Uses safe memory APIs to prevent SIGBUS crashes on invalid pointers.
+ *
+ * Based on Ghidra analysis of macOS ARM64 libOsiris.dylib COsiFunctionDef:
+ *
+ * struct COsiFunctionDef {
+ *     void* vtable;                  // 0x00: vtable pointer (PTR__COsiFunctionDef_00090568)
+ *     char* Name;                    // 0x08: DIRECTLY STORES THE NAME STRING
+ *     COsiValueTypeList* ParamList;  // 0x10: parameter type list
+ *     void* ParamData;               // 0x18: parameter data array
+ *     uint32_t ParamCount;           // 0x20: number of parameters
+ * };
+ *
+ * The constructor copies the name string directly to offset 0x08:
+ *   *(void **)(this + 8) = pvVar3;  // pvVar3 is allocated string copy
+ *   _memcpy(pvVar3, param_1, sVar2);
+ *
+ * So: funcDef->Name = *(char **)(funcDef + 8)
+ */
+
+/* Thread-local buffer for extracted function names */
+static __thread char s_extractedName[128];
+
+/* Diagnostic counter for extract_func_name */
+static int s_extractDiagCount = 0;
+#define MAX_EXTRACT_DIAG 20
+
 static const char *extract_func_name_from_def(void *funcDef) {
     if (!funcDef) return NULL;
 
-    // The function definition structure varies by Osiris version
-    // We'll try multiple offsets to find the name
-    uint8_t *p = (uint8_t *)funcDef;
+    mach_vm_address_t funcDefAddr = (mach_vm_address_t)funcDef;
+    bool shouldLog = (s_extractDiagCount < MAX_EXTRACT_DIAG);
 
-    // Try offset 8 (common for std::string* or char*)
-    void *name_candidate = *(void **)(p + 8);
-    if (name_candidate) {
-        // Check if it's a direct char* (starts with printable ASCII)
-        char *str = (char *)name_candidate;
-        if (str[0] >= 'A' && str[0] <= 'z') {
-            return str;
+    /* Skip GPU carveout region - these cause SIGBUS even if mapped */
+    if (safe_memory_is_gpu_region(funcDefAddr)) {
+        if (shouldLog) {
+            log_message("[ExtractName] funcDef 0x%llx: GPU region", (unsigned long long)funcDefAddr);
+            s_extractDiagCount++;
         }
+        return NULL;
+    }
 
-        // It might be std::string (SSO or heap)
-        // For small strings, data is inline at offset 0
-        // For large strings, there's a pointer
-        // Try reading as std::string internal layout
-        char *sso_data = (char *)name_candidate;
-        if (sso_data[0] >= 'A' && sso_data[0] <= 'z') {
-            return sso_data;
+    /* SIMPLIFIED: Skip pre-validation, just try to read directly.
+     * mach_vm_read_overwrite will fail safely if address is invalid.
+     * This avoids issues with mach_vm_region not returning expected regions. */
+
+    /* Read the name pointer at offset 0x08 */
+    void *namePtr = NULL;
+    if (!safe_memory_read_pointer(funcDefAddr + 8, &namePtr)) {
+        if (shouldLog) {
+            log_message("[ExtractName] funcDef 0x%llx: failed to read namePtr at +8", (unsigned long long)funcDefAddr);
+            s_extractDiagCount++;
+        }
+        return NULL;
+    }
+
+    /* Validate the name pointer address */
+    mach_vm_address_t nameAddr = (mach_vm_address_t)namePtr;
+    if (!is_valid_string_ptr(namePtr)) {
+        if (shouldLog) {
+            log_message("[ExtractName] funcDef 0x%llx: namePtr 0x%llx not valid string ptr",
+                       (unsigned long long)funcDefAddr, (unsigned long long)nameAddr);
+            s_extractDiagCount++;
+        }
+        return NULL;
+    }
+
+    /* Skip GPU region for name pointer too */
+    if (safe_memory_is_gpu_region(nameAddr)) {
+        if (shouldLog) {
+            log_message("[ExtractName] funcDef 0x%llx: namePtr 0x%llx in GPU region",
+                       (unsigned long long)funcDefAddr, (unsigned long long)nameAddr);
+            s_extractDiagCount++;
+        }
+        return NULL;
+    }
+
+    /* Safely read the name string */
+    if (!safe_memory_read_string(nameAddr, s_extractedName, sizeof(s_extractedName))) {
+        return NULL;
+    }
+
+    /* Validate the extracted name format */
+    if (!is_valid_name_start(s_extractedName[0])) {
+        return NULL;
+    }
+
+    /* Validate all characters in the name */
+    for (int j = 0; j < 64 && s_extractedName[j]; j++) {
+        char c = s_extractedName[j];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_')) {
+            return NULL;
         }
     }
 
-    // Try offset 16
-    name_candidate = *(void **)(p + 16);
-    if (name_candidate) {
-        char *str = (char *)name_candidate;
-        if (str[0] >= 'A' && str[0] <= 'z') {
-            return str;
-        }
-    }
-
-    return NULL;
+    return s_extractedName;
 }
 
 // ============================================================================
@@ -142,25 +220,66 @@ void osi_func_cache(const char *name, uint32_t funcId, uint8_t arity, uint8_t ty
     g_funcCacheCount++;
 }
 
+// Diagnostic counter to limit verbose logging
+static int s_diagLogCount = 0;
+static const int MAX_DIAG_LOGS = 20;
+
 int osi_func_cache_by_id(uint32_t funcId) {
-    // Need both the function pointer and the manager instance
-    if (!s_pfn_pFunctionData || !s_ppOsiFunctionMan || !*s_ppOsiFunctionMan) {
+    /* Need both the function pointer and the manager instance */
+    if (!s_pfn_pFunctionData || !s_ppOsiFunctionMan) {
         return 0;
     }
 
-    void *funcMan = *s_ppOsiFunctionMan;
+    /* Safely read the OsiFunctionMan pointer */
+    void *funcMan = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)s_ppOsiFunctionMan, &funcMan)) {
+        if (s_diagLogCount < MAX_DIAG_LOGS) {
+            log_message("[FuncCache] Failed to read OsiFunctionMan pointer");
+            s_diagLogCount++;
+        }
+        return 0;
+    }
+
+    if (!funcMan) {
+        return 0;
+    }
+
+    /* Call pFunctionData to get function definition */
     void *funcDef = s_pfn_pFunctionData(funcMan, funcId);
 
+    /* Log first few attempts to see what pFunctionData returns */
+    if (s_diagLogCount < MAX_DIAG_LOGS) {
+        log_message("[FuncCache] Query funcId=0x%08x: funcMan=%p, funcDef=%p", funcId, funcMan, funcDef);
+        s_diagLogCount++;
+    }
+
     if (funcDef) {
+        /* extract_func_name_from_def now uses safe memory APIs */
         const char *name = extract_func_name_from_def(funcDef);
         if (name && name[0]) {
-            // Determine arity from structure (offset 21 based on OsiFunctionDef)
-            uint8_t *p = (uint8_t *)funcDef;
-            uint8_t arity = p[21];  // numInParams
-            uint8_t type = p[20];   // funcType
+            /* Safely read arity from offset 0x20 (ParamCount from Ghidra analysis) */
+            uint32_t paramCount = 0;
+            if (!safe_memory_read_u32((mach_vm_address_t)funcDef + 0x20, &paramCount)) {
+                paramCount = 0;
+            }
+            uint8_t arity = (paramCount <= 20) ? (uint8_t)paramCount : 0;
+
+            /* Type is not directly in this struct - default to 0 (unknown) */
+            uint8_t type = 0;
+
+            /* Log success for first few */
+            if (s_diagLogCount < MAX_DIAG_LOGS) {
+                log_message("[FuncCache] SUCCESS: funcId=0x%08x -> '%s' (arity=%d)",
+                           funcId, name, arity);
+                s_diagLogCount++;
+            }
 
             osi_func_cache(name, funcId, arity, type);
             return 1;
+        } else if (s_diagLogCount < MAX_DIAG_LOGS) {
+            /* Log failure - but don't try to dump memory unsafely */
+            log_message("[FuncCache] Failed to extract name for funcId=0x%08x, funcDef=%p (memory inaccessible or invalid)", funcId, funcDef);
+            s_diagLogCount++;
         }
     }
 
@@ -168,12 +287,14 @@ int osi_func_cache_by_id(uint32_t funcId) {
 }
 
 void osi_func_cache_from_event(uint32_t funcId) {
-    // Skip if already cached
+    /* Skip if already cached */
     if (osi_func_get_name(funcId) != NULL) {
         return;
     }
 
-    // Try to get the function definition
+    /* Try to get the function definition using safe memory APIs
+     * The extract_func_name_from_def and osi_func_cache_by_id functions
+     * now use mach_vm_read for safe memory access */
     osi_func_cache_by_id(funcId);
 }
 
@@ -304,6 +425,23 @@ int osi_func_get_info(const char *name, uint8_t *out_arity, uint8_t *out_type) {
     }
 
     return 0;
+}
+
+void osi_func_update_known_event_id(const char *name, uint32_t funcId) {
+    if (!name || funcId == 0) return;
+
+    // Find matching entry with funcId=0 (placeholder) and update it
+    if (s_knownEvents) {
+        for (int i = 0; s_knownEvents[i].name != NULL; i++) {
+            if (strcmp(s_knownEvents[i].name, name) == 0 &&
+                s_knownEvents[i].funcId == 0) {
+                // Update the placeholder with the discovered ID
+                s_knownEvents[i].funcId = funcId;
+                log_message("[Osiris] Discovered event ID: %s = 0x%x", name, funcId);
+                return;
+            }
+        }
+    }
 }
 
 // ============================================================================

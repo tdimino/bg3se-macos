@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.10.1
+## Current Status: v0.10.4
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -18,6 +18,8 @@ This document tracks the development roadmap for achieving feature parity with W
 - Player GUID tracking from observed events
 - **Entity Component System** - EntityWorld capture, GUID lookup, component access
 - **Ext.Entity API** - Get(guid), IsReady(), entity.Transform, GetComponent()
+- **Data Structure Traversal** - TryGet + HashMap traversal for component access (macOS-specific)
+- **TypeId Discovery** - Reading TypeId<T>::m_TypeIndex globals for component index discovery
 
 ---
 
@@ -79,21 +81,69 @@ end
 - [x] Component accessors via GetComponent template addresses
 
 ### 2.2 Component Access
-**Status:** 🔄 Partial (core components working)
+**Status:** 🔄 In Progress (data structure traversal implemented)
 
-**Implemented components:**
-- [x] Transform (position, rotation, scale) - `0x10010d5b00`
-- [x] Level - `0x10010d588c`
-- [x] Physics - `0x101ba0898`
-- [x] Visual - `0x102e56350`
+**Key Discovery (Dec 2025):** macOS ARM64 has NO `GetRawComponent` dispatcher like Windows. Template functions are **completely inlined** - calling template addresses directly returns NULL.
 
-**Remaining components (need Ghidra analysis for addresses):**
-- [ ] Stats (abilities, skills, proficiencies) - string at `0x107b7ca22`
-- [ ] BaseHp (HP, max HP, temp HP) - string at `0x107b84c63`
-- [ ] Armor - string at `0x107b7c9e7`
-- [ ] Inventory (items, equipment)
-- [ ] StatusContainer (active statuses/buffs/debuffs)
-- [ ] SpellBook (known spells, spell slots)
+**Solution: Data Structure Traversal (v0.10.3)**
+
+Since template calls don't work on macOS, we traverse the ECS data structures manually:
+
+```
+GetComponent(EntityHandle, ComponentTypeIndex)
+    ↓
+EntityWorld->Storage (offset 0x2d0)
+    ↓
+EntityStorageContainer::TryGet(EntityHandle) → EntityStorageData*
+    ↓
+EntityStorageData->InstanceToPageMap (0x1c0) → EntityStorageIndex
+    ↓
+EntityStorageData->ComponentTypeToIndex (0x180) → uint8_t slot
+    ↓
+Components[PageIndex]->Components[slot].ComponentBuffer
+    ↓
+buffer + (componentSize * EntryIndex) → Component*
+```
+
+**Implementation:**
+- [x] GUID→EntityHandle lookup (byte order fix: hi/lo swapped)
+- [x] EntityStorageContainer::TryGet wrapper (`call_try_get` at 0x10636b27c)
+- [x] InstanceToPageMap HashMap traversal
+- [x] ComponentTypeToIndex HashMap traversal
+- [x] Component buffer access with page/entry indexing
+- [x] New module: `component_lookup.c/h` with traversal logic
+- [x] `Ext.Entity.DumpStorage(handle)` debug function
+- [x] **TypeId global discovery** - Read `TypeId<T>::m_TypeIndex` globals from binary
+- [ ] **More TypeId addresses** - Need to find more component TypeId addresses via Ghidra
+
+**Why Template Calls Failed:**
+
+On Windows, `GetRawComponent` is a single dispatcher function. On macOS/ARM64, each `GetComponent<T>` template is **completely inlined** at call sites - there are no callable functions, just inlined code.
+
+**TypeId Discovery (v0.10.4):**
+
+Component type indices are stored in global variables with mangled names like:
+```
+__ZN2ls6TypeIdIN3ecl9CharacterEN3ecs22ComponentTypeIdContextEE11m_TypeIndexE
+```
+
+These globals are at known addresses that can be read at runtime:
+- `ecl::Character` @ `0x1083c7818`
+- `ecl::Item` @ `0x1083c6910`
+
+New Lua API:
+```lua
+-- Discover indices from TypeId globals
+Ext.Entity.DiscoverTypeIds()
+
+-- Dump all known TypeId addresses
+Ext.Entity.DumpTypeIds()
+```
+
+**Next Steps:**
+- Find more TypeId addresses via Ghidra for ls::, eoc:: components
+- Validate TryGet returns valid EntityStorageData
+- Test end-to-end GetComponent with discovered indices
 
 ---
 
@@ -294,6 +344,9 @@ Complete Lua type annotations for IDE support and runtime validation.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.10.4 | 2025-12-02 | TypeId<T>::m_TypeIndex discovery, ComponentTypeToIndex enumeration, Lua bindings for runtime discovery |
+| v0.10.3 | 2025-12-01 | Data structure traversal for GetComponent (TryGet + HashMap), template calls don't work on macOS |
+| v0.10.2 | 2025-12-01 | GUID byte order fix, template-based GetComponent attempt, entity lookup working |
 | v0.10.1 | 2025-11-29 | Function type detection - proper Query/Call/Event dispatch, 40+ pre-populated functions |
 | v0.10.0 | 2025-11-29 | Entity System complete - EntityWorld capture, GUID lookup, Ext.Entity API |
 | v0.9.9 | 2025-11-28 | Dynamic Osi.* metatable, lazy function lookup |

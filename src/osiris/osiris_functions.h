@@ -103,6 +103,12 @@ uint32_t osi_func_lookup_id(const char *name);
  */
 int osi_func_get_info(const char *name, uint8_t *out_arity, uint8_t *out_type);
 
+/**
+ * Update a known event's function ID when discovered at runtime.
+ * This fixes placeholder entries (funcId=0) in the known events table.
+ */
+void osi_func_update_known_event_id(const char *name, uint32_t funcId);
+
 // ============================================================================
 // Statistics
 // ============================================================================

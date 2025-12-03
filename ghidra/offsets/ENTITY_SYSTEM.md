@@ -134,6 +134,30 @@ offset 0x20: Array<Guid> Keys                (key storage)
 offset 0x30: StaticArray<EntityHandle> Values
 ```
 
+### GUID Byte Order (CRITICAL)
+
+**BG3 stores GUIDs with hi/lo swapped compared to standard parsing!**
+
+For GUID string `"a5eaeafe-220d-bc4d-4cc3-b94574d334c7"`:
+- Format: `AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE`
+- **hi** = `(A << 32) | (B << 16) | C` = first 8 bytes
+- **lo** = `(D << 48) | E` = last 8 bytes
+
+This was discovered by comparing parsed GUIDs to HashMap keys (Dec 2025).
+
+```c
+bool guid_parse(const char *guid_str, Guid *out_guid) {
+    // Parse sections: AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE
+    uint64_t a, b, c, d, e;
+    // ... parse hex sections ...
+
+    // BG3 storage order (hi/lo swapped from intuition)
+    out_guid->hi = (a << 32) | (b << 16) | c;  // First parts go to hi
+    out_guid->lo = (d << 48) | e;              // Last parts go to lo
+    return true;
+}
+```
+
 ### Lookup Algorithm
 
 ```c
@@ -244,3 +268,110 @@ void* call_try_get_singleton_with_x8(void *fn, void *entityWorld) {
 ```
 
 **Note:** Do NOT clobber x18 (platform register) or x29 (frame pointer).
+
+## Component Access Architecture (Dec 2025)
+
+### EntityWorld Structure Offsets
+
+From Ghidra decompilation of `ecs::EntityWorld::GetComponent<>` templates:
+
+| Offset | Type | Member | Notes |
+|--------|------|--------|-------|
+| `0x2d0` | `EntityStorageContainer*` | `Storage` | Main entity storage |
+| `0x3f0` | `ImmediateWorldCache*` | `Cache` | Pending component changes |
+
+### EntityStorageContainer::TryGet
+
+**Address:** `0x10636b27c`
+**Signature:** `EntityStorageData* TryGet(EntityHandle handle)`
+
+ARM64 calling convention:
+- x0 = this (EntityStorageContainer*)
+- x1 = EntityHandle (64-bit)
+- Return: x0 = EntityStorageData* or null
+
+### Component Access Pattern (Inlined)
+
+Analysis of `GetComponent<T>` template instantiations reveals the component access is **template-inlined** on macOS (unlike Windows which has a `GetRawComponent` dispatcher). The pattern is:
+
+```c
+// Pseudo-code for inlined GetComponent
+T* EntityWorld::GetComponent<T>(EntityHandle handle) {
+    // 1. Get Storage container
+    EntityStorageContainer* storage = this->Storage;  // offset 0x2d0
+
+    // 2. Extract thread index from handle
+    uint32_t threadIdx = (handle >> 54) & 0x3F;  // bits 54-63
+
+    // 3. Validate and look up entity storage
+    EntityStorageData* data = storage->TryGet(handle);  // calls 0x10636b27c
+    if (!data) return nullptr;
+
+    // 4. Check ImmediateWorldCache for pending changes
+    ImmediateWorldCache* cache = this->Cache;  // offset 0x3f0
+    void* pending = cache->GetChange(handle, TypeId<T>::index);
+    if (pending) return (T*)pending;
+
+    // 5. Look up component in EntityStorageData
+    uint16_t typeIndex = TypeId<T>::m_TypeIndex & 0x7FFF;
+    return data->GetComponent(handle, typeIndex);
+}
+```
+
+### EntityStorageData Offsets
+
+From decompiled GetComponent templates, EntityStorageData has these key offsets:
+
+| Offset | Purpose |
+|--------|---------|
+| `0x138` | Components array (pages of component data) |
+| `0x180` | ComponentTypeToIndex hash table buckets |
+| `0x188` | ComponentTypeToIndex hash table size |
+| `0x190` | ComponentTypeToIndex hash table something |
+| `0x1a0` | ComponentTypeToIndex values (type indices) |
+| `0x1b0` | Component slot indices |
+| `0x1c0` | InstanceToPageMap hash buckets |
+| `0x1c8` | InstanceToPageMap size |
+| `0x1d0` | InstanceToPageMap next chain |
+| `0x1e0` | InstanceToPageMap keys (EntityHandle) |
+| `0x1f0` | InstanceToPageMap values (storage index) |
+
+### Implementation Strategy for macOS
+
+Since there's no `GetRawComponent` dispatcher on macOS, we have two options:
+
+#### Option 1: Call TryGet + Manual Component Lookup
+
+```c
+// Use discovered TryGet and implement component lookup ourselves
+EntityStorageData* data = EntityStorageContainer_TryGet(world->Storage, handle);
+if (data) {
+    void* component = EntityStorageData_GetComponent(data, handle, typeIndex);
+}
+```
+
+#### Option 2: Hook a GetComponent<T> Instantiation
+
+We have many GetComponent instantiations we could call or reference:
+- `0x100cb1644` - `GetComponent<ecl::Item>`
+- `0x100cc20a8` - `GetComponent<ecl::Character>`
+- etc.
+
+### Key Function Addresses
+
+| Function | Address | Notes |
+|----------|---------|-------|
+| `EntityStorageContainer::TryGet` | `0x10636b27c` | Non-const version |
+| `EntityStorageContainer::TryGet (const)` | `0x10636b310` | Const version |
+| `GetComponent<ecl::Item>` | `0x100cb1644` | Template instantiation |
+| `GetComponent<ecl::Character>` | `0x100cc20a8` | Template instantiation |
+| `GetComponent<eoc::combat::ParticipantComponent>` | `0x100cc1d7c` | Combat-related |
+| `ImmediateWorldCache::GetChange` | Called at `param_1 + 0x3f0` | Cache lookup |
+
+### TypeId Static Variables
+
+Component type indices are stored in static globals (pattern `TypeId<T>::m_TypeIndex`):
+- `ecl::Item`: `PTR___ZN2ls6TypeIdIN3ecl4ItemEN3ecs22ComponentTypeIdContextEE11m_TypeIndexE_1083c6910`
+- `ecl::Character`: `PTR___ZN2ls6TypeIdIN3ecl9CharacterEN3ecs22ComponentTypeIdContextEE11m_TypeIndexE_1083c7818`
+
+These can be read at runtime to discover component type indices.

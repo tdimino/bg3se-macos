@@ -6,6 +6,9 @@
  */
 
 #include "entity_system.h"
+#include "component_registry.h"
+#include "component_lookup.h"
+#include "component_typeid.h"
 #include "arm64_call.h"
 #include "logging.h"
 
@@ -60,6 +63,11 @@ static struct {
 } g_GuidCache[GUID_CACHE_SIZE];
 static int g_GuidCacheCount = 0;
 
+// TypeId discovery state - discovery may need to be deferred until game initializes globals
+static bool g_TypeIdDiscoveryComplete = false;
+static int g_TypeIdRetryCount = 0;
+#define TYPEID_MAX_RETRIES 5
+
 // ============================================================================
 // ARM64 Function Addresses (relative to binary base)
 // From Ghidra analysis - see ghidra/ENTITY_OFFSETS.md
@@ -111,8 +119,8 @@ static int g_GuidCacheCount = 0;
 #define OFFSET_GET_ARMOR_COMPONENT    0  // Was 0x10b2fe2c4 - WRONG
 #define OFFSET_GET_CLASSES_COMPONENT  0  // Not yet located
 
-// Ghidra base address (macOS ARM64)
-#define GHIDRA_BASE_ADDRESS 0x100000000
+// Ghidra base address (macOS ARM64) - defined in entity_storage.h
+// #define GHIDRA_BASE_ADDRESS 0x100000000  // Use entity_storage.h definition
 
 // ============================================================================
 // Component Accessor Function Types
@@ -468,6 +476,28 @@ bool entity_discover_world(void) {
             g_EntityWorld = entityworld;
             log_entity("SUCCESS: Discovered EoCServer=%p, EntityWorld=%p",
                        g_EoCServer, g_EntityWorld);
+
+            // Initialize component registry now that we have EntityWorld
+            if (component_registry_init(g_EntityWorld)) {
+                log_entity("Component registry initialized");
+            }
+
+            // Initialize component lookup (data structure traversal for macOS)
+            if (component_lookup_init(g_EntityWorld, g_MainBinaryBase)) {
+                log_entity("Component lookup initialized (data structure traversal enabled)");
+            } else {
+                log_entity("WARNING: Component lookup init failed - GetComponent may not work");
+            }
+
+            // Initialize TypeId discovery and discover component indices
+            if (component_typeid_init(g_MainBinaryBase)) {
+                log_entity("TypeId discovery initialized");
+                int discovered = component_typeid_discover();
+                log_entity("Discovered %d component type indices from TypeId globals", discovered);
+            } else {
+                log_entity("WARNING: TypeId discovery init failed - indices remain UNDEFINED");
+            }
+
             return true;
         } else {
             log_entity("Found EoCServer but EntityWorld at +0x288 is NULL or invalid");
@@ -491,6 +521,7 @@ static EocServerStartUpFn orig_EocServerStartUp = NULL;
 // Hook: Capture EoCServer Singleton on Startup
 // ============================================================================
 
+__attribute__((unused))
 static void hook_EocServerStartUp(void *eocServer, void *serverInit) {
     // Capture EoCServer pointer (this) on first call
     if (!g_EoCServer && eocServer) {
@@ -869,6 +900,16 @@ int entity_system_init(void *main_binary_base) {
     log_entity("  GetHealthComponent: %p", (void*)g_GetHealthComponent);
     log_entity("  GetArmorComponent: %p", (void*)g_GetArmorComponent);
 
+    // Initialize TypeId discovery and read component indices from game memory
+    // This doesn't require EntityWorld - just the binary base address
+    if (component_typeid_init(main_binary_base)) {
+        log_entity("TypeId discovery initialized");
+        int discovered = component_typeid_discover();
+        log_entity("Discovered %d component type indices from TypeId globals", discovered);
+    } else {
+        log_entity("WARNING: TypeId discovery init failed");
+    }
+
     g_Initialized = true;
 
     return 0;
@@ -880,6 +921,80 @@ bool entity_system_ready(void) {
         update_entity_world_from_server();
     }
     return g_EntityWorld != NULL;
+}
+
+void* entity_get_binary_base(void) {
+    return g_MainBinaryBase;
+}
+
+// ============================================================================
+// TypeId Discovery Retry
+// ============================================================================
+
+bool entity_typeid_discovery_complete(void) {
+    return g_TypeIdDiscoveryComplete;
+}
+
+int entity_retry_typeid_discovery(void) {
+    if (g_TypeIdDiscoveryComplete) {
+        // Already done - return cached count
+        return component_registry_count();
+    }
+
+    if (!g_MainBinaryBase) {
+        log_entity("Cannot retry TypeId discovery - binary base not set");
+        return 0;
+    }
+
+    // Ensure TypeId module is initialized
+    if (!component_typeid_init(g_MainBinaryBase)) {
+        log_entity("TypeId discovery init failed on retry");
+        return 0;
+    }
+
+    int discovered = component_typeid_discover();
+
+    // Check if any TypeIds were actually found with non-zero indices
+    // The issue is that TypeIds read as 0 before the game initializes them
+    if (discovered > 0) {
+        // Verify at least one key component has a non-zero index
+        const ComponentInfo *stats = component_registry_lookup("eoc::StatsComponent");
+        const ComponentInfo *hp = component_registry_lookup("eoc::BaseHpComponent");
+
+        bool hasValidIndex = false;
+        if (stats && stats->index != COMPONENT_INDEX_UNDEFINED && stats->index != 0) {
+            hasValidIndex = true;
+        }
+        if (hp && hp->index != COMPONENT_INDEX_UNDEFINED && hp->index != 0) {
+            hasValidIndex = true;
+        }
+
+        if (hasValidIndex) {
+            g_TypeIdDiscoveryComplete = true;
+            log_entity("TypeId discovery complete: %d components with valid indices", discovered);
+        } else {
+            g_TypeIdRetryCount++;
+            log_entity("TypeId discovery attempt %d/%d: %d components read (indices still 0)",
+                      g_TypeIdRetryCount, TYPEID_MAX_RETRIES, discovered);
+        }
+    } else {
+        g_TypeIdRetryCount++;
+        log_entity("TypeId discovery attempt %d/%d: no components discovered",
+                  g_TypeIdRetryCount, TYPEID_MAX_RETRIES);
+    }
+
+    return discovered;
+}
+
+// Called from SessionLoaded event handler to retry TypeId discovery
+void entity_on_session_loaded(void) {
+    if (g_TypeIdDiscoveryComplete) {
+        log_entity("SessionLoaded: TypeId discovery already complete");
+        return;
+    }
+
+    log_entity("SessionLoaded: Retrying TypeId discovery...");
+    entity_retry_typeid_discovery();
 }
 
 // ============================================================================
@@ -1147,14 +1262,34 @@ static void push_transform_component(lua_State *L, void *component) {
 }
 
 // Entity:GetComponent(name) method
+// Supports both short names (e.g., "Transform") and full names (e.g., "ls::TransformComponent")
 static int lua_entity_get_component(lua_State *L) {
     EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
     const char *name = luaL_checkstring(L, 2);
 
+    // First try component_get_by_name which handles:
+    // 1. Direct template calls for known components (ecl::Character, etc.)
+    // 2. Registry-based lookup for discovered components
+    if (g_EntityWorld) {
+        void *component = component_get_by_name(g_EntityWorld, *ud, name);
+        if (component) {
+            // For Transform, use proper struct conversion
+            if (strstr(name, "TransformComponent") != NULL) {
+                push_transform_component(L, component);
+            } else {
+                // Return raw component pointer as light userdata
+                // Mods can use this with Ext.Entity.DumpComponentRegistry() to understand the layout
+                lua_pushlightuserdata(L, component);
+            }
+            return 1;
+        }
+    }
+
+    // Fall back to legacy enum-based lookup for short names
     ComponentType type;
     bool found = true;
 
-    // Map component name to type
+    // Map short component name to type
     if (strcmp(name, "Transform") == 0) {
         type = COMPONENT_TRANSFORM;
     } else if (strcmp(name, "Level") == 0) {
@@ -1176,8 +1311,9 @@ static int lua_entity_get_component(lua_State *L) {
     }
 
     if (!found) {
+        // Not found in legacy enum either
         lua_pushnil(L);
-        lua_pushfstring(L, "Unknown component: %s", name);
+        lua_pushfstring(L, "Unknown component: %s (try full name like 'eoc::HealthComponent')", name);
         return 2;
     }
 
@@ -1271,7 +1407,265 @@ static int lua_entity_index(lua_State *L) {
 // Entity metatable __tostring
 static int lua_entity_tostring(lua_State *L) {
     EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
-    lua_pushfstring(L, "Entity(0x%llx)", (unsigned long long)*ud);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Entity(0x%llx)", (unsigned long long)*ud);
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+// ============================================================================
+// Component Registry Lua Bindings
+// ============================================================================
+
+// Iterator callback for DumpComponentRegistry
+static bool dump_registry_iterator(const ComponentInfo *info, void *userdata) {
+    lua_State *L = (lua_State *)userdata;
+
+    // Create entry table
+    lua_newtable(L);
+
+    lua_pushinteger(L, info->index);
+    lua_setfield(L, -2, "typeIndex");
+
+    lua_pushinteger(L, info->size);
+    lua_setfield(L, -2, "size");
+
+    lua_pushboolean(L, info->is_proxy);
+    lua_setfield(L, -2, "isProxy");
+
+    lua_pushboolean(L, info->is_one_frame);
+    lua_setfield(L, -2, "isOneFrame");
+
+    lua_pushboolean(L, info->discovered);
+    lua_setfield(L, -2, "discovered");
+
+    // Set in result table with component name as key
+    lua_setfield(L, -2, info->name);
+
+    return true;  // Continue iteration
+}
+
+// Ext.Entity.DumpComponentRegistry() -> table
+// Returns a table mapping component names to their metadata
+static int lua_entity_dump_component_registry(lua_State *L) {
+    // Initialize registry if not done (requires EntityWorld)
+    if (!component_registry_ready() && g_EntityWorld) {
+        component_registry_init(g_EntityWorld);
+    }
+
+    // Create result table
+    lua_newtable(L);
+
+    // Iterate all components
+    component_registry_iterate(dump_registry_iterator, L);
+
+    // Also add metadata
+    lua_newtable(L);
+    lua_pushinteger(L, component_registry_count());
+    lua_setfield(L, -2, "totalComponents");
+    lua_pushboolean(L, component_registry_ready());
+    lua_setfield(L, -2, "initialized");
+    lua_setfield(L, -2, "_meta");
+
+    return 1;
+}
+
+// Ext.Entity.InitComponentRegistry() -> boolean
+// Initializes the component registry with the current EntityWorld
+static int lua_entity_init_component_registry(lua_State *L) {
+    if (!g_EntityWorld) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "EntityWorld not captured yet");
+        return 2;
+    }
+
+    bool success = component_registry_init(g_EntityWorld);
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+// Ext.Entity.SetGetRawComponentAddr(addr) -> boolean
+// Sets the GetRawComponent address discovered via Frida
+static int lua_entity_set_get_raw_component_addr(lua_State *L) {
+    lua_Integer addr = luaL_checkinteger(L, 1);
+
+    component_set_get_raw_component_addr((void *)addr);
+
+    log_entity("GetRawComponent address set to 0x%llx via Lua", (unsigned long long)addr);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Ext.Entity.RegisterComponent(name, index, size) -> boolean
+// Registers a component discovered via Frida
+static int lua_entity_register_component(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    lua_Integer index = luaL_checkinteger(L, 2);
+    lua_Integer size = luaL_optinteger(L, 3, 0);
+
+    bool success = component_registry_register(name, (ComponentTypeIndex)index, (uint16_t)size, false);
+
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+// Ext.Entity.LookupComponent(name) -> table or nil
+// Looks up a component by name and returns its info
+static int lua_entity_lookup_component(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+
+    const ComponentInfo *info = component_registry_lookup(name);
+    if (!info) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+
+    lua_pushstring(L, info->name);
+    lua_setfield(L, -2, "name");
+
+    lua_pushinteger(L, info->index);
+    lua_setfield(L, -2, "typeIndex");
+
+    lua_pushinteger(L, info->size);
+    lua_setfield(L, -2, "size");
+
+    lua_pushboolean(L, info->is_proxy);
+    lua_setfield(L, -2, "isProxy");
+
+    lua_pushboolean(L, info->is_one_frame);
+    lua_setfield(L, -2, "isOneFrame");
+
+    lua_pushboolean(L, info->discovered);
+    lua_setfield(L, -2, "discovered");
+
+    return 1;
+}
+
+// Ext.Entity.DumpStorage(entityHandle) - Test TryGet and dump storage data
+// Usage: local entity = Ext.Entity.Get(guid); Ext.Entity.DumpStorage(entity:GetHandle())
+static int lua_entity_dump_storage(lua_State *L) {
+    uint64_t handle = (uint64_t)luaL_checkinteger(L, 1);
+
+    if (!component_lookup_ready()) {
+        lua_pushnil(L);
+        lua_pushstring(L, "Component lookup not initialized");
+        return 2;
+    }
+
+    log_entity("=== DumpStorage for handle 0x%llx ===", (unsigned long long)handle);
+
+    // Call TryGet to get EntityStorageData
+    void *storageData = component_lookup_get_storage_data(handle);
+    if (!storageData) {
+        lua_pushnil(L);
+        lua_pushstring(L, "TryGet returned NULL - entity not found in storage");
+        return 2;
+    }
+
+    // Dump storage data
+    component_lookup_dump_storage_data(storageData, handle);
+
+    lua_pushboolean(L, true);
+    lua_pushfstring(L, "StorageData at %p - see log for details", storageData);
+    return 2;
+}
+
+// Ext.Entity.DiscoverTypeIds() - Discover component type indices from TypeId globals
+// Usage: local result = Ext.Entity.DiscoverTypeIds()
+// Returns: { success = bool, count = int, complete = bool, message = string }
+static int lua_entity_discover_type_ids(lua_State *L) {
+    int discovered = entity_retry_typeid_discovery();
+    bool complete = entity_typeid_discovery_complete();
+
+    lua_createtable(L, 0, 4);
+
+    lua_pushboolean(L, discovered > 0);
+    lua_setfield(L, -2, "success");
+
+    lua_pushinteger(L, discovered);
+    lua_setfield(L, -2, "count");
+
+    lua_pushboolean(L, complete);
+    lua_setfield(L, -2, "complete");
+
+    if (complete) {
+        lua_pushstring(L, "TypeId discovery complete - indices are valid");
+    } else if (discovered > 0) {
+        lua_pushstring(L, "Components found but indices are 0 - game may not have initialized yet");
+    } else {
+        lua_pushstring(L, "No components discovered - check binary base");
+    }
+    lua_setfield(L, -2, "message");
+
+    return 1;
+}
+
+// Ext.Entity.DumpTypeIds() - Dump all known TypeId addresses and values
+// Usage: Ext.Entity.DumpTypeIds()
+static int lua_entity_dump_type_ids(lua_State *L) {
+    (void)L;  // Unused
+
+    if (!component_typeid_ready()) {
+        log_entity("TypeId system not ready for dump");
+        return 0;
+    }
+
+    component_typeid_dump();
+    return 0;
+}
+
+// Ext.Entity.DumpUuidMap(maxEntries) - Dump UUID to Handle mapping entries
+// Usage: Ext.Entity.DumpUuidMap(10)  -- dumps first 10 entries
+static int lua_entity_dump_uuid_map(lua_State *L) {
+    int maxEntries = (int)luaL_optinteger(L, 1, 10);
+
+    if (!g_EntityWorld) {
+        log_entity("DumpUuidMap: EntityWorld not available");
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    // Get the UuidToHandleMappingComponent singleton
+    void *mapping = NULL;
+    if (g_TryGetUuidMappingSingleton) {
+        mapping = call_try_get_singleton_with_x8(g_TryGetUuidMappingSingleton, g_EntityWorld);
+    }
+
+    if (!mapping) {
+        log_entity("DumpUuidMap: Could not get UuidToHandleMappingComponent");
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    // The HashMap is at offset 0 in UuidToHandleMappingComponent
+    HashMapGuidEntityHandle *hashmap = (HashMapGuidEntityHandle *)mapping;
+
+    log_entity("=== DumpUuidMap: First %d entries (total: %u) ===",
+               maxEntries, hashmap->Keys.size);
+
+    int count = maxEntries;
+    if ((uint32_t)count > hashmap->Keys.size) count = (int)hashmap->Keys.size;
+
+    for (int i = 0; i < count; i++) {
+        Guid *key = &hashmap->Keys.buf[i];
+        EntityHandle value = hashmap->Values.buf[i];
+
+        // Convert GUID to string for comparison
+        char guidStr[40];
+        guid_to_string(key, guidStr);
+
+        log_entity("  [%d] %s -> 0x%llx (raw: hi=0x%llx lo=0x%llx)",
+                   i, guidStr, (unsigned long long)value,
+                   (unsigned long long)key->hi, (unsigned long long)key->lo);
+    }
+
+    if ((int)hashmap->Keys.size > count) {
+        log_entity("  ... (%u more entries)", hashmap->Keys.size - count);
+    }
+
+    lua_pushinteger(L, hashmap->Keys.size);
     return 1;
 }
 
@@ -1315,6 +1709,35 @@ void entity_register_lua(lua_State *L) {
 
     lua_pushcfunction(L, lua_entity_dump_world);
     lua_setfield(L, -2, "DumpWorld");
+
+    lua_pushcfunction(L, lua_entity_dump_storage);
+    lua_setfield(L, -2, "DumpStorage");
+
+    // TypeId Discovery API
+    lua_pushcfunction(L, lua_entity_discover_type_ids);
+    lua_setfield(L, -2, "DiscoverTypeIds");
+
+    lua_pushcfunction(L, lua_entity_dump_type_ids);
+    lua_setfield(L, -2, "DumpTypeIds");
+
+    // Component Registry API
+    lua_pushcfunction(L, lua_entity_dump_component_registry);
+    lua_setfield(L, -2, "DumpComponentRegistry");
+
+    lua_pushcfunction(L, lua_entity_init_component_registry);
+    lua_setfield(L, -2, "InitComponentRegistry");
+
+    lua_pushcfunction(L, lua_entity_set_get_raw_component_addr);
+    lua_setfield(L, -2, "SetGetRawComponentAddr");
+
+    lua_pushcfunction(L, lua_entity_register_component);
+    lua_setfield(L, -2, "RegisterComponent");
+
+    lua_pushcfunction(L, lua_entity_lookup_component);
+    lua_setfield(L, -2, "LookupComponent");
+
+    lua_pushcfunction(L, lua_entity_dump_uuid_map);
+    lua_setfield(L, -2, "DumpUuidMap");
 
     lua_setfield(L, -2, "Entity");  // Ext.Entity = table
 

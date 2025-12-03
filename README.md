@@ -25,7 +25,7 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Function Enumeration | 🔄 Testing | OsiFunctionMan offset-based lookup |
 | EntityWorld Capture | ✅ Complete | Direct memory read from `esv::EocServer::m_ptr` |
 | GUID → Entity Lookup | ✅ Complete | ARM64 ABI fix for TryGetSingleton (see below) |
-| Component Access | 🔄 Partial | GetComponent addresses need Ghidra verification |
+| Component Access | 🔄 In Progress | Data structure traversal implemented, needs type index discovery |
 
 ### Verified Working (Nov 29, 2025)
 
@@ -57,11 +57,22 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **GUID → EntityHandle lookup working** - HashMap with 1873 entity GUIDs successfully queried
 - ✅ **Ext.Entity Lua API registered and functional**
 
+## Compatibility
+
+| Item | Version/Info |
+|------|--------------|
+| **BG3 Version** | 4.1.1.6995620 (tested Dec 2025) |
+| **macOS** | 12+ (tested on macOS 15.6.1) |
+| **Architecture** | ARM64 (Apple Silicon) - primary target |
+| **Rosetta/Intel** | Builds but Ghidra offsets are ARM64-only |
+
+**Note:** The Ghidra-derived memory offsets (for EntityWorld, component access, etc.) are specific to the ARM64 binary. Running under Rosetta (x86_64) will have limited functionality - only basic Osiris hooks and Lua runtime will work.
+
 ## Requirements
 
 - macOS 12+ (tested on macOS 15.6.1)
-- Apple Silicon or Intel Mac
-- Baldur's Gate 3 (Steam version)
+- Apple Silicon Mac (for full functionality) or Intel Mac (limited)
+- Baldur's Gate 3 (Steam version 4.1.1.6995620)
 - Xcode Command Line Tools (`xcode-select --install`)
 - CMake (`brew install cmake`) - for building Dobby
 
@@ -80,24 +91,21 @@ cd bg3se-macos
 
 This builds a universal binary supporting both ARM64 (native) and x86_64 (Rosetta). Dobby will be built automatically if not present.
 
-### Install
+### Install (Steam Launch)
 
-1. Create wrapper script `/tmp/bg3w.sh`:
+The repo includes launcher scripts in `scripts/`:
 
-```bash
-#!/bin/bash
-DYLIB_PATH="/path/to/bg3se-macos/build/lib/libbg3se.dylib"
-exec open -W --env "DYLD_INSERT_LIBRARIES=$DYLIB_PATH" "$1"
+| Script | Architecture | Use When |
+|--------|--------------|----------|
+| `bg3w.sh` | ARM64 (Apple Silicon) | **Recommended** - Full functionality |
+| `bg3w-intel.sh` | x86_64 (Rosetta) | Intel Macs or troubleshooting |
+| `launch_bg3.sh` | ARM64 | Direct terminal launch (no Steam) |
+
+**Steam Setup (Apple Silicon - Recommended):**
+
+1. Set Steam launch options for BG3:
 ```
-
-2. Make executable:
-```bash
-chmod +x /tmp/bg3w.sh
-```
-
-3. Set Steam launch options for BG3:
-```
-/tmp/bg3w.sh %command%
+/path/to/bg3se-macos/scripts/bg3w.sh %command%
 ```
 
 4. Launch BG3 via Steam normally
@@ -252,9 +260,16 @@ This was discovered through Ghidra analysis of `TryGetSingleton` which saves x8 
 | `Ext.Entity.Get(guid)` | ✅ Working | Look up entity by GUID string |
 | `Ext.Entity.IsReady()` | ✅ Working | Check if entity system ready |
 | `entity.Transform` | ✅ Working | Get transform component (Position, Rotation, Scale) |
-| `entity:GetComponent(name)` | ✅ Working | Get component by name |
+| `entity:GetComponent(name)` | ✅ Working | Get component by name (short or full) |
 | `entity:IsAlive()` | ✅ Working | Check if entity is valid |
 | `entity:GetHandle()` | ✅ Working | Get raw EntityHandle value |
+| `Ext.Entity.DumpComponentRegistry()` | ✅ Working | Dump all registered components |
+| `Ext.Entity.DumpStorage(handle)` | ✅ Working | Test TryGet and dump EntityStorageData |
+| `Ext.Entity.DiscoverTypeIds()` | ✅ Working | Discover indices from TypeId globals |
+| `Ext.Entity.DumpTypeIds()` | ✅ Working | Dump all known TypeId addresses |
+| `Ext.Entity.RegisterComponent(name, idx, size)` | ✅ Working | Register discovered component |
+| `Ext.Entity.LookupComponent(name)` | ✅ Working | Look up component info by name |
+| `Ext.Entity.SetGetRawComponentAddr(addr)` | ✅ Working | Set GetRawComponent address from Frida |
 
 ### Global Functions
 
@@ -287,7 +302,11 @@ bg3se-macos/
 │   ├── entity/                 # Entity Component System (modular)
 │   │   ├── entity_system.c/h   # Core ECS, EntityWorld capture, Lua bindings
 │   │   ├── guid_lookup.c/h     # GUID parsing, HashMap operations
-│   │   └── arm64_call.c/h      # ARM64 ABI wrappers (x8 indirect return)
+│   │   ├── arm64_call.c/h      # ARM64 ABI wrappers (x8 indirect return)
+│   │   ├── component_registry.c/h  # Index-based component discovery & access
+│   │   ├── component_lookup.c/h    # TryGet + HashMap traversal (macOS-specific)
+│   │   ├── component_typeid.c/h    # TypeId<T>::m_TypeIndex discovery
+│   │   └── entity_storage.h    # ECS structure definitions and offsets
 │   ├── injector/               # Main injection logic
 │   ├── lua/                    # Lua API modules
 │   ├── mod/                    # Mod detection and loading

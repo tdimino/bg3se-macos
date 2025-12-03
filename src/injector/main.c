@@ -145,6 +145,14 @@ static KnownFunction g_knownFunctions[] = {
     {"CharacterResurrected", 0, 1, OSI_FUNC_EVENT},
 
     // =========================================================================
+    // Procedures (OSI_FUNC_PROC = 5) - common PROC events
+    // =========================================================================
+    {"PROC_CharacterEnteredCombat", 0, 1, OSI_FUNC_PROC},
+    {"PROC_CharacterLeftCombat", 0, 1, OSI_FUNC_PROC},
+    {"PROC_EnterCombat", 0, 2, OSI_FUNC_PROC},
+    {"PROC_LeaveCombat", 0, 2, OSI_FUNC_PROC},
+
+    // =========================================================================
     // Queries (OSI_FUNC_QUERY = 2) - return values
     // =========================================================================
     {"CharacterGetLevel", 0, 2, OSI_FUNC_QUERY},
@@ -315,6 +323,135 @@ static void init_mods_base_path(void) {
              "%s/Documents/Larian Studios/Baldur's Gate 3/Mods", home);
 
     log_message("Mods base path: %s", mods_base_path);
+}
+
+/**
+ * Extract ModTable value from Config.json content
+ * Returns allocated string (caller must free) or NULL if not found
+ */
+static char *extract_mod_table(const char *config_content) {
+    // Look for "ModTable": "value" pattern
+    const char *key = "\"ModTable\"";
+    const char *pos = strstr(config_content, key);
+    if (!pos) return NULL;
+
+    // Skip past the key and find the colon
+    pos += strlen(key);
+    while (*pos && (*pos == ' ' || *pos == '\t' || *pos == ':')) pos++;
+
+    // Should now be at opening quote
+    if (*pos != '"') return NULL;
+    pos++;  // Skip opening quote
+
+    // Find closing quote
+    const char *end = strchr(pos, '"');
+    if (!end) return NULL;
+
+    // Extract the value
+    size_t len = end - pos;
+    char *value = (char *)malloc(len + 1);
+    if (!value) return NULL;
+
+    strncpy(value, pos, len);
+    value[len] = '\0';
+
+    return value;
+}
+
+/**
+ * Read Config.json and extract ModTable for a mod
+ * Tries various paths where Config.json might be
+ */
+static char *get_mod_table_name(const char *mod_name) {
+    char config_path[MAX_PATH_LEN];
+    char *mod_table = NULL;
+
+    // Try 1: Documents/Mods folder (extracted mod)
+    const char *home = getenv("HOME");
+    if (home) {
+        snprintf(config_path, sizeof(config_path),
+                 "%s/Documents/Larian Studios/Baldur's Gate 3/Mods/%s/ScriptExtender/Config.json",
+                 home, mod_name);
+
+        FILE *f = fopen(config_path, "r");
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long size = ftell(f);
+            fseek(f, 0, SEEK_SET);
+
+            if (size > 0 && size < 64 * 1024) {  // Sanity check: max 64KB
+                char *content = (char *)malloc(size + 1);
+                if (content) {
+                    fread(content, 1, size, f);
+                    content[size] = '\0';
+                    mod_table = extract_mod_table(content);
+                    free(content);
+                }
+            }
+            fclose(f);
+            if (mod_table) {
+                log_message("[Lua] Found ModTable '%s' for mod %s", mod_table, mod_name);
+                return mod_table;
+            }
+        }
+    }
+
+    // Try 2: /tmp extracted mods
+    snprintf(config_path, sizeof(config_path),
+             "/tmp/%s_extracted/Mods/%s/ScriptExtender/Config.json",
+             mod_name, mod_name);
+
+    FILE *f = fopen(config_path, "r");
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+
+        if (size > 0 && size < 64 * 1024) {
+            char *content = (char *)malloc(size + 1);
+            if (content) {
+                fread(content, 1, size, f);
+                content[size] = '\0';
+                mod_table = extract_mod_table(content);
+                free(content);
+            }
+        }
+        fclose(f);
+        if (mod_table) {
+            log_message("[Lua] Found ModTable '%s' for mod %s", mod_table, mod_name);
+            return mod_table;
+        }
+    }
+
+    // Fallback: Use mod_name as ModTable
+    mod_table = strdup(mod_name);
+    log_message("[Lua] Using mod name '%s' as ModTable (Config.json not found or no ModTable)", mod_name);
+    return mod_table;
+}
+
+/**
+ * Set up Mods.<ModTable> namespace in Lua
+ * Creates the global 'Mods' table if it doesn't exist
+ * Creates the Mods.<mod_table> subtable
+ */
+static void setup_mod_namespace(lua_State *L, const char *mod_table) {
+    // Get or create global 'Mods' table
+    lua_getglobal(L, "Mods");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);  // Remove nil
+        lua_newtable(L);
+        lua_pushvalue(L, -1);  // Duplicate for setglobal
+        lua_setglobal(L, "Mods");
+        log_message("[Lua] Created global 'Mods' table");
+    }
+
+    // Now Mods table is on stack
+    // Create Mods.<mod_table> = {}
+    lua_newtable(L);
+    lua_setfield(L, -2, mod_table);
+    lua_pop(L, 1);  // Pop Mods table
+
+    log_message("[Lua] Created namespace Mods.%s", mod_table);
 }
 
 /**
@@ -814,23 +951,59 @@ static int is_player_guid(const char *guid) {
 }
 
 /**
- * Track a player GUID if we haven't seen it before
+ * Extract just the UUID portion from a full template GUID string.
+ * e.g., "S_Player_Astarion_c7c13742-bacd-460a-8f65-f864fe41f255" -> "c7c13742-bacd-460a-8f65-f864fe41f255"
+ * Returns pointer to start of UUID within the input string, or the input if no underscore found.
+ */
+static const char *extract_uuid_from_guid(const char *guid) {
+    if (!guid) return guid;
+
+    // UUID format: 8-4-4-4-12 = 36 characters
+    // Find the last underscore before the UUID
+    size_t len = strlen(guid);
+    if (len >= 36) {
+        // Check if last 36 chars look like a UUID (has hyphens at right positions)
+        const char *uuid_start = guid + len - 36;
+        if (uuid_start[-1] == '_' || uuid_start == guid) {
+            // Verify it looks like a UUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+            if (uuid_start[8] == '-' && uuid_start[13] == '-' &&
+                uuid_start[18] == '-' && uuid_start[23] == '-') {
+                return uuid_start;
+            }
+        }
+    }
+
+    // Fallback: look for last underscore
+    const char *last_underscore = strrchr(guid, '_');
+    if (last_underscore && strlen(last_underscore + 1) == 36) {
+        return last_underscore + 1;
+    }
+
+    return guid;  // Return original if no pattern found
+}
+
+/**
+ * Track a player GUID if we haven't seen it before.
+ * Extracts just the UUID portion for HashMap compatibility.
  */
 static void track_player_guid(const char *guid) {
     if (!guid || !is_player_guid(guid)) return;
     if (g_knownPlayerCount >= MAX_KNOWN_PLAYERS) return;
 
+    // Extract just the UUID portion for HashMap lookup
+    const char *uuid = extract_uuid_from_guid(guid);
+
     // Check if already tracked
     for (int i = 0; i < g_knownPlayerCount; i++) {
-        if (strcmp(g_knownPlayerGuids[i], guid) == 0) return;
+        if (strcmp(g_knownPlayerGuids[i], uuid) == 0) return;
     }
 
-    // Add to list
-    strncpy(g_knownPlayerGuids[g_knownPlayerCount], guid,
+    // Add to list (store UUID only)
+    strncpy(g_knownPlayerGuids[g_knownPlayerCount], uuid,
             sizeof(g_knownPlayerGuids[0]) - 1);
     g_knownPlayerGuids[g_knownPlayerCount][sizeof(g_knownPlayerGuids[0]) - 1] = '\0';
     g_knownPlayerCount++;
-    log_message("[Players] Discovered player: %s (total: %d)", guid, g_knownPlayerCount);
+    log_message("[Players] Discovered player UUID: %s (from %s, total: %d)", uuid, guid, g_knownPlayerCount);
 }
 
 /**
@@ -851,6 +1024,22 @@ static int lua_osi_db_players_get(lua_State *L) {
         lua_rawseti(L, -2, i + 1);  // result[i+1] = {guid}
     }
 
+    return 1;
+}
+
+/**
+ * Ext.Entity.GetDiscoveredPlayers() -> { guid1, guid2, ... }
+ * Returns a simple array of discovered player GUIDs
+ */
+static int lua_entity_get_discovered_players(lua_State *L) {
+    lua_newtable(L);
+
+    for (int i = 0; i < g_knownPlayerCount; i++) {
+        lua_pushstring(L, g_knownPlayerGuids[i]);
+        lua_rawseti(L, -2, i + 1);  // result[i+1] = guid
+    }
+
+    log_message("[Entity] GetDiscoveredPlayers() returning %d players", g_knownPlayerCount);
     return 1;
 }
 
@@ -1375,6 +1564,14 @@ static void load_mod_scripts(lua_State *L) {
         const char *mod_name = mod_get_se_name(i);
         log_message("[Lua] Attempting to load SE mod: %s", mod_name);
 
+        // Get ModTable name from Config.json (or fallback to mod_name)
+        char *mod_table = get_mod_table_name(mod_name);
+        if (mod_table) {
+            // Set up Mods.<ModTable> namespace before loading scripts
+            setup_mod_namespace(L, mod_table);
+            free(mod_table);
+        }
+
         // Try to load server bootstrap (runs on both client and server in BG3)
         if (load_mod_bootstrap(L, mod_name, "Server") > 0) {
             log_message("[Lua] Successfully loaded server scripts for: %s", mod_name);
@@ -1418,6 +1615,18 @@ static void init_lua(void) {
 
     // Register Entity system API (Ext.Entity.*)
     entity_register_lua(L);
+
+    // Add GetDiscoveredPlayers to Ext.Entity (uses main.c's player tracking)
+    lua_getglobal(L, "Ext");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "Entity");
+        if (lua_istable(L, -1)) {
+            lua_pushcfunction(L, lua_entity_get_discovered_players);
+            lua_setfield(L, -2, "GetDiscoveredPlayers");
+        }
+        lua_pop(L, 1);  // pop Entity
+    }
+    lua_pop(L, 1);  // pop Ext
 
     // Run a test script
     const char *test_script =
@@ -1532,6 +1741,17 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
     if (L && result) {
         luaL_dostring(L, "Ext.Print('Story/save data loaded!')");
 
+        // Try to discover EntityWorld now that the game is fully loaded
+        // This is the best time - EocServer should be initialized
+        if (!entity_system_ready()) {
+            log_message("[Entity] Attempting EntityWorld discovery after save load...");
+            if (entity_discover_world()) {
+                log_message("[Entity] EntityWorld discovered successfully!");
+            } else {
+                log_message("[Entity] EntityWorld discovery failed - try Ext.Entity.Discover() later");
+            }
+        }
+
         // Load mod scripts after save is loaded (if not already loaded)
         // This handles the case where InitGame wasn't called (loading existing save)
         if (!mod_scripts_loaded) {
@@ -1541,6 +1761,10 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
 
         // Fire SessionLoaded event after mod scripts are loaded
         fire_event(L, EVENT_SESSION_LOADED);
+
+        // Retry TypeId discovery now that the game is fully loaded
+        // TypeId globals may not have been initialized at injection time
+        entity_on_session_loaded();
     }
 
     return result;
@@ -1998,18 +2222,51 @@ static void enumerate_loaded_images(void) {
 }
 
 /**
+ * Resolve Osiris function pointers - called on every libOsiris load
+ * This must be called even if hooks are already installed, because
+ * ASLR changes addresses between game launches.
+ */
+static void resolve_osiris_function_pointers(void *osiris) {
+    if (!osiris) return;
+
+    log_message("Resolving Osiris function pointers...");
+
+    // pFunctionData - try both symbol name variants
+    pfn_pFunctionData = (pFunctionDataFn)dlsym(osiris, "_ZN15COsiFunctionMan13pFunctionDataEj");
+    if (!pfn_pFunctionData) {
+        pfn_pFunctionData = (pFunctionDataFn)dlsym(osiris, "__ZN15COsiFunctionMan13pFunctionDataEj");
+    }
+
+    // Get the global OsiFunctionMan pointer
+    g_pOsiFunctionMan = (void **)dlsym(osiris, "_OsiFunctionMan");
+    if (!g_pOsiFunctionMan && pfn_pFunctionData) {
+        // Calculate from library base using pFunctionData as reference
+        // pFunctionData is at offset 0x2a04c, OsiFunctionMan is at 0x9f348
+        uintptr_t pFuncDataAddr = (uintptr_t)pfn_pFunctionData;
+        uintptr_t libBase = pFuncDataAddr - 0x2a04c;
+        g_pOsiFunctionMan = (void **)(libBase + 0x9f348);
+        log_message("  OsiFunctionMan calculated from base: %p (base=0x%lx)",
+                   (void*)g_pOsiFunctionMan, (unsigned long)libBase);
+    }
+
+    // Update function cache module with new runtime pointers
+    osi_func_cache_set_runtime(pfn_pFunctionData, g_pOsiFunctionMan);
+    osi_func_cache_set_known_events(g_knownEvents);
+
+    log_message("Osiris function pointers resolved:");
+    log_message("  pFunctionData: %p%s", (void*)pfn_pFunctionData,
+                pfn_pFunctionData ? "" : " (NOT FOUND)");
+    log_message("  OsiFunctionMan global: %p", (void*)g_pOsiFunctionMan);
+    if (g_pOsiFunctionMan) {
+        log_message("  OsiFunctionMan instance: %p", *g_pOsiFunctionMan);
+    }
+}
+
+/**
  * Install Dobby hooks on Osiris functions
  */
 static void install_hooks(void) {
 #if ENABLE_HOOKS
-    // Only install hooks once
-    if (hooks_installed) {
-        log_message("Hooks already installed, skipping");
-        return;
-    }
-
-    log_message("Installing Dobby hooks...");
-
     // Get libOsiris handle - try various paths
     void *osiris = dlopen("@rpath/libOsiris.dylib", RTLD_NOLOAD);
     if (!osiris) {
@@ -2021,6 +2278,17 @@ static void install_hooks(void) {
         log_message("ERROR: Could not get libOsiris handle for hooking");
         return;
     }
+
+    // ALWAYS resolve function pointers (ASLR changes addresses between launches)
+    resolve_osiris_function_pointers(osiris);
+
+    // Only install actual hooks once
+    if (hooks_installed) {
+        log_message("Hooks already installed, skipping hook installation");
+        return;
+    }
+
+    log_message("Installing Dobby hooks...");
 
     // Test pattern scanner infrastructure
     log_message("=== Pattern Scanner Test ===");
@@ -2063,41 +2331,22 @@ static void install_hooks(void) {
     log_message("=== End Pattern Scanner Test ===");
 
     // Resolve function pointers for Osiris calls (not hooked, just called)
+    // Resolve InternalQuery/InternalCall (only needed for hooks, not for function cache)
     // Use pattern-based fallback if dlsym fails
-    log_message("Resolving Osiris function pointers...");
-
-    // InternalQuery - try dlsym first, then pattern scan
     pfn_InternalQuery = (InternalQueryFn)resolve_osiris_symbol(osiris, &g_osirisPatterns[0]);
     if (!pfn_InternalQuery) {
         log_message("  WARNING: InternalQuery not found");
     }
 
-    // InternalCall - try dlsym first, then pattern scan
     pfn_InternalCall = (InternalCallFn)resolve_osiris_symbol(osiris, &g_osirisPatterns[1]);
     if (!pfn_InternalCall) {
         log_message("  WARNING: InternalCall not found");
     }
 
-    // pFunctionData - direct dlsym only (no pattern yet)
-    pfn_pFunctionData = (pFunctionDataFn)dlsym(osiris, "_ZN15COsiFunctionMan13pFunctionDataEj");
-
-    // Get the global OsiFunctionMan pointer
-    g_pOsiFunctionMan = (void **)dlsym(osiris, "_OsiFunctionMan");
-
-    // Initialize function cache module with runtime pointers
-    osi_func_cache_set_runtime(pfn_pFunctionData, g_pOsiFunctionMan);
-    osi_func_cache_set_known_events(g_knownEvents);
-
-    log_message("Osiris function pointers:");
     log_message("  InternalQuery: %p%s", (void*)pfn_InternalQuery,
                 pfn_InternalQuery ? "" : " (NOT FOUND)");
     log_message("  InternalCall: %p%s", (void*)pfn_InternalCall,
                 pfn_InternalCall ? "" : " (NOT FOUND)");
-    log_message("  pFunctionData: %p", (void*)pfn_pFunctionData);
-    log_message("  OsiFunctionMan global: %p", (void*)g_pOsiFunctionMan);
-    if (g_pOsiFunctionMan) {
-        log_message("  OsiFunctionMan instance: %p", *g_pOsiFunctionMan);
-    }
 
     int hook_count = 0;
 

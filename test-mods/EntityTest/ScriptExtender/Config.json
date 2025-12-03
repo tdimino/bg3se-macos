@@ -1,0 +1,5 @@
+{
+    "RequiredVersion": 1,
+    "ModTable": "EntityTest",
+    "FeatureFlags": ["Lua"]
+}

@@ -62,10 +62,11 @@ bool guid_parse(const char *guid_str, Guid *out_guid) {
     if (!parse_hex_bytes(guid_str + 24, 12, &e)) return false;
 
     // Pack into 128-bit GUID
-    // Layout may need adjustment based on BG3's actual byte ordering
-    // This matches the Windows BG3SE convention
-    out_guid->lo = (a << 32) | (b << 16) | c;
-    out_guid->hi = (d << 48) | e;
+    // BG3 stores GUIDs with the last parts (DDDD-EEEEEEEEEEEE) in lo
+    // and first parts (AAAAAAAA-BBBB-CCCC) in hi
+    // This was discovered by comparing parsed GUIDs to HashMap keys
+    out_guid->hi = (a << 32) | (b << 16) | c;  // First 8 bytes go to hi
+    out_guid->lo = (d << 48) | e;              // Last 8 bytes go to lo
 
     return true;
 }
@@ -75,11 +76,13 @@ void guid_to_string(const Guid *guid, char *out_str) {
 
     // Unpack from Guid structure
     // Format: AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE
-    uint32_t a = (uint32_t)(guid->lo >> 32);
-    uint16_t b = (uint16_t)((guid->lo >> 16) & 0xFFFF);
-    uint16_t c = (uint16_t)(guid->lo & 0xFFFF);
-    uint16_t d = (uint16_t)(guid->hi >> 48);
-    uint64_t e = guid->hi & 0xFFFFFFFFFFFFULL;
+    // hi contains first parts (AAAAAAAA-BBBB-CCCC)
+    // lo contains last parts (DDDD-EEEEEEEEEEEE)
+    uint32_t a = (uint32_t)(guid->hi >> 32);
+    uint16_t b = (uint16_t)((guid->hi >> 16) & 0xFFFF);
+    uint16_t c = (uint16_t)(guid->hi & 0xFFFF);
+    uint16_t d = (uint16_t)(guid->lo >> 48);
+    uint64_t e = guid->lo & 0xFFFFFFFFFFFFULL;
 
     snprintf(out_str, 37, "%08x-%04hx-%04hx-%04hx-%012llx",
              a, b, c, d, (unsigned long long)e);

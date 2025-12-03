@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 // ============================================================================
 // LsResult - Result type for TryGetSingleton and similar functions
@@ -52,5 +53,61 @@ void* call_try_get_singleton_with_x8(void *fn, void *entityWorld);
  * @return true on ARM64, false on other architectures
  */
 bool arm64_call_available(void);
+
+// ============================================================================
+// GetRawComponent Call Wrapper
+// ============================================================================
+
+/**
+ * Call GetRawComponent with proper ARM64 ABI.
+ *
+ * GetRawComponent signature:
+ *   void* GetRawComponent(EntityWorld* world, EntityHandle handle,
+ *                         ComponentTypeIndex type, size_t componentSize,
+ *                         bool isProxy)
+ *
+ * @param fn GetRawComponent function pointer
+ * @param entityWorld Pointer to EntityWorld
+ * @param entityHandle Entity handle (64-bit packed value)
+ * @param typeIndex Component type index (uint16_t)
+ * @param componentSize Expected component size
+ * @param isProxy Whether this is a proxy component access
+ * @return Pointer to component data, or NULL
+ */
+void* call_get_raw_component(void *fn, void *entityWorld, uint64_t entityHandle,
+                              uint16_t typeIndex, size_t componentSize, bool isProxy);
+
+// ============================================================================
+// GetComponent Template Call Wrapper
+// ============================================================================
+
+/**
+ * Call a GetComponent<T> template instantiation directly.
+ *
+ * GetComponent<T> signature:
+ *   T* EntityWorld::GetComponent<T>(EntityHandle handle)
+ *
+ * On macOS, there's no GetRawComponent dispatcher - each GetComponent<T>
+ * is template-inlined. This wrapper calls those instantiations directly.
+ *
+ * @param fn_addr GetComponent<T> function address (with ASLR slide applied)
+ * @param entityWorld Pointer to EntityWorld (this pointer)
+ * @param entityHandle Entity handle (64-bit packed value)
+ * @return Pointer to component data, or NULL
+ */
+void* call_get_component_template(void *fn_addr, void *entityWorld, uint64_t entityHandle);
+
+/**
+ * Call EntityStorageContainer::TryGet to get EntityStorageData.
+ *
+ * TryGet signature:
+ *   EntityStorageData* EntityStorageContainer::TryGet(EntityHandle handle)
+ *
+ * @param fn_addr TryGet function address (with ASLR slide applied)
+ * @param storageContainer EntityStorageContainer pointer (from EntityWorld + 0x2d0)
+ * @param entityHandle Entity handle (64-bit packed value)
+ * @return Pointer to EntityStorageData, or NULL
+ */
+void* call_try_get(void *fn_addr, void *storageContainer, uint64_t entityHandle);
 
 #endif // ARM64_CALL_H

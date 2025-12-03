@@ -33,6 +33,7 @@ include_directories(
 add_library(bg3se SHARED
     src/injector/main.c
     src/core/logging.c
+    src/core/safe_memory.c
     src/lua/lua_ext.c
     src/lua/lua_json.c
     src/lua/lua_osiris.c
@@ -43,6 +44,9 @@ add_library(bg3se SHARED
     src/entity/entity_system.c
     src/entity/guid_lookup.c
     src/entity/arm64_call.c
+    src/entity/component_registry.c
+    src/entity/component_lookup.c
+    src/entity/component_typeid.c
     lib/lz4/lz4.c
 )
 
