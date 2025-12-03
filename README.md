@@ -331,7 +331,10 @@ Key Osiris functions now return real game data. Player GUIDs and dialog state ar
 ```
 bg3se-macos/
 ├── src/
-│   ├── core/                   # Logging, version info
+│   ├── core/                   # Core utilities
+│   │   ├── logging.c/h         # Log output to /tmp/bg3se_macos.log
+│   │   ├── safe_memory.c/h     # Crash-safe memory reading (mach_vm_read)
+│   │   └── version.h           # Version constants
 │   ├── entity/                 # Entity Component System (modular)
 │   │   ├── entity_system.c/h   # Core ECS, EntityWorld capture, Lua bindings
 │   │   ├── guid_lookup.c/h     # GUID parsing, HashMap operations
@@ -340,36 +343,52 @@ bg3se-macos/
 │   │   ├── component_lookup.c/h    # TryGet + HashMap traversal (macOS-specific)
 │   │   ├── component_typeid.c/h    # TypeId<T>::m_TypeIndex discovery
 │   │   └── entity_storage.h    # ECS structure definitions and offsets
-│   ├── injector/               # Main injection logic
+│   ├── injector/               # Main injection logic (main.c)
 │   ├── lua/                    # Lua API modules
+│   │   ├── lua_ext.c/h         # Core Ext.* API (Print, Require, IO)
+│   │   ├── lua_json.c/h        # Ext.Json.Parse/Stringify
+│   │   ├── lua_osiris.c/h      # Ext.Osiris.RegisterListener
+│   │   └── lua_stats.c/h       # Ext.Stats.* API (v0.11.0)
 │   ├── mod/                    # Mod detection and loading
-│   ├── osiris/                 # Osiris types and functions
-│   └── pak/                    # PAK file reading
+│   ├── osiris/                 # Osiris scripting engine
+│   │   ├── osiris_functions.c/h # Function enumeration and caching
+│   │   ├── osiris_types.h      # Osiris type definitions
+│   │   └── pattern_scan.c/h    # Pattern-based symbol resolution
+│   ├── pak/                    # PAK file reading (LSPK v18)
+│   ├── stats/                  # RPGStats system (v0.11.0)
+│   │   └── stats_manager.c/h   # RPGStats discovery and access
+│   └── strings/                # String handling
+│       └── fixed_string.c/h    # FixedString resolution
 ├── lib/
 │   ├── fishhook/               # Symbol rebinding (for imported symbols)
 │   ├── Dobby/                  # Inline hooking (for internal functions)
 │   ├── lz4/                    # LZ4 decompression (for PAK file reading)
 │   └── lua/                    # Lua 5.4 source and build scripts
 ├── ghidra/                     # Reverse engineering analysis
-│   ├── scripts/                # Ghidra Python scripts (optimized workflow)
-│   │   ├── optimize_analysis.py    # Prescript: disable slow analyzers
-│   │   ├── quick_component_search.py # Postscript: find component XREFs
-│   │   └── archive/            # Exploratory scripts (reference only)
+│   ├── scripts/                # 12+ Ghidra Python scripts for offset discovery
 │   └── offsets/                # Modular offset documentation
 │       ├── OSIRIS.md           # Osiris function offsets
 │       ├── ENTITY_SYSTEM.md    # ECS architecture, EntityWorld
 │       ├── COMPONENTS.md       # GetComponent addresses
+│       ├── STATS.md            # RPGStats system offsets
+│       ├── STATS_SYSTEM.md     # RPGStats global pointers
+│       ├── GLOBAL_STRING_TABLE.md  # FixedString resolution
 │       └── STRUCTURES.md       # C structure definitions
+├── plans/                      # Implementation plans and analysis
+│   └── bg3se-docs-gap-analysis.md  # Feature parity roadmap
 ├── scripts/
 │   ├── build.sh                # Build script (universal binary)
+│   ├── bg3w.sh                 # Steam launcher wrapper (ARM64)
 │   └── *.example               # Example wrapper scripts
 ├── tools/
 │   ├── automation/             # Claude Code MCP configs & skills
+│   ├── frida/                  # Frida scripts for runtime analysis
 │   └── extract_pak.py          # BG3 PAK file extractor (Python)
 ├── build/
 │   └── lib/
 │       └── libbg3se.dylib      # Built dylib (universal: arm64 + x86_64)
 ├── CLAUDE.md                   # Development guide for Claude Code
+├── ROADMAP.md                  # Feature parity tracking (~30%)
 └── README.md
 ```
 
@@ -418,15 +437,27 @@ _ZN7COsiris8InitGameEv          - COsiris::InitGame()
 _ZN7COsiris4LoadER12COsiSmartBuf - COsiris::Load(COsiSmartBuf&)
 ```
 
-## Target Mod
+## Test Mod
 
-Primary goal: Enable **"More Reactive Companions"** to work on macOS.
+We maintain a custom test mod for validating BG3SE-macOS functionality. See [tools/test-mods/README.md](tools/test-mods/README.md) for details.
 
-**Test Mod:** [More Reactive Companions (Configurable)](https://www.nexusmods.com/baldursgate3/mods/5447) by [LightningLarryL](https://next.nexusmods.com/profile/LightningLarryL?gameId=3474)
+**Quick Start:**
+```bash
+# Copy test mod to auto-detection path
+cp -r tools/test-mods/EntityTest /tmp/EntityTest_extracted
 
-This mod redirects ambient party dialogue to random nearby companions instead of always using the player character, making the party feel more alive. It requires Script Extender APIs and serves as our primary compatibility target.
+# Launch game - mod loads automatically
+./scripts/bg3w.sh  # or via Steam
 
-**Current Status:** The mod **loads and receives real game data**. Event listeners fire on dialog events, player GUIDs are discovered from Osiris events, and dialog state is tracked. MRC can now identify which party members are in dialogs.
+# Watch for test output
+tail -f /tmp/bg3se_macos.log | grep EntityTest
+```
+
+The EntityTest mod validates:
+- Entity system initialization (`Ext.Entity.IsReady()`)
+- GUID → Entity lookup (`Ext.Entity.Get()`)
+- Component access (`entity.Transform`, `entity:GetComponent()`)
+- Session lifecycle events (`SessionLoaded`)
 
 ## Tools
 
