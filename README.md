@@ -22,7 +22,7 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 | Osiris Event Hook | ✅ Complete | COsiris::Event() hooked, 2000+ events captured |
 | Osi.* Functions | ✅ Partial | Key functions return real data (see below) |
 | Ghidra RE Analysis | ✅ Complete | Headless analysis for offset discovery |
-| Function Enumeration | 🔄 Testing | OsiFunctionMan offset-based lookup |
+| Function Enumeration | ✅ Complete | OsiFunctionMan offset-based lookup, function name caching |
 | EntityWorld Capture | ✅ Complete | Direct memory read from `esv::EocServer::m_ptr` |
 | GUID → Entity Lookup | ✅ Complete | ARM64 ABI fix for TryGetSingleton (see below) |
 | TypeId Discovery | ✅ Complete | 11 component indices discovered at SessionLoaded |
@@ -59,6 +59,7 @@ A native macOS implementation of the BG3 Script Extender, enabling mods that req
 - ✅ **Ext.Entity Lua API registered and functional**
 - ✅ **TypeId discovery with deferred retry** - 11 component indices discovered at SessionLoaded
 - ✅ **Safe memory APIs** - Crash-safe memory reading via mach_vm_read
+- ✅ **Function name caching** - Osiris function names extracted via Signature->Name indirection
 
 ## Compatibility
 
@@ -130,7 +131,7 @@ BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
 Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
 ```
-=== BG3SE-macOS v0.10.5 ===
+=== BG3SE-macOS v0.10.6 ===
 [timestamp] === BG3SE-macOS v0.10.5 initialized ===
 [timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
 [timestamp] Architecture: ARM64 (Apple Silicon)
@@ -435,9 +436,8 @@ See [GitHub Issues](https://github.com/tdimino/bg3se-macos/issues) for detailed 
 
 ### Next Steps
 
-1. **[#10 - Osiris Function Name Caching](https://github.com/tdimino/bg3se-macos/issues/10)** - Fix funcDef structure offset for name extraction
-2. **[#3 - Stats System](https://github.com/tdimino/bg3se-macos/issues/3)** - Read/write game stats via `Ext.Stats`
-3. **[#5 - Debug Console](https://github.com/tdimino/bg3se-macos/issues/5)** - In-game Lua REPL
+1. **[#3 - Stats System](https://github.com/tdimino/bg3se-macos/issues/3)** - Read/write game stats via `Ext.Stats`
+2. **[#5 - Debug Console](https://github.com/tdimino/bg3se-macos/issues/5)** - In-game Lua REPL
 
 ### Future Phases
 
@@ -448,6 +448,7 @@ See [GitHub Issues](https://github.com/tdimino/bg3se-macos/issues) for detailed 
 
 ### Completed
 
+- ✅ **[#10 - Osiris Function Name Caching](https://github.com/tdimino/bg3se-macos/issues/10)** - Fixed funcDef->Signature->Name indirection (v0.10.6)
 - ✅ **[#2 - Component Discovery](https://github.com/tdimino/bg3se-macos/issues/2)** - TypeId discovery with deferred retry (v0.10.5)
 - ✅ **[#1 - TryGetSingleton ARM64 ABI fix](https://github.com/tdimino/bg3se-macos/issues/1)** - GUID → EntityHandle lookup working (v0.10.3)
 - ✅ EntityWorld capture via direct memory read - bypasses Hardened Runtime (v0.10.2)

@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.10.5
+## Current Status: v0.10.6
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -21,10 +21,11 @@ This document tracks the development roadmap for achieving feature parity with W
 - **Data Structure Traversal** - TryGet + HashMap traversal for component access (macOS-specific)
 - **TypeId Discovery** - 11 component TypeIds discovered at SessionLoaded with deferred retry
 - **Safe Memory APIs** - Crash-safe memory reading via mach_vm_read
+- **Function Name Caching** - OsiFunctionDef->Signature->Name two-level indirection (v0.10.6)
 
 ---
 
-## Phase 1: Core Osiris Integration (Current)
+## Phase 1: Core Osiris Integration (Complete)
 
 ### 1.1 Dynamic Osi.* Metatable
 **Status:** ✅ Complete (v0.10.0)
@@ -38,7 +39,7 @@ Lazy function lookup matching Windows BG3SE's OsirisBinding pattern:
 - [x] **Function type detection** - Distinguish Query vs Call vs Event (v0.10.1)
 
 ### 1.2 Function Discovery & Type Detection
-**Status:** ✅ Complete (v0.10.1)
+**Status:** ✅ Complete (v0.10.6)
 
 - [x] Event observation captures function IDs at runtime
 - [x] Function name extraction from event arguments
@@ -46,7 +47,7 @@ Lazy function lookup matching Windows BG3SE's OsirisBinding pattern:
 - [x] **Proper type-based dispatch** - Query/SysQuery/UserQuery use InternalQuery; Call/SysCall use InternalCall; Event/Proc trigger events
 - [x] **Pre-populated common functions** - 40+ common functions (queries, calls, events, databases) seeded at startup
 - [x] **Type string helper** - `osi_func_type_str()` for debug logging
-- [ ] **Safe enumeration via Ghidra offsets** - Use discovered offsets (0x9f348) without crashes
+- [x] **Function name caching via Signature indirection** - Fixed OsiFunctionDef structure (offset +0x08 is Line, not Name) (v0.10.6)
 
 ---
 
@@ -390,6 +391,7 @@ Complete Lua type annotations for IDE support and runtime validation.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.10.6 | 2025-12-03 | Fixed Osiris function name caching - OsiFunctionDef->Signature->Name two-level indirection |
 | v0.10.4 | 2025-12-02 | TypeId<T>::m_TypeIndex discovery, ComponentTypeToIndex enumeration, Lua bindings for runtime discovery |
 | v0.10.3 | 2025-12-01 | Data structure traversal for GetComponent (TryGet + HashMap), template calls don't work on macOS |
 | v0.10.2 | 2025-12-01 | GUID byte order fix, template-based GetComponent attempt, entity lookup working |

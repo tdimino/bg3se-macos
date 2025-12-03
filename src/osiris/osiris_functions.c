@@ -67,22 +67,43 @@ static int is_valid_name_start(char c) {
  * Try to extract function name from a function definition pointer.
  * Uses safe memory APIs to prevent SIGBUS crashes on invalid pointers.
  *
- * Based on Ghidra analysis of macOS ARM64 libOsiris.dylib COsiFunctionDef:
+ * Structure layout based on Windows BG3SE Osiris.h (lines 902-918) with
+ * ARM64 8-byte alignment adjustments:
  *
- * struct COsiFunctionDef {
- *     void* vtable;                  // 0x00: vtable pointer (PTR__COsiFunctionDef_00090568)
- *     char* Name;                    // 0x08: DIRECTLY STORES THE NAME STRING
- *     COsiValueTypeList* ParamList;  // 0x10: parameter type list
- *     void* ParamData;               // 0x18: parameter data array
- *     uint32_t ParamCount;           // 0x20: number of parameters
+ * struct OsiFunctionDef {
+ *     void* VMT;                     // 0x00: Virtual method table (8 bytes)
+ *     uint32_t Line;                 // 0x08: Source line number (4 bytes)
+ *     uint32_t Unknown1;             // 0x0C: (4 bytes)
+ *     uint32_t Unknown2;             // 0x10: (4 bytes)
+ *     uint32_t _padding;             // 0x14: Alignment padding (4 bytes)
+ *     FunctionSignature* Signature;  // 0x18: Pointer to signature struct (8 bytes)
+ *     // ... more fields
  * };
  *
- * The constructor copies the name string directly to offset 0x08:
- *   *(void **)(this + 8) = pvVar3;  // pvVar3 is allocated string copy
- *   _memcpy(pvVar3, param_1, sVar2);
+ * struct FunctionSignature {
+ *     void* VMT;                     // 0x00: Virtual method table (8 bytes)
+ *     const char* Name;              // 0x08: Function name string pointer
+ *     // ... more fields
+ * };
  *
- * So: funcDef->Name = *(char **)(funcDef + 8)
+ * To get the name: funcDef->Signature->Name
+ *   1. Read Signature* at funcDef + 0x18
+ *   2. Read Name* at Signature + 0x08
+ *   3. Read string at Name
+ *
+ * IMPORTANT: Previous documentation incorrectly stated Name was at +0x08.
+ * The value at +0x08 is actually Line (e.g., 0x4a8 = 1192 decimal).
  */
+
+/* OsiFunctionDef field offsets (ARM64 macOS, 8-byte aligned) */
+#define OSIFUNCDEF_VMT_OFFSET        0x00
+#define OSIFUNCDEF_LINE_OFFSET       0x08  /* uint32_t Line (NOT a name pointer!) */
+#define OSIFUNCDEF_SIGNATURE_OFFSET  0x18  /* FunctionSignature* */
+#define OSIFUNCDEF_PARAMCOUNT_OFFSET 0x20  /* uint32_t ParamCount (may need verification) */
+
+/* FunctionSignature field offsets */
+#define FUNCSIG_VMT_OFFSET           0x00
+#define FUNCSIG_NAME_OFFSET          0x08  /* const char* Name */
 
 /* Thread-local buffer for extracted function names */
 static __thread char s_extractedName[128];
@@ -106,48 +127,98 @@ static const char *extract_func_name_from_def(void *funcDef) {
         return NULL;
     }
 
-    /* SIMPLIFIED: Skip pre-validation, just try to read directly.
-     * mach_vm_read_overwrite will fail safely if address is invalid.
-     * This avoids issues with mach_vm_region not returning expected regions. */
+    /*
+     * Two-level indirection: funcDef->Signature->Name
+     *
+     * Step 1: Read FunctionSignature* from funcDef + OSIFUNCDEF_SIGNATURE_OFFSET (0x18)
+     * Step 2: Read const char* Name from Signature + FUNCSIG_NAME_OFFSET (0x08)
+     * Step 3: Read the actual string from Name pointer
+     *
+     * NOTE: The old code incorrectly read offset +0x08 which contains Line (uint32_t),
+     * not a name pointer. That's why we saw values like 0x4a8 (1192 = line number).
+     */
 
-    /* Read the name pointer at offset 0x08 */
-    void *namePtr = NULL;
-    if (!safe_memory_read_pointer(funcDefAddr + 8, &namePtr)) {
+    /* Step 1: Read Signature pointer at offset 0x18 */
+    void *signaturePtr = NULL;
+    if (!safe_memory_read_pointer(funcDefAddr + OSIFUNCDEF_SIGNATURE_OFFSET, &signaturePtr)) {
         if (shouldLog) {
-            log_message("[ExtractName] funcDef 0x%llx: failed to read namePtr at +8", (unsigned long long)funcDefAddr);
+            log_message("[ExtractName] funcDef 0x%llx: failed to read Signature at +0x%x",
+                       (unsigned long long)funcDefAddr, OSIFUNCDEF_SIGNATURE_OFFSET);
             s_extractDiagCount++;
         }
         return NULL;
     }
 
-    /* Validate the name pointer address */
+    /* Validate Signature pointer */
+    mach_vm_address_t sigAddr = (mach_vm_address_t)signaturePtr;
+    if (!is_valid_string_ptr(signaturePtr)) {  /* Reuse pointer validation */
+        if (shouldLog) {
+            log_message("[ExtractName] funcDef 0x%llx: Signature 0x%llx invalid",
+                       (unsigned long long)funcDefAddr, (unsigned long long)sigAddr);
+            s_extractDiagCount++;
+        }
+        return NULL;
+    }
+
+    /* Skip GPU region for Signature pointer */
+    if (safe_memory_is_gpu_region(sigAddr)) {
+        if (shouldLog) {
+            log_message("[ExtractName] funcDef 0x%llx: Signature 0x%llx in GPU region",
+                       (unsigned long long)funcDefAddr, (unsigned long long)sigAddr);
+            s_extractDiagCount++;
+        }
+        return NULL;
+    }
+
+    /* Step 2: Read Name pointer from Signature + 0x08 */
+    void *namePtr = NULL;
+    if (!safe_memory_read_pointer(sigAddr + FUNCSIG_NAME_OFFSET, &namePtr)) {
+        if (shouldLog) {
+            log_message("[ExtractName] Signature 0x%llx: failed to read Name at +0x%x",
+                       (unsigned long long)sigAddr, FUNCSIG_NAME_OFFSET);
+            s_extractDiagCount++;
+        }
+        return NULL;
+    }
+
+    /* Validate the Name pointer address */
     mach_vm_address_t nameAddr = (mach_vm_address_t)namePtr;
     if (!is_valid_string_ptr(namePtr)) {
         if (shouldLog) {
-            log_message("[ExtractName] funcDef 0x%llx: namePtr 0x%llx not valid string ptr",
-                       (unsigned long long)funcDefAddr, (unsigned long long)nameAddr);
+            log_message("[ExtractName] Signature 0x%llx: Name 0x%llx not valid",
+                       (unsigned long long)sigAddr, (unsigned long long)nameAddr);
             s_extractDiagCount++;
         }
         return NULL;
     }
 
-    /* Skip GPU region for name pointer too */
+    /* Skip GPU region for Name pointer too */
     if (safe_memory_is_gpu_region(nameAddr)) {
         if (shouldLog) {
-            log_message("[ExtractName] funcDef 0x%llx: namePtr 0x%llx in GPU region",
-                       (unsigned long long)funcDefAddr, (unsigned long long)nameAddr);
+            log_message("[ExtractName] Signature 0x%llx: Name 0x%llx in GPU region",
+                       (unsigned long long)sigAddr, (unsigned long long)nameAddr);
             s_extractDiagCount++;
         }
         return NULL;
     }
 
-    /* Safely read the name string */
+    /* Step 3: Safely read the name string */
     if (!safe_memory_read_string(nameAddr, s_extractedName, sizeof(s_extractedName))) {
+        if (shouldLog) {
+            log_message("[ExtractName] Name 0x%llx: failed to read string",
+                       (unsigned long long)nameAddr);
+            s_extractDiagCount++;
+        }
         return NULL;
     }
 
     /* Validate the extracted name format */
     if (!is_valid_name_start(s_extractedName[0])) {
+        if (shouldLog) {
+            log_message("[ExtractName] Name 0x%llx: invalid start char 0x%02x",
+                       (unsigned long long)nameAddr, (unsigned char)s_extractedName[0]);
+            s_extractDiagCount++;
+        }
         return NULL;
     }
 
@@ -156,8 +227,20 @@ static const char *extract_func_name_from_def(void *funcDef) {
         char c = s_extractedName[j];
         if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
               (c >= '0' && c <= '9') || c == '_')) {
+            if (shouldLog) {
+                log_message("[ExtractName] Name '%.*s': invalid char 0x%02x at pos %d",
+                           j, s_extractedName, (unsigned char)c, j);
+                s_extractDiagCount++;
+            }
             return NULL;
         }
+    }
+
+    /* Success! Log first few successful extractions for verification */
+    if (shouldLog) {
+        log_message("[ExtractName] SUCCESS: funcDef 0x%llx -> Sig 0x%llx -> Name '%s'",
+                   (unsigned long long)funcDefAddr, (unsigned long long)sigAddr, s_extractedName);
+        s_extractDiagCount++;
     }
 
     return s_extractedName;

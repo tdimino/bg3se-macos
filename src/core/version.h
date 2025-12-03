@@ -6,7 +6,7 @@
 #define BG3SE_VERSION_H
 
 // Version info
-#define BG3SE_VERSION "0.10.0"
+#define BG3SE_VERSION "0.10.6"
 #define BG3SE_NAME "BG3SE-macOS"
 
 // Log file for debugging
