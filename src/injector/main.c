@@ -67,6 +67,9 @@ extern "C" {
 // Mod loader
 #include "mod_loader.h"
 
+// Console
+#include "console.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -729,6 +732,9 @@ static void register_ext_api(lua_State *L) {
 
     // Ext.IO namespace (via lua_ext module)
     lua_ext_register_io(L, -1);
+
+    // Ext.Memory namespace (for interactive memory probing)
+    lua_ext_register_memory(L, -1);
 
     // Ext.Json namespace (via lua_json module)
     lua_json_register(L, -1);
@@ -1623,6 +1629,9 @@ static void init_lua(void) {
     // Register Entity system API (Ext.Entity.*)
     entity_register_lua(L);
 
+    // Initialize console (file-based Lua command input)
+    console_init();
+
     // Add GetDiscoveredPlayers to Ext.Entity (uses main.c's player tracking)
     lua_getglobal(L, "Ext");
     if (lua_istable(L, -1)) {
@@ -2073,6 +2082,11 @@ static void dispatch_event_to_lua(const char *eventName, int arity,
  */
 static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     event_call_count++;
+
+    // Poll for console commands (file-based Lua console)
+    if (L) {
+        console_poll(L);
+    }
 
     // Capture COsiris pointer if we haven't already
     if (!g_COsiris && thisPtr) {

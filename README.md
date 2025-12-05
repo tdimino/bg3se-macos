@@ -127,6 +127,30 @@ SE mods work automatically - just install them like any other mod:
 
 BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
+### Live Lua Console (Development)
+
+BG3SE-macOS includes a file-based Lua console for rapid iteration without game restarts:
+
+```bash
+# Terminal 1: Watch log output
+tail -f ~/Library/Application\ Support/BG3SE/bg3se.log
+
+# Terminal 2: Send Lua commands
+echo 'Ext.Print("Hello from console")' >> ~/Library/Application\ Support/BG3SE/commands.txt
+
+# Memory inspection example
+echo 'local base = Ext.Memory.GetModuleBase("Baldur"); Ext.Print("Game: " .. string.format("0x%x", base))' >> ~/Library/Application\ Support/BG3SE/commands.txt
+```
+
+**Console Features:**
+- Commands are executed line-by-line (single-line Lua only)
+- Lines starting with `#` are comments (skipped)
+- Empty lines are skipped
+- File is deleted after processing
+- Output appears in the log with `[Console]` and `[Lua]` prefixes
+
+**Important:** Each line is executed independently via `luaL_dostring()`. Multi-line constructs (loops, functions) must be written on a single line or defined in a mod's Lua file.
+
 ### Verify
 
 Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
@@ -275,6 +299,15 @@ This was discovered through Ghidra analysis of `TryGetSingleton` which saves x8 
 | `Ext.Entity.LookupComponent(name)` | ✅ Working | Look up component info by name |
 | `Ext.Entity.SetGetRawComponentAddr(addr)` | ✅ Working | Set GetRawComponent address from Frida |
 
+### Ext.Memory Namespace (v0.12.0 - Development Tools)
+
+| API | Status | Description |
+|-----|--------|-------------|
+| `Ext.Memory.Read(addr, size)` | ✅ Working | Read bytes as hex string (safe via vm_read) |
+| `Ext.Memory.ReadString(addr, maxLen)` | ✅ Working | Read null-terminated string |
+| `Ext.Memory.Search(pattern, start, size)` | ✅ Working | Search for byte pattern (hex string) |
+| `Ext.Memory.GetModuleBase(name)` | ✅ Working | Get base address of loaded module |
+
 ### Ext.Stats Namespace (v0.11.0)
 
 | API | Status | Description |
@@ -331,8 +364,10 @@ Key Osiris functions now return real game data. Player GUIDs and dialog state ar
 ```
 bg3se-macos/
 ├── src/
+│   ├── console/                # Live Lua console (file-based)
+│   │   └── console.c/h         # Command polling and execution
 │   ├── core/                   # Core utilities
-│   │   ├── logging.c/h         # Log output to /tmp/bg3se_macos.log
+│   │   ├── logging.c/h         # Log output to ~/Library/Application Support/BG3SE/
 │   │   ├── safe_memory.c/h     # Crash-safe memory reading (mach_vm_read)
 │   │   └── version.h           # Version constants
 │   ├── entity/                 # Entity Component System (modular)
@@ -382,6 +417,8 @@ bg3se-macos/
 │   └── *.example               # Example wrapper scripts
 ├── tools/
 │   ├── automation/             # Claude Code MCP configs & skills
+│   ├── skills/                 # Claude Code skills for development
+│   │   └── bg3se-macos-ghidra/ # Ghidra + BG3SE development skill
 │   ├── frida/                  # Frida scripts for runtime analysis
 │   └── extract_pak.py          # BG3 PAK file extractor (Python)
 ├── build/
@@ -460,6 +497,24 @@ The EntityTest mod validates:
 - Session lifecycle events (`SessionLoaded`)
 
 ## Tools
+
+### BG3SE Development Skill (Claude Code)
+
+A comprehensive Claude Code skill for BG3SE-macOS development is available at `tools/skills/bg3se-macos-ghidra/`. Install it to get:
+
+- Quick reference for building, testing, and Ghidra workflows
+- Windows BG3SE architecture patterns for porting features
+- Ghidra Python scripting templates and examples
+- ARM64 ABI patterns (x8 register, ADRP+LDR, inline assembly)
+- Offset discovery and documentation guides
+
+```bash
+# Install the skill
+cp -r tools/skills/bg3se-macos-ghidra ~/.claude/skills/
+
+# Or invoke directly
+skill: "bg3se-macos-ghidra"
+```
 
 ### Automated Testing (Claude Code)
 

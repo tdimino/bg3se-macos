@@ -22,6 +22,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/lib
     ${CMAKE_SOURCE_DIR}/lib/Dobby/include
     ${CMAKE_SOURCE_DIR}/lib/lua/src
+    ${CMAKE_SOURCE_DIR}/src/console
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/entity
     ${CMAKE_SOURCE_DIR}/src/lua
@@ -52,6 +53,7 @@ add_library(bg3se SHARED
     src/entity/component_typeid.c
     src/stats/stats_manager.c
     src/strings/fixed_string.c
+    src/console/console.c
     lib/lz4/lz4.c
 )
 

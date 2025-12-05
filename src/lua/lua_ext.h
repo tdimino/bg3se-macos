@@ -74,6 +74,49 @@ void lua_ext_register_basic(lua_State *L, int ext_table_index);
  */
 void lua_ext_register_io(lua_State *L, int ext_table_index);
 
+// ============================================================================
+// Ext.Memory Functions (for interactive memory probing)
+// ============================================================================
+
+/**
+ * Ext.Memory.Read(addr, size) - Read bytes from memory
+ * @param addr Address as integer or hex string
+ * @param size Number of bytes to read (default 16, max 4096)
+ * @return Hex string of bytes, or nil+error on failure
+ */
+int lua_ext_memory_read(lua_State *L);
+
+/**
+ * Ext.Memory.ReadString(addr, maxLen) - Read null-terminated string from memory
+ * @param addr Address as integer or hex string
+ * @param maxLen Maximum length to read (default 256)
+ * @return String, or nil on failure
+ */
+int lua_ext_memory_readstring(lua_State *L);
+
+/**
+ * Ext.Memory.Search(pattern, startAddr, size) - Search for byte pattern
+ * @param pattern Hex string like "53 74 72 65 6E 67 74 68" (Strength)
+ * @param startAddr Start address (default: binary base)
+ * @param size Bytes to search (default: 64MB)
+ * @return Table of matching addresses, or empty table
+ */
+int lua_ext_memory_search(lua_State *L);
+
+/**
+ * Ext.Memory.GetModuleBase(name) - Get base address of loaded module
+ * @param name Module name (e.g., "BaldursGate3" or "libOsiris")
+ * @return Address as integer, or nil if not found
+ */
+int lua_ext_memory_getmodulebase(lua_State *L);
+
+/**
+ * Register Ext.Memory namespace functions
+ * @param L Lua state
+ * @param ext_table_index Stack index of Ext table
+ */
+void lua_ext_register_memory(lua_State *L, int ext_table_index);
+
 #ifdef __cplusplus
 }
 #endif

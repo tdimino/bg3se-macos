@@ -116,11 +116,36 @@ cd build && cmake .. && cmake --build .
 ### Testing
 ```bash
 ./scripts/launch_bg3.sh  # Launches BG3 with dylib injected
-tail -f /tmp/bg3se_macos.log  # Watch logs in real-time
+tail -f ~/Library/Application\ Support/BG3SE/bg3se.log  # Watch logs in real-time
 ```
 
+### Live Console (Rapid Iteration)
+
+Send Lua commands to the running game without restart:
+
+```bash
+# Terminal 1: Watch output
+tail -f ~/Library/Application\ Support/BG3SE/bg3se.log
+
+# Terminal 2: Send commands
+echo 'Ext.Print("test")' >> ~/Library/Application\ Support/BG3SE/commands.txt
+
+# Memory inspection
+echo 'Ext.Print(Ext.Memory.Read(Ext.Memory.GetModuleBase("Baldur"), 16))' >> ~/Library/Application\ Support/BG3SE/commands.txt
+
+# Search for byte patterns
+echo 'local r = Ext.Memory.Search("50 72 6F 66", 0x100000000, 0x100000000); Ext.Print("Found: " .. #r)' >> ~/Library/Application\ Support/BG3SE/commands.txt
+```
+
+**Console Constraints:**
+- Each line is a separate `luaL_dostring()` call - no multi-line constructs
+- Lines starting with `#` are comments
+- File is deleted after processing
+- Use single-line Lua only (or define functions in mod files)
+
 ### Debugging
-- All logs go to `/tmp/bg3se_macos.log` and syslog
+- All logs go to `~/Library/Application Support/BG3SE/bg3se.log` and syslog
+- Cache files stored in `~/Library/Application Support/BG3SE/`
 - Use `log_message()` for consistent logging
 - Osiris events logged with `[Osiris]` prefix
 
@@ -312,20 +337,14 @@ Hook `eoc::CombatHelpers::LEGACY_IsInCombat` at `0x10124f92c` to capture `Entity
 | `ls::TransformComponent` | `0x107b619cc` |
 | `eoc::ArmorComponent` | `0x107b7c9e7` |
 
-## Automated Testing
+## Development Skill
 
-Invoke the **bg3-steam-launcher** skill for autonomous game testing with MCP servers:
+For comprehensive development guidance, invoke the **bg3se-macos-ghidra** skill:
 ```
-skill: "bg3-steam-launcher"
+skill: "bg3se-macos-ghidra"
 ```
 
-The skill documents the complete workflow for:
-- Launching BG3 via Steam
-- Clicking through launcher/menus with JXA CGEvent
-- Loading saved games
-- Crash report locations
-
-**MCP Servers:** `macos-automator` (AppleScript/JXA), `peekaboo` (screenshots)
+Includes: Windows BG3SE architecture reference, Ghidra scripting patterns, ARM64 ABI details, and offset discovery workflows. Install from `tools/skills/bg3se-macos-ghidra/`.
 
 ## Notes
 

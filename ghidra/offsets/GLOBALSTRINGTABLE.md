@@ -59,15 +59,40 @@ However, header validation failed. These strings are **literal string constants*
 ### 3. Exhaustive __DATA Probe - FAILED
 Scanned 64MB of `__DATA` section looking for SubTable structure signatures. Found 0 candidates.
 
+### 4. Interactive Console Exploration (Dec 5, 2025)
+
+Using the new `Ext.Memory.*` API via file-based console:
+
+**Module bases discovered:**
+- `Baldur` (main game): `0x100f9c000`
+- `libOsiris`: `0x10fa50000`
+- `bg3se` (our dylib): `0x10fc3c000`
+
+**String searches:**
+- "Weapon" in binary range (`0x100f9c000` + 512MB): **62 matches**
+- Sample addresses: `0x1087e41a9`, `0x1087e46c0`, `0x1087e61db`
+- Bytes before strings show adjacent strings (packed string table), NOT GST headers
+
+**Finding:** Strings at `0x1087e*` are **constant strings** in a read-only section, likely `__TEXT` or `__RODATA`. They're packed sequentially without the 24-byte GST header structure.
+
+**"ProficiencyBonus" search:**
+- Found at `0x1087e5160`
+- Bytes before: `ls.thoth.shared.Entity.Get...` (Lua method path)
+- Confirms these are Lua/script-related constant strings, not GST entries
+
 ## Next Steps
 
-### Option A: Heap Memory Scanning
-The GlobalStringTable is allocated on the heap. We need to:
-1. Find a pointer TO the GlobalStringTable (likely in a singleton pattern)
-2. Possible locations:
-   - A static global pointer in `__DATA` that points to heap
-   - Referenced from RPGStats or another known singleton
-   - Passed to a known function we can hook
+### Option A: Heap Memory Scanning (Most Promising)
+The GlobalStringTable is allocated on the heap at runtime. Strategy:
+1. Search higher memory ranges (`0x600000000+`) for GST header patterns
+2. Look for the 24-byte header structure: `[Hash:4][RefCount:4][Length:4][Id:4][Next:4][Reserved:4][String...]`
+3. Validate by checking if Id matches the expected FixedString index
+
+**Console command for heap exploration:**
+```lua
+-- Search for potential GST entries with specific header patterns
+local results = Ext.Memory.Search("XX XX XX XX 01 00 00 00", 0x600000000, 0x200000000)
+```
 
 ### Option B: Function Hooking
 Hook a function that uses FixedString resolution:
@@ -80,6 +105,11 @@ Find the GlobalStringTable via static analysis:
 1. Search for XREF to "Strength" string
 2. Find the code that creates FixedString("Strength")
 3. Trace the GlobalStringTable access pattern
+
+### Option D: Trace RPGStats String Access
+Since RPGStats has FixedString fields:
+1. Find the function that reads stat names
+2. Hook it to capture GST pointer during string resolution
 
 ## Related Files
 - `src/strings/fixed_string.c` - Current implementation
