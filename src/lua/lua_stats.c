@@ -410,11 +410,41 @@ static int lua_stats_dumptypes(lua_State *L) {
     return 0;
 }
 
-// Ext.Stats.GetRaw() -> pointer (for debugging)
+// Ext.Stats.GetRaw() -> pointer string (for debugging)
 static int lua_stats_getraw(lua_State *L) {
     void *raw = stats_manager_get_raw();
     if (raw) {
         lua_pushfstring(L, "%p", raw);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetRawPtr() -> pointer as integer (for Ext.Debug probing)
+static int lua_stats_getrawptr(lua_State *L) {
+    void *raw = stats_manager_get_raw();
+    if (raw) {
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)raw);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetFixedStringByIndex(index) -> string
+// Direct access to the FixedStrings pool at RPGStats+0x348
+static int lua_stats_get_fixedstring_by_index(lua_State *L) {
+    int index = (int)luaL_checkinteger(L, 1);
+
+    if (index < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const char *str = fixed_string_resolve((uint32_t)index);
+    if (str) {
+        lua_pushstring(L, str);
     } else {
         lua_pushnil(L);
     }
@@ -460,6 +490,116 @@ static int lua_stats_probe_fixedstrings(lua_State *L) {
     return 0;
 }
 
+// Ext.Stats.GetObjectRaw(name) -> table with raw object data
+// Returns IndexedProperties array and other raw data for debugging
+static int lua_stats_getobjectraw(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+
+    if (!stats_manager_ready()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    StatsObjectPtr obj = stats_get(name);
+    if (!obj) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+
+    // Name
+    const char *obj_name = stats_get_name(obj);
+    if (obj_name) {
+        lua_pushstring(L, obj_name);
+        lua_setfield(L, -2, "Name");
+    }
+
+    // Type
+    const char *obj_type = stats_get_type(obj);
+    if (obj_type) {
+        lua_pushstring(L, obj_type);
+        lua_setfield(L, -2, "Type");
+    }
+
+    // Level
+    lua_pushinteger(L, stats_get_level(obj));
+    lua_setfield(L, -2, "Level");
+
+    // Using (parent)
+    const char *using_stat = stats_get_using(obj);
+    if (using_stat) {
+        lua_pushstring(L, using_stat);
+        lua_setfield(L, -2, "Using");
+    }
+
+    // Raw pointer address
+    lua_pushinteger(L, (lua_Integer)(uintptr_t)obj);
+    lua_setfield(L, -2, "Address");
+
+    // Property count
+    int prop_count = stats_get_property_count(obj);
+    lua_pushinteger(L, prop_count);
+    lua_setfield(L, -2, "PropertyCount");
+
+    // IndexedProperties array (raw values)
+    lua_newtable(L);
+    for (int i = 0; i < prop_count && i < 100; i++) {
+        int32_t raw_val = stats_get_property_raw(obj, i);
+        lua_pushinteger(L, i);
+        lua_pushinteger(L, raw_val);
+        lua_settable(L, -3);
+    }
+    lua_setfield(L, -2, "IndexedProperties");
+
+    return 1;
+}
+
+// Ext.Stats.DumpModifierList(typeName) -> table with attribute info
+// Returns table of attributes for a modifier list type (e.g., "Weapon")
+// Note: Attribute names are loaded from game data at runtime, not compiled into binary
+static int lua_stats_dumpmodifierlist(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+
+    if (!stats_manager_ready()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Map type name to ModifierList index
+    // Based on verified offsets: Armor=0, Character=1, Weapon=8, etc.
+    int ml_index = -1;
+    if (strcmp(type_name, "Armor") == 0) ml_index = 0;
+    else if (strcmp(type_name, "Character") == 0) ml_index = 1;
+    else if (strcmp(type_name, "Object") == 0) ml_index = 2;
+    else if (strcmp(type_name, "EquipmentSet") == 0) ml_index = 3;
+    else if (strcmp(type_name, "PassiveData") == 0) ml_index = 4;
+    else if (strcmp(type_name, "SpellData") == 0) ml_index = 5;
+    else if (strcmp(type_name, "StatusData") == 0) ml_index = 6;
+    else if (strcmp(type_name, "CriticalHitTypeData") == 0) ml_index = 7;
+    else if (strcmp(type_name, "Weapon") == 0) ml_index = 8;
+
+    if (ml_index < 0) {
+        log_lua_stats("Unknown modifier list type: %s", type_name);
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Dump to log (the actual data is returned via log for now)
+    stats_dump_modifierlist_attributes(ml_index);
+
+    // Return info table
+    lua_newtable(L);
+    lua_pushstring(L, type_name);
+    lua_setfield(L, -2, "Type");
+    lua_pushinteger(L, ml_index);
+    lua_setfield(L, -2, "Index");
+    lua_pushstring(L, "See log for attribute details (names loaded from game data at runtime)");
+    lua_setfield(L, -2, "Note");
+
+    return 1;
+}
+
 // ============================================================================
 // Registration
 // ============================================================================
@@ -480,7 +620,11 @@ static const luaL_Reg stats_functions[] = {
     {"IsReady", lua_stats_isready},
     {"DumpTypes", lua_stats_dumptypes},
     {"DumpAttributes", lua_stats_dumpattributes},  // Debug: dump ModifierList attributes
+    {"DumpModifierList", lua_stats_dumpmodifierlist},  // Debug: dump modifier list by type name
     {"GetRaw", lua_stats_getraw},
+    {"GetRawPtr", lua_stats_getrawptr},  // Debug: returns integer for Ext.Debug probing
+    {"GetObjectRaw", lua_stats_getobjectraw},  // Debug: raw object data with IndexedProperties
+    {"GetFixedStringByIndex", lua_stats_get_fixedstring_by_index},  // Debug: direct FixedStrings[index] access
     {"GetFixedStringStatus", lua_stats_get_fixedstring_status},
     {"ProbeFixedStrings", lua_stats_probe_fixedstrings},  // Debug: probe for FixedStrings offset
     {NULL, NULL}
