@@ -1,373 +1,84 @@
-# BG3SE-macOS Development Guide
+# BG3SE-macOS
 
-## Project Overview
+macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-BG3SE-macOS is a macOS port of Norbyte's Script Extender for Baldur's Gate 3. The goal is feature parity with the Windows BG3SE, enabling Lua mods to run on macOS.
+**Version:** v0.11.0 | **Target:** Full Windows BG3SE mod compatibility
 
-**Current Version:** v0.11.0
-**Target:** Full compatibility with Windows BG3SE mods
+## Stack
 
-## Architecture
+- C17/C++20, Universal binary (arm64 + x86_64)
+- Dobby (inline hooking), Lua 5.4, lz4, zlib
+- DYLD_INSERT_LIBRARIES injection into libOsiris.dylib
 
-### Injection Method
-- Uses `DYLD_INSERT_LIBRARIES` to load the dylib before the game starts
-- Dobby framework for inline function hooking (ARM64 + x86_64 universal binary)
-- Hooks into libOsiris.dylib for Osiris scripting engine integration
+## Structure
 
-### Module Structure
-```
-src/
-├── core/           # Logging, version info
-├── entity/         # Entity Component System (modular)
-│   ├── entity_system.c/h  # Core ECS, Lua bindings
-│   ├── guid_lookup.c/h    # GUID parsing, HashMap operations
-│   └── arm64_call.c/h     # ARM64 ABI wrappers (x8 indirect return)
-├── hooks/          # Legacy hook stubs (actual hooks in main.c)
-├── injector/       # Main injection logic (main.c)
-├── lua/            # Lua API modules (lua_ext, lua_json, lua_osiris, lua_stats)
-├── mod/            # Mod detection and loading
-├── osiris/         # Osiris types, functions, pattern scanning
-├── pak/            # LSPK v18 PAK file reading
-└── stats/          # RPGStats system access (stats_manager)
-```
-
-### Key Files
-- `src/injector/main.c` - Core injection, Dobby hooks, Osi.* namespace, Lua state
-- `src/mod/mod_loader.c` - Mod detection from modsettings.lsx, PAK loading
+- `src/injector/main.c` - Core injection, hooks, Lua state
 - `src/lua/lua_*.c` - Ext.* API implementations
-- `src/osiris/osiris_functions.c` - Osiris function enumeration
-- `src/entity/entity_system.c` - Core ECS, EntityWorld capture, Lua bindings
-- `src/entity/guid_lookup.c` - GUID→EntityHandle lookup, HashMap implementation
-- `src/entity/arm64_call.c` - ARM64 calling conventions for large struct returns
-- `src/stats/stats_manager.c` - RPGStats global access, CNamedElementManager traversal
-- `ghidra/offsets/` - Modular offset documentation (Osiris, Entity, Components, Stats)
+- `src/stats/stats_manager.c` - RPGStats system (stat property access)
+- `src/entity/` - Entity Component System (GUID lookup, components)
+- `ghidra/offsets/` - Reverse-engineered offsets documentation
 
-## Modular Architecture
+## Commands
 
-**This project follows a strict modular design.** Each subsystem should be self-contained with:
-- **Header file** (`.h`) - Public API declarations, constants, type definitions
-- **Source file** (`.c`) - Implementation with static (private) helpers
-- **Minimal coupling** - Modules communicate through well-defined interfaces
-
-### Module Design Pattern (MUST FOLLOW)
-
-When extracting or creating new modules:
-
-```c
-// module.h - Public interface
-#ifndef MODULE_H
-#define MODULE_H
-
-// Public constants
-#define MODULE_MAX_ITEMS 128
-
-// Public functions (prefixed with module name)
-void module_init(void);
-int module_get_count(void);
-const char *module_get_name(int index);
-
-#endif
-
-// module.c - Implementation
-#include "module.h"
-#include "logging.h"
-
-// Private state (static)
-static char items[MODULE_MAX_ITEMS][256];
-static int item_count = 0;
-
-// Private helpers (static)
-static int validate_item(const char *item) { ... }
-
-// Public implementation
-void module_init(void) { ... }
-```
-
-### Existing Module Examples
-
-| Module | Purpose | Key Pattern |
-|--------|---------|-------------|
-| `mod_loader` | Mod detection & PAK loading | State encapsulation via static variables |
-| `pak_reader` | LSPK v18 archive parsing | Opaque struct (`PakFile*`) with accessor functions |
-| `entity_system` | Core ECS, Lua bindings | Singleton capture via hooks |
-| `guid_lookup` | GUID parsing, HashMap ops | Pure data operations, no global state |
-| `arm64_call` | ARM64 ABI wrappers | Platform-specific calling conventions |
-| `lua_ext` | Ext.* API registration | Registration functions per API group |
-| `stats_manager` | RPGStats system access | Global pointer via dlsym, CNamedElementManager traversal |
-
-### When to Extract Code from main.c
-
-Extract to a new module when:
-1. Code exceeds ~100 lines with related functionality
-2. State (static variables) can be isolated
-3. Multiple source files need the functionality
-4. Testing the functionality independently would be valuable
-
-**Goal:** Keep `main.c` focused on initialization, orchestration, and hook dispatch
-
-## Development Workflow
-
-### Building
 ```bash
+# Build
 cd build && cmake .. && cmake --build .
-# Output: build/lib/libbg3se.dylib
+
+# Test (launches BG3 with dylib)
+./scripts/launch_bg3.sh
+
+# Watch logs
+tail -f "/Users/tomdimino/Library/Application Support/BG3SE/bg3se.log"
+
+# Live Lua console (send commands to running game)
+echo 'Ext.Print("test")' > "/Users/tomdimino/Library/Application Support/BG3SE/commands.txt"
 ```
-
-### Testing
-```bash
-./scripts/launch_bg3.sh  # Launches BG3 with dylib injected
-tail -f /Users/tomdimino/Library/Application\ Support/BG3SE/bg3se.log  # Watch logs in real-time
-```
-
-**Important:** Use full path `/Users/tomdimino/Library/Application Support/BG3SE/` for log and command files. The `~` shortcut doesn't always expand correctly in shell pipelines.
-
-### Live Console (Rapid Iteration)
-
-Send Lua commands to the running game without restart:
-
-```bash
-# Terminal 1: Watch output
-tail -f /Users/tomdimino/Library/Application\ Support/BG3SE/bg3se.log
-
-# Terminal 2: Send commands
-echo 'Ext.Print("test")' > /Users/tomdimino/Library/Application\ Support/BG3SE/commands.txt
-
-# Memory inspection
-echo 'Ext.Print(Ext.Memory.Read(Ext.Memory.GetModuleBase("Baldur"), 16))' > /Users/tomdimino/Library/Application\ Support/BG3SE/commands.txt
-
-# Search for byte patterns
-echo 'local r = Ext.Memory.Search("50 72 6F 66", 0x100000000, 0x100000000); Ext.Print("Found: " .. #r)' > /Users/tomdimino/Library/Application\ Support/BG3SE/commands.txt
-```
-
-**Note:** Use `>` (overwrite) instead of `>>` (append) to avoid multi-line parsing issues.
-
-**Console Constraints:**
-- Each line is a separate `luaL_dostring()` call - no multi-line constructs
-- Lines starting with `#` are comments
-- File is deleted after processing
-- Use single-line Lua only (or define functions in mod files)
-
-### Debugging
-- All logs go to `/Users/tomdimino/Library/Application Support/BG3SE/bg3se.log` and syslog
-- Cache files stored in `/Users/tomdimino/Library/Application Support/BG3SE/`
-- Use `log_message()` for consistent logging
-- Osiris events logged with `[Osiris]` prefix
-
-## Current Status (from ROADMAP.md)
-
-### Phase 1: Core Osiris Integration - COMPLETE
-- [x] Dynamic Osi.* metatable with lazy function lookup
-- [x] Query output parameters
-- [x] Function type detection (Query/Call/Event/Proc/Database dispatch)
-- [x] Pre-populated common functions (40+ seeded at startup)
-- [ ] Safe enumeration via Ghidra offsets
-
-### Phase 2: Entity/Component System - COMPLETE
-- [x] EntityWorld capture via LEGACY_IsInCombat hook
-- [x] TryGetSingleton for UuidToHandleMappingComponent
-- [x] HashMap<Guid, EntityHandle> reverse engineered & implemented
-- [x] Component accessors (Transform, Level, Physics, Visual)
-- [x] Lua bindings: `Ext.Entity.Get(guid)`, `entity.Transform`, etc.
-- [ ] Additional eoc:: component addresses (Stats, Health, Armor) - pending runtime discovery
-
-### Phase 3-7: See ROADMAP.md for details
-
-## Technical Patterns
-
-### Pattern Scanning
-When dlsym fails (symbols stripped), use pattern scanning:
-```c
-static const FunctionPattern g_osirisPatterns[] = {
-    {"InternalQuery", "_Z13InternalQueryjP16COsiArgumentDesc", "FD 43...", 28},
-    // ...
-};
-void *addr = resolve_by_pattern("libOsiris.dylib", &pattern);
-```
-
-### Osiris Function Calls
-```c
-// Query (returns values)
-OsiArgumentDesc *args = alloc_args(2);
-set_arg_string(&args[0], guid, 1);  // isGuid=1
-int result = osiris_query_by_id(funcId, args);
-
-// Call (no return)
-osiris_call_by_id(funcId, args);
-```
-
-### Lua API Registration
-```c
-void lua_ext_register_basic(lua_State *L, int ext_table_index) {
-    lua_pushcfunction(L, lua_ext_print);
-    lua_setfield(L, ext_table_index, "Print");
-}
-```
-
-### Module Loading
-Mods loaded from:
-1. `/tmp/<ModName>_extracted/` - Extracted mods for development
-2. `~/Documents/Larian Studios/Baldur's Gate 3/Mods/` - User mods
-3. PAK files - Compressed mods
-
-## Common Tasks
-
-### Adding a New Ext.* Function
-1. Implement in `src/lua/lua_ext.c`
-2. Declare in `src/lua/lua_ext.h`
-3. Register in `lua_ext_register_*()` function
-
-### Adding a New Osi.* Function
-Dynamic Osi.* uses metatable `__index`. For explicit stubs:
-1. Add to `register_osi_namespace()` in main.c
-2. Implement the Lua C function
-
-### Extracting Code from main.c
-See **Modular Architecture** section above for the design pattern. Steps:
-1. Create header/source pair in appropriate `src/` subdirectory
-2. Follow the module design pattern (static state, prefixed functions)
-3. Update CMakeLists.txt to include new source file
-4. Update main.c to `#include` header and remove duplicate code
-5. Replace direct state access with module accessors
-
-### Ghidra Analysis
-
-For the 1GB+ BG3 binary, **always use the wrapper script** to ensure optimized analysis:
-
-```bash
-# RECOMMENDED: Use wrapper script (auto-includes optimize_analysis.py)
-./ghidra/scripts/run_analysis.sh find_modifierlist_offsets.py
-
-# Monitor progress in real-time:
-tail -f /tmp/ghidra_progress.log
-```
-
-The wrapper script:
-- Automatically applies `optimize_analysis.py` prescript (prevents 2-3x slower analysis)
-- Logs progress to `/tmp/ghidra_progress.log` for real-time monitoring
-- Saves full output to `/tmp/ghidra_output.log`
-
-**Available scripts:**
-- `find_modifierlist_offsets.py` - Find ModifierList structure offsets
-- `find_rpgstats.py` - Find gRPGStats global pointer
-- `find_uuid_mapping.py` - Find UuidToHandleMappingComponent for GUID lookup
-- `find_entity_offsets.py` - Discover Entity system offsets
-- `quick_component_search.py` - Find XREFs to component strings
-
-**Manual command (if needed):**
-```bash
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-  ~/ghidra/support/analyzeHeadless ~/ghidra_projects BG3Analysis \
-  -process BG3_arm64_thin \
-  -scriptPath /Users/tomdimino/Desktop/Programming/bg3se-macos/ghidra/scripts \
-  -preScript optimize_analysis.py \
-  -postScript <your_script.py>
-```
-
-**Note:** The prescript disables slow analyzers (ARM Constant Reference, Decompiler Parameter ID, Stack) that would cause analysis to take hours instead of 30-45 minutes.
 
 ## Codebase Search
-
-Use `osgrep` for semantic code search. **Invoke the `osgrep-reference` skill** for full CLI documentation.
 
 ```bash
 # Search this project
 osgrep "how does event dispatch work"
-osgrep "entity component access"
-osgrep "mod loading bootstrap"
 
-# Search reference implementation
+# Search Windows BG3SE reference
 osgrep "entity manager" -p /Users/tomdimino/Desktop/Programming/bg3se
-osgrep "Lua component binding" -p /Users/tomdimino/Desktop/Programming/bg3se
-
-# Reindex after changes
-osgrep index -p /Users/tomdimino/Desktop/Programming/bg3se-macos
-osgrep index -p /Users/tomdimino/Desktop/Programming/bg3se
 ```
 
-### osgrep Tips
-- Use natural language queries ("how does X work" rather than "functionX")
-- `-m N` limits results (default 10)
-- `--per-file N` limits matches per file
-- Index is auto-updated but run `osgrep index` after major changes
+## Ghidra Analysis
 
-## Reference Implementation
-
-**Local clone:** `/Users/tomdimino/Desktop/Programming/bg3se` (Norbyte's Windows BG3SE)
-**GitHub:** https://github.com/Norbyte/bg3se
-**osgrep indexed:** Yes - use `-p /Users/tomdimino/Desktop/Programming/bg3se` for semantic search
-
-Key directories in the reference:
-- `BG3Extender/Osiris/` - Osiris binding patterns, function lookups
-- `BG3Extender/Lua/` - Lua API design, Ext.* implementations
-- `BG3Extender/Lua/Libs/Entity.inl` - Entity Lua bindings (UuidToHandle, GetComponent)
-- `BG3Extender/GameDefinitions/` - Entity/component structures, type definitions
-- `BG3Extender/GameDefinitions/EntitySystem.cpp` - EntitySystemHelpers, GetSingleton
-- `BG3Extender/GameDefinitions/Components/Components.h` - Component struct definitions
-- `CoreLib/` - Core utilities, memory patterns
-- `Docs/` - API documentation
-
-Use osgrep to search the reference implementation:
 ```bash
-# The bg3se reference repo is indexed for semantic search
-osgrep "entity component access" -p /Users/tomdimino/Desktop/Programming/bg3se
-osgrep "GUID to entity handle lookup" -p /Users/tomdimino/Desktop/Programming/bg3se
-osgrep "Lua component binding" -p /Users/tomdimino/Desktop/Programming/bg3se
-osgrep "Osiris function registration" -p /Users/tomdimino/Desktop/Programming/bg3se
+# Run script (fast, read-only)
+./ghidra/scripts/run_analysis.sh find_rpgstats.py
+
+# With re-analysis (slow)
+./ghidra/scripts/run_analysis.sh find_rpgstats.py -analyze
 ```
 
-## Build Configuration
+## Current API Status
 
-- Universal binary (arm64 + x86_64)
-- C17 / C++20 standards
-- Depends on: Dobby, Lua 5.4, lz4, zlib
-- Frameworks: Foundation, CoreFoundation
+- **Osi.*** - Dynamic metatable with lazy lookup (40+ functions seeded)
+- **Ext.Entity** - GUID lookup, Transform/Level/Physics/Visual components
+- **Ext.Stats** - Property read working (`stat.Damage` returns "1d8")
+- **Ext.Memory** - Read, Search, GetModuleBase for debugging
+- **Ext.Events** - SessionLoading, SessionLoaded, ResetCompleted (3/10+ events)
+- **Ext.Debug** - Memory introspection (ReadPtr/U32/I32/Float, ProbeStruct, HexDump)
 
-## Entity System Offsets (from Ghidra analysis)
+## Conventions
 
-See `ghidra/offsets/` for modular documentation:
-- `ENTITY_SYSTEM.md` - ECS architecture, EntityWorld capture, GUID lookup
-- `COMPONENTS.md` - GetComponent addresses and discovery status
-- `STRUCTURES.md` - C structure definitions
+- Modular design: each subsystem is header+source pair with static state
+- Prefix public functions with module name (`stats_get_string()`)
+- Extract from main.c when code exceeds ~100 lines with isolated state
+- Use `log_message()` for consistent logging
 
-Key findings:
+## Key Offsets (verified via Ghidra)
 
-### Capturing EntityWorld Pointer
-Hook `eoc::CombatHelpers::LEGACY_IsInCombat` at `0x10124f92c` to capture `EntityWorld&` parameter.
+- `RPGSTATS_OFFSET_FIXEDSTRINGS = 0x348` - Stats string pool
+- `LEGACY_IsInCombat` at `0x10124f92c` - EntityWorld capture hook
 
-### GUID to EntityHandle Lookup
-| Function | Address | Notes |
-|----------|---------|-------|
-| `TryGetSingleton<UuidToHandleMappingComponent>` | `0x1010dc924` | Returns singleton for GUID mapping |
+## Detailed Guides
 
-### GetComponent Template Instances
-| Component | Method Address |
-|-----------|----------------|
-| `ls::TransformComponent` | `0x10010d5b00` |
-| `ls::LevelComponent` | `0x10010d588c` |
-| `ls::PhysicsComponent` | `0x101ba0898` |
-| `ls::VisualComponent` | `0x102e56350` |
-
-### Component Strings
-| Component | String Address |
-|-----------|----------------|
-| `eoc::StatsComponent` | `0x107b7ca22` |
-| `eoc::BaseHpComponent` | `0x107b84c63` |
-| `ls::TransformComponent` | `0x107b619cc` |
-| `eoc::ArmorComponent` | `0x107b7c9e7` |
-
-## Development Skill
-
-For comprehensive development guidance, invoke the **bg3se-macos-ghidra** skill:
-```
-skill: "bg3se-macos-ghidra"
-```
-
-Includes: Windows BG3SE architecture reference, Ghidra scripting patterns, ARM64 ABI details, and offset discovery workflows. Install from `tools/skills/bg3se-macos-ghidra/`.
-
-## Notes
-
-- Game binary is ARM64 on Apple Silicon, Rosetta for Intel
-- libOsiris.dylib contains the Osiris scripting engine
-- Symbol names may be mangled C++ (use c++filt to demangle)
-- Some symbols stripped - pattern scanning is the fallback
-- **EntityWorld/EoCServer singletons not exported** - must capture via hooks
+@agent_docs/architecture.md
+@agent_docs/development.md
+@agent_docs/ghidra.md
+@agent_docs/reference.md
+@ghidra/offsets/STATS.md

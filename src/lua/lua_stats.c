@@ -410,11 +410,41 @@ static int lua_stats_dumptypes(lua_State *L) {
     return 0;
 }
 
-// Ext.Stats.GetRaw() -> pointer (for debugging)
+// Ext.Stats.GetRaw() -> pointer string (for debugging)
 static int lua_stats_getraw(lua_State *L) {
     void *raw = stats_manager_get_raw();
     if (raw) {
         lua_pushfstring(L, "%p", raw);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetRawPtr() -> pointer as integer (for Ext.Debug probing)
+static int lua_stats_getrawptr(lua_State *L) {
+    void *raw = stats_manager_get_raw();
+    if (raw) {
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)raw);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetFixedStringByIndex(index) -> string
+// Direct access to the FixedStrings pool at RPGStats+0x348
+static int lua_stats_get_fixedstring_by_index(lua_State *L) {
+    int index = (int)luaL_checkinteger(L, 1);
+
+    if (index < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const char *str = fixed_string_resolve((uint32_t)index);
+    if (str) {
+        lua_pushstring(L, str);
     } else {
         lua_pushnil(L);
     }
@@ -481,6 +511,8 @@ static const luaL_Reg stats_functions[] = {
     {"DumpTypes", lua_stats_dumptypes},
     {"DumpAttributes", lua_stats_dumpattributes},  // Debug: dump ModifierList attributes
     {"GetRaw", lua_stats_getraw},
+    {"GetRawPtr", lua_stats_getrawptr},  // Debug: returns integer for Ext.Debug probing
+    {"GetFixedStringByIndex", lua_stats_get_fixedstring_by_index},  // Debug: direct FixedStrings[index] access
     {"GetFixedStringStatus", lua_stats_get_fixedstring_status},
     {"ProbeFixedStrings", lua_stats_probe_fixedstrings},  // Debug: probe for FixedStrings offset
     {NULL, NULL}

@@ -384,3 +384,62 @@ void lua_ext_register_memory(lua_State *L, int ext_table_index) {
 
     log_message("[Lua] Ext.Memory namespace registered");
 }
+
+// ============================================================================
+// Global Helper Registration (for rapid debugging)
+// ============================================================================
+
+// _H(n) - Format number as hex string
+static int lua_helper_hex(lua_State *L) {
+    lua_Integer n = luaL_checkinteger(L, 1);
+    lua_pushfstring(L, "0x%x", (unsigned int)n);
+    return 1;
+}
+
+// _PTR(base, offset) - Pointer arithmetic helper
+static int lua_helper_ptr(lua_State *L) {
+    lua_Integer base = luaL_checkinteger(L, 1);
+    lua_Integer offset = luaL_checkinteger(L, 2);
+    lua_pushinteger(L, base + offset);
+    return 1;
+}
+
+void lua_ext_register_global_helpers(lua_State *L) {
+    // _P = Ext.Print (alias)
+    lua_pushcfunction(L, lua_ext_print);
+    lua_setglobal(L, "_P");
+
+    // _H = hex formatter
+    lua_pushcfunction(L, lua_helper_hex);
+    lua_setglobal(L, "_H");
+
+    // _PTR = pointer arithmetic
+    lua_pushcfunction(L, lua_helper_ptr);
+    lua_setglobal(L, "_PTR");
+
+    // _D will be set in Lua to wrap Ext.Json.Stringify + Ext.Print
+    // We'll define it as a Lua function after Ext is registered
+    const char *dump_func =
+        "_D = function(obj, depth)\n"
+        "  if type(obj) == 'userdata' then\n"
+        "    Ext.Print(tostring(obj))\n"
+        "    return\n"
+        "  end\n"
+        "  local ok, json = pcall(function() return Ext.Json.Stringify(obj, depth or 2) end)\n"
+        "  if ok then\n"
+        "    Ext.Print(json)\n"
+        "  else\n"
+        "    Ext.Print(tostring(obj))\n"
+        "  end\n"
+        "end\n"
+        "_DS = function(obj) _D(obj, 1) end\n"
+        "_PE = function(...) Ext.Print('[ERROR]', ...) end\n";
+
+    if (luaL_dostring(L, dump_func) != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        log_message("[Lua] Warning: Failed to register dump helpers: %s", err ? err : "(unknown)");
+        lua_pop(L, 1);
+    }
+
+    log_message("[Lua] Global helpers registered (_P, _D, _DS, _H, _PTR, _PE)");
+}

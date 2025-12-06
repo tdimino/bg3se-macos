@@ -117,6 +117,25 @@ int lua_ext_memory_getmodulebase(lua_State *L);
  */
 void lua_ext_register_memory(lua_State *L, int ext_table_index);
 
+// ============================================================================
+// Global Helper Functions (for rapid debugging)
+// ============================================================================
+
+/**
+ * Register global helper functions for rapid debugging:
+ *   _P  = Ext.Print alias
+ *   _D  = Dump object as JSON
+ *   _DS = Dump shallow (depth=1)
+ *   _H  = Hex formatter (e.g., _H(255) -> "0xff")
+ *   _PTR = Pointer arithmetic (e.g., _PTR(base, 0x10))
+ *   _PE = Print error
+ *
+ * NOTE: Must be called AFTER Ext global is registered
+ *
+ * @param L Lua state (must have Ext registered as global)
+ */
+void lua_ext_register_global_helpers(lua_State *L);
+
 #ifdef __cplusplus
 }
 #endif

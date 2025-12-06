@@ -60,6 +60,7 @@ extern "C" {
 #include "lua_json.h"
 #include "lua_osiris.h"
 #include "lua_stats.h"
+#include "lua_debug.h"
 
 // Stats system
 #include "stats_manager.h"
@@ -745,8 +746,14 @@ static void register_ext_api(lua_State *L) {
     // Ext.Stats namespace (stats system)
     lua_stats_register(L, -1);
 
+    // Ext.Debug namespace (memory introspection)
+    lua_ext_register_debug(L, -1);
+
     // Set Ext as global
     lua_setglobal(L, "Ext");
+
+    // Register global helper functions (must be after Ext is set as global)
+    lua_ext_register_global_helpers(L);
 
     log_message("Ext API registered in Lua");
 }
