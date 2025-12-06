@@ -15,6 +15,10 @@
 #include "../core/logging.h"
 
 #include <lauxlib.h>
+#include <math.h>
+
+// Maximum timer delay (24 hours in milliseconds)
+#define TIMER_MAX_DELAY_MS 86400000.0
 
 // ============================================================================
 // Ext.Timer.WaitFor(delay, callback, [repeat])
@@ -24,6 +28,14 @@ static int lua_timer_waitfor(lua_State *L) {
     // Arg 1: delay in milliseconds
     double delay_ms = luaL_checknumber(L, 1);
 
+    // Validate delay
+    if (delay_ms < 0 || !isfinite(delay_ms)) {
+        return luaL_error(L, "delay must be >= 0 and finite (got %.2f)", delay_ms);
+    }
+    if (delay_ms > TIMER_MAX_DELAY_MS) {
+        return luaL_error(L, "delay must be <= %.0fms (24 hours)", TIMER_MAX_DELAY_MS);
+    }
+
     // Arg 2: callback function
     luaL_checktype(L, 2, LUA_TFUNCTION);
 
@@ -31,6 +43,17 @@ static int lua_timer_waitfor(lua_State *L) {
     double repeat_ms = 0;
     if (lua_gettop(L) >= 3 && !lua_isnil(L, 3)) {
         repeat_ms = luaL_checknumber(L, 3);
+
+        // Validate repeat interval
+        if (repeat_ms < 0 || !isfinite(repeat_ms)) {
+            return luaL_error(L, "repeat must be >= 0 and finite (got %.2f)", repeat_ms);
+        }
+        if (repeat_ms > 0 && repeat_ms < 1.0) {
+            return luaL_error(L, "repeat interval must be >= 1ms or 0 (got %.2f)", repeat_ms);
+        }
+        if (repeat_ms > TIMER_MAX_DELAY_MS) {
+            return luaL_error(L, "repeat must be <= %.0fms (24 hours)", TIMER_MAX_DELAY_MS);
+        }
     }
 
     // Store callback in registry
@@ -116,6 +139,11 @@ static int lua_timer_monotonic_time(lua_State *L) {
 // ============================================================================
 
 void lua_timer_register(lua_State *L, int ext_table_idx) {
+    // Convert negative index to absolute since we'll be pushing onto stack
+    if (ext_table_idx < 0) {
+        ext_table_idx = lua_gettop(L) + ext_table_idx + 1;
+    }
+
     // Create Ext.Timer table
     lua_newtable(L);
 

@@ -448,6 +448,11 @@ int lua_debug_hex_dump(lua_State *L) {
 // ============================================================================
 
 void lua_ext_register_debug(lua_State *L, int ext_table_index) {
+    // Convert negative index to absolute since we'll be pushing onto stack
+    if (ext_table_index < 0) {
+        ext_table_index = lua_gettop(L) + ext_table_index + 1;
+    }
+
     // Create Ext.Debug table
     lua_newtable(L);
 

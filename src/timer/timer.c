@@ -274,7 +274,11 @@ bool timer_resume(TimerHandle handle) {
     timer->paused = false;
 
     // Re-queue the timer
-    queue_push(timer->fire_time, handle, timer->invoke_id);
+    if (!queue_push(timer->fire_time, handle, timer->invoke_id)) {
+        log_message("[Timer] Warning: Failed to resume timer (queue full)");
+        timer->paused = true;  // Restore paused state
+        return false;
+    }
 
     return true;
 }
@@ -299,8 +303,13 @@ void timer_update(lua_State *L) {
             continue;  // Stale entry, skip
         }
 
+        // Cache values BEFORE lua_pcall (callback might cancel/modify timer)
+        bool is_repeating = (timer->repeat_interval > 0);
+        double repeat_interval = timer->repeat_interval;
+        int callback_ref = timer->callback_ref;
+
         // Fire callback
-        lua_rawgeti(L, LUA_REGISTRYINDEX, timer->callback_ref);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, callback_ref);
         lua_pushinteger(L, (lua_Integer)entry.handle);
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
@@ -309,11 +318,23 @@ void timer_update(lua_State *L) {
             lua_pop(L, 1);
         }
 
+        // Re-fetch timer (callback may have cancelled it or modified state)
+        timer = timer_get(entry.handle);
+
         // Repeat or release
-        if (timer->active && timer->repeat_interval > 0) {
-            timer->fire_time = now + timer->repeat_interval;
-            queue_push(timer->fire_time, entry.handle, timer->invoke_id);
-        } else if (timer->active) {
+        if (timer && timer->active && is_repeating) {
+            timer->fire_time = now + repeat_interval;
+            if (!queue_push(timer->fire_time, entry.handle, timer->invoke_id)) {
+                // Queue full, cancel the timer
+                log_message("[Timer] Warning: Queue full during repeat, cancelling timer");
+                if (timer->callback_ref != LUA_NOREF) {
+                    luaL_unref(L, LUA_REGISTRYINDEX, timer->callback_ref);
+                    timer->callback_ref = LUA_NOREF;
+                }
+                timer->active = false;
+                s_timer_count--;
+            }
+        } else if (timer && timer->active) {
             // One-shot timer completed
             if (timer->callback_ref != LUA_NOREF) {
                 luaL_unref(L, LUA_REGISTRYINDEX, timer->callback_ref);
@@ -322,6 +343,7 @@ void timer_update(lua_State *L) {
             timer->active = false;
             s_timer_count--;
         }
+        // If !timer || !timer->active, callback cancelled itself - already cleaned up
     }
 }
 
