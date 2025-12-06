@@ -483,7 +483,7 @@ bg3se-macos/
 │   └── lib/
 │       └── libbg3se.dylib      # Built dylib (universal: arm64 + x86_64)
 ├── CLAUDE.md                   # Development guide for Claude Code
-├── ROADMAP.md                  # Feature parity tracking (~30%)
+├── ROADMAP.md                  # Feature parity tracking (~35%)
 └── README.md
 ```
 

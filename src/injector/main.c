@@ -75,6 +75,15 @@ extern "C" {
 #include "timer.h"
 #include "lua_timer.h"
 
+// PersistentVars
+#include "lua_persistentvars.h"
+
+// Event system
+#include "lua_events.h"
+
+// Game state tracking
+#include "game_state.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -589,137 +598,14 @@ static int lua_ext_require(lua_State *L) {
 }
 
 // ============================================================================
-// Ext.Events - Simple Event System
+// Ext.Events - Event System (implementation in lua_events.c)
 // ============================================================================
 
-// Event types
-typedef enum {
-    EVENT_SESSION_LOADING = 0,
-    EVENT_SESSION_LOADED,
-    EVENT_RESET_COMPLETED,
-    EVENT_MAX
-} EventType;
+// Note: The full event system implementation is now in src/lua/lua_events.c
+// This section provides helper functions for firing events from main.c
 
-// Storage for event callbacks (Lua registry references)
-#define MAX_EVENT_CALLBACKS 32
-static int g_eventCallbacks[EVENT_MAX][MAX_EVENT_CALLBACKS];
-static int g_eventCallbackCounts[EVENT_MAX] = {0};
-
-// Event names for logging
-static const char *g_eventNames[EVENT_MAX] = {
-    "SessionLoading",
-    "SessionLoaded",
-    "ResetCompleted"
-};
-
-/**
- * Fire an event, calling all registered callbacks
- */
-static void fire_event(lua_State *L, EventType event) {
-    if (!L || event >= EVENT_MAX) return;
-
-    int count = g_eventCallbackCounts[event];
-    if (count == 0) return;
-
-    log_message("[Events] Firing %s (%d callbacks)", g_eventNames[event], count);
-
-    for (int i = 0; i < count; i++) {
-        int ref = g_eventCallbacks[event][i];
-        if (ref != LUA_NOREF && ref != LUA_REFNIL) {
-            // Get callback from registry
-            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-            if (lua_isfunction(L, -1)) {
-                // Create event args table
-                lua_newtable(L);
-
-                // Call the callback with args table
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                    const char *err = lua_tostring(L, -1);
-                    log_message("[Events] Error in %s callback: %s", g_eventNames[event], err ? err : "unknown");
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-        }
-    }
-}
-
-/**
- * Event:Subscribe(callback) - Register a callback for an event
- * The event type is stored as upvalue
- * Note: Called with colon syntax, so arg 1 is self, arg 2 is callback
- */
-static int lua_event_subscribe(lua_State *L) {
-    // Get event type from upvalue
-    int event = (int)lua_tointeger(L, lua_upvalueindex(1));
-    if (event < 0 || event >= EVENT_MAX) {
-        return luaL_error(L, "Invalid event type");
-    }
-
-    // Check callback (arg 2 because of colon syntax - arg 1 is self)
-    luaL_checktype(L, 2, LUA_TFUNCTION);
-
-    // Check if we have room
-    if (g_eventCallbackCounts[event] >= MAX_EVENT_CALLBACKS) {
-        return luaL_error(L, "Too many callbacks for event %s", g_eventNames[event]);
-    }
-
-    // Store callback in registry
-    lua_pushvalue(L, 2);
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    // Add to callbacks array
-    g_eventCallbacks[event][g_eventCallbackCounts[event]++] = ref;
-
-    log_message("[Events] Subscribed to %s (callback #%d, ref=%d)",
-                g_eventNames[event], g_eventCallbackCounts[event], ref);
-
-    return 0;
-}
-
-/**
- * Create an event object with :Subscribe method
- */
-static void create_event_object(lua_State *L, EventType event) {
-    lua_newtable(L);
-
-    // Add Subscribe method with event type as upvalue
-    lua_pushinteger(L, event);
-    lua_pushcclosure(L, lua_event_subscribe, 1);
-    lua_setfield(L, -2, "Subscribe");
-}
-
-/**
- * Register Ext.Events namespace
- */
-static void register_ext_events(lua_State *L, int ext_index) {
-    // Initialize callback storage
-    for (int i = 0; i < EVENT_MAX; i++) {
-        g_eventCallbackCounts[i] = 0;
-        for (int j = 0; j < MAX_EVENT_CALLBACKS; j++) {
-            g_eventCallbacks[i][j] = LUA_NOREF;
-        }
-    }
-
-    // Create Ext.Events table
-    lua_newtable(L);
-
-    // Add event objects
-    create_event_object(L, EVENT_SESSION_LOADING);
-    lua_setfield(L, -2, "SessionLoading");
-
-    create_event_object(L, EVENT_SESSION_LOADED);
-    lua_setfield(L, -2, "SessionLoaded");
-
-    create_event_object(L, EVENT_RESET_COMPLETED);
-    lua_setfield(L, -2, "ResetCompleted");
-
-    // Set as Ext.Events
-    lua_setfield(L, ext_index - 1, "Events");
-
-    log_message("[Events] Ext.Events registered");
-}
+// Track last tick time for delta calculation
+static uint64_t g_last_tick_time_ms = 0;
 
 /**
  * Register the Ext API in Lua
@@ -744,8 +630,8 @@ static void register_ext_api(lua_State *L) {
     // Ext.Json namespace (via lua_json module)
     lua_json_register(L, -1);
 
-    // Ext.Events namespace (event system)
-    register_ext_events(L, -1);
+    // Ext.Events namespace (event system - new modular implementation)
+    lua_events_register(L, -1);
 
     // Ext.Stats namespace (stats system)
     lua_stats_register(L, -1);
@@ -758,6 +644,9 @@ static void register_ext_api(lua_State *L) {
 
     // Ext.Timer namespace (timer system)
     lua_timer_register(L, -1);
+
+    // Ext.Vars namespace (persistent variables)
+    lua_persistentvars_register(L, -1);
 
     // Set Ext as global
     lua_setglobal(L, "Ext");
@@ -1652,6 +1541,9 @@ static void init_lua(void) {
     // Initialize timer system
     timer_init();
 
+    // Initialize game state tracker
+    game_state_init();
+
     // Add GetDiscoveredPlayers to Ext.Entity (uses main.c's player tracking)
     lua_getglobal(L, "Ext");
     if (lua_istable(L, -1)) {
@@ -1750,6 +1642,11 @@ static void fake_InitGame(void *thisPtr) {
         // Load mod scripts after Osiris is initialized (only once)
         if (!mod_scripts_loaded) {
             mod_scripts_loaded = 1;
+
+            // Notify game state tracker that session is loading
+            game_state_on_session_loading(L);
+
+            events_fire(L, EVENT_MODULE_LOAD_STARTED);
             load_mod_scripts(L);
         }
     }
@@ -1792,6 +1689,7 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
         // This handles the case where InitGame wasn't called (loading existing save)
         if (!mod_scripts_loaded) {
             mod_scripts_loaded = 1;
+            events_fire(L, EVENT_MODULE_LOAD_STARTED);
             load_mod_scripts(L);
         }
 
@@ -1805,8 +1703,18 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
         // Check stats system now that the game is loaded
         stats_manager_on_session_loaded();
 
+        // Fire StatsLoaded event (stats system is now ready)
+        events_fire(L, EVENT_STATS_LOADED);
+
+        // Restore persistent variables BEFORE firing SessionLoaded
+        // (so mods can access restored data in their callbacks)
+        persist_restore_all(L);
+
+        // Notify game state tracker that session is loaded (fires GameStateChanged: LoadSession -> Running)
+        game_state_on_session_loaded(L);
+
         // Fire SessionLoaded event after subsystems are ready
-        fire_event(L, EVENT_SESSION_LOADED);
+        events_fire(L, EVENT_SESSION_LOADED);
     }
 
     return result;
@@ -2103,10 +2011,20 @@ static void dispatch_event_to_lua(const char *eventName, int arity,
 static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     event_call_count++;
 
-    // Poll for console commands (file-based Lua console)
+    // Poll for console commands and run tick systems
     if (L) {
         console_poll(L);
         timer_update(L);  // Process timer callbacks
+        persist_tick(L);  // Check for dirty PersistentVars to auto-save
+
+        // Fire Tick event with delta time
+        double now = timer_get_monotonic_ms();
+        if (g_last_tick_time_ms == 0) {
+            g_last_tick_time_ms = (uint64_t)now;
+        }
+        float delta_seconds = (float)(now - g_last_tick_time_ms) / 1000.0f;
+        g_last_tick_time_ms = (uint64_t)now;
+        events_fire_tick(L, delta_seconds);
     }
 
     // Capture COsiris pointer if we haven't already

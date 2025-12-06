@@ -25,6 +25,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/console
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/entity
+    ${CMAKE_SOURCE_DIR}/src/game
     ${CMAKE_SOURCE_DIR}/src/lua
     ${CMAKE_SOURCE_DIR}/src/mod
     ${CMAKE_SOURCE_DIR}/src/osiris
@@ -58,6 +59,9 @@ add_library(bg3se SHARED
     src/console/console.c
     src/timer/timer.c
     src/lua/lua_timer.c
+    src/lua/lua_persistentvars.c
+    src/lua/lua_events.c
+    src/game/game_state.c
     lib/lz4/lz4.c
 )
 
