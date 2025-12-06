@@ -719,6 +719,51 @@ void lua_ext_register_global_helpers(lua_State *L) {
         "  for i, t in ipairs(Ext.Types.GetAllTypes()) do\n"
         "    Ext.Print('  ' .. t)\n"
         "  end\n"
+        "end)\n"
+        "\n"
+        "-- !pv_dump - Dump all PersistentVars\n"
+        "Ext.RegisterConsoleCommand('pv_dump', function(cmd)\n"
+        "  Ext.Print('=== PersistentVars ===')\n"
+        "  local found = false\n"
+        "  for modTable, mod in pairs(Mods or {}) do\n"
+        "    if mod.PersistentVars then\n"
+        "      found = true\n"
+        "      Ext.Print(modTable .. ':')\n"
+        "      local json = Ext.Json.Stringify(mod.PersistentVars)\n"
+        "      Ext.Print('  ' .. json)\n"
+        "    end\n"
+        "  end\n"
+        "  if not found then\n"
+        "    Ext.Print('No mods have PersistentVars set')\n"
+        "  end\n"
+        "end)\n"
+        "\n"
+        "-- !pv_set <modTable> <key> <value> - Set a persistent var\n"
+        "Ext.RegisterConsoleCommand('pv_set', function(cmd, modTable, key, value)\n"
+        "  if not modTable or not key then\n"
+        "    Ext.Print('Usage: !pv_set <modTable> <key> <value>')\n"
+        "    return\n"
+        "  end\n"
+        "  Mods = Mods or {}\n"
+        "  Mods[modTable] = Mods[modTable] or {}\n"
+        "  Mods[modTable].PersistentVars = Mods[modTable].PersistentVars or {}\n"
+        "  Mods[modTable].PersistentVars[key] = value or ''\n"
+        "  Ext.Vars.MarkDirty()\n"
+        "  Ext.Print('Set Mods.' .. modTable .. '.PersistentVars.' .. key .. ' = ' .. tostring(value or ''))\n"
+        "end)\n"
+        "\n"
+        "-- !pv_save - Force save all PersistentVars\n"
+        "Ext.RegisterConsoleCommand('pv_save', function(cmd)\n"
+        "  Ext.Print('Saving PersistentVars...')\n"
+        "  Ext.Vars.SyncPersistentVars()\n"
+        "  Ext.Print('Save complete')\n"
+        "end)\n"
+        "\n"
+        "-- !pv_reload - Force reload PersistentVars from disk\n"
+        "Ext.RegisterConsoleCommand('pv_reload', function(cmd)\n"
+        "  Ext.Print('Reloading PersistentVars...')\n"
+        "  Ext.Vars.ReloadPersistentVars()\n"
+        "  Ext.Print('Reload complete')\n"
         "end)\n";
 
     if (luaL_dostring(L, console_commands) != LUA_OK) {
@@ -728,5 +773,5 @@ void lua_ext_register_global_helpers(lua_State *L) {
     }
 
     log_message("[Lua] Global helpers registered (_P, _D, _DS, _H, _PTR, _PE)");
-    log_message("[Lua] Built-in console commands registered (!probe, !dumpstat, !findstr, !hexdump, !types)");
+    log_message("[Lua] Built-in console commands registered (!probe, !dumpstat, !findstr, !hexdump, !types, !pv_dump, !pv_set, !pv_save, !pv_reload)");
 }

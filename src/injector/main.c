@@ -1639,12 +1639,12 @@ static void fake_InitGame(void *thisPtr) {
     if (L) {
         luaL_dostring(L, "Ext.Print('Osiris initialized!')");
 
-        // Load mod scripts after Osiris is initialized (only once)
+        // Notify game state tracker that session is loading (every time, including reloads)
+        game_state_on_session_loading(L);
+
+        // Load mod scripts after Osiris is initialized (only once per game launch)
         if (!mod_scripts_loaded) {
             mod_scripts_loaded = 1;
-
-            // Notify game state tracker that session is loading
-            game_state_on_session_loading(L);
 
             events_fire(L, EVENT_MODULE_LOAD_STARTED);
             load_mod_scripts(L);
@@ -1661,6 +1661,11 @@ static void fake_InitGame(void *thisPtr) {
 static int fake_Load(void *thisPtr, void *smartBuf) {
     load_call_count++;
     log_message(">>> COsiris::Load called! (count: %d, this: %p, buf: %p)", load_call_count, thisPtr, smartBuf);
+
+    // Notify game state tracker that we're loading (fires GameStateChanged: Running -> LoadSession)
+    if (L) {
+        game_state_on_session_loading(L);
+    }
 
     // Call original and preserve return value
     int result = 0;
