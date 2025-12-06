@@ -32,6 +32,8 @@ Script Extender mods now load and execute on macOS with real game data. Lua scri
 | Stats API | ✅ Complete | 15,774 stats accessible, property read working (`stat.Damage` → "1d8") |
 | Timer API | ✅ Complete | WaitFor, Cancel, Pause, Resume, IsPaused, MonotonicTime |
 | Debug Console | ✅ Complete | Multi-line support, console commands, memory introspection |
+| Events API | ✅ Complete | 7 events with priority, Once, handler IDs, GameStateChanged |
+| PersistentVars | ✅ Complete | File-based persistence for mod data |
 
 ### Verified Working (Dec 5, 2025)
 
@@ -73,6 +75,8 @@ Script Extender mods now load and execute on macOS with real game data. Lua scri
 - ✅ **Timer API complete** - Ext.Timer.WaitFor(), Cancel(), Pause(), Resume()
 - ✅ **Enhanced debug console** - Multi-line blocks, console commands (!probe, !dumpstat, etc.)
 - ✅ **Memory introspection APIs** - Ext.Debug.ReadPtr/U32/Float, ProbeStruct, HexDump
+- ✅ **Ext.Events expansion (v0.14.0)** - 7 events including GameStateChanged, priority ordering, Once flag
+- ✅ **PersistentVars (v0.14.0)** - File-based mod data persistence across sessions
 
 ## Compatibility
 
@@ -188,8 +192,8 @@ echo '!types' > ...                                                   # List reg
 
 Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
 ```
-=== BG3SE-macOS v0.11.0 ===
-[timestamp] === BG3SE-macOS v0.11.0 initialized ===
+=== BG3SE-macOS v0.14.0 ===
+[timestamp] === BG3SE-macOS v0.14.0 initialized ===
 [timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
 [timestamp] Architecture: ARM64 (Apple Silicon)
 [timestamp] Dobby inline hooking: enabled
@@ -359,16 +363,31 @@ This was discovered through Ghidra analysis of `TryGetSingleton` which saves x8 
 | `stat:SetProperty(name, value)` | ✅ Working | Set property value |
 | `stat:Dump()` | ✅ Working | Print stat contents to log |
 
-### Ext.Events Namespace (v0.11.0)
+### Ext.Events Namespace (v0.14.0)
 
 | API | Status | Description |
 |-----|--------|-------------|
-| `Ext.Events.SessionLoading:Subscribe(cb)` | ✅ Working | Before save loads |
-| `Ext.Events.SessionLoaded:Subscribe(cb)` | ✅ Working | After save loads |
-| `Ext.Events.ResetCompleted:Subscribe(cb)` | ✅ Working | After reset command |
-| `Ext.Events.GameStateChanged` | ❌ Not impl | Game state transitions |
-| `Ext.Events.StatsLoaded` | ❌ Not impl | After stats loaded |
-| `Ext.Events.Tick` | ❌ Not impl | Every game loop |
+| `Ext.Events.SessionLoading:Subscribe(cb, opts)` | ✅ Working | Before save loads |
+| `Ext.Events.SessionLoaded:Subscribe(cb, opts)` | ✅ Working | After save loads |
+| `Ext.Events.ResetCompleted:Subscribe(cb, opts)` | ✅ Working | After reset command |
+| `Ext.Events.Tick:Subscribe(cb, opts)` | ✅ Working | Every game loop (~30hz), e.DeltaTime |
+| `Ext.Events.StatsLoaded:Subscribe(cb, opts)` | ✅ Working | After stats loaded |
+| `Ext.Events.ModuleLoadStarted:Subscribe(cb, opts)` | ✅ Working | Before mod scripts load |
+| `Ext.Events.GameStateChanged:Subscribe(cb, opts)` | ✅ Working | State transitions (e.FromState, e.ToState) |
+| `Ext.OnNextTick(cb)` | ✅ Working | Run callback on next tick (once) |
+| `event:Unsubscribe(handlerId)` | ✅ Working | Remove handler by ID |
+
+**Subscribe Options:** `{Priority = 100, Once = false}` - Lower priority runs first, Once auto-unsubscribes.
+
+### Ext.Vars Namespace (v0.14.0)
+
+| API | Status | Description |
+|-----|--------|-------------|
+| `Mods[ModTable].PersistentVars` | ✅ Working | Per-mod persistent storage table |
+| `Ext.Vars.SyncPersistentVars()` | ✅ Working | Force save all PersistentVars |
+| `Ext.Vars.IsPersistentVarsLoaded()` | ✅ Working | Check if vars loaded |
+| `Ext.Vars.ReloadPersistentVars()` | ✅ Working | Force reload from disk |
+| `Ext.Vars.MarkDirty()` | ✅ Working | Mark for auto-save |
 
 ### Ext.Timer Namespace (v0.11.0)
 
@@ -483,7 +502,7 @@ bg3se-macos/
 │   └── lib/
 │       └── libbg3se.dylib      # Built dylib (universal: arm64 + x86_64)
 ├── CLAUDE.md                   # Development guide for Claude Code
-├── ROADMAP.md                  # Feature parity tracking (~30%)
+├── ROADMAP.md                  # Feature parity tracking (~45%)
 └── README.md
 ```
 
@@ -609,8 +628,8 @@ See [GitHub Issues](https://github.com/tdimino/bg3se-macos/issues) for detailed 
 
 ### Critical Priority (Most Mods Need These)
 
-1. **[#11 - Ext.Events API](https://github.com/tdimino/bg3se-macos/issues/11)** - Engine lifecycle events (⚠️ 3/10+ events implemented)
-2. **[#12 - PersistentVars](https://github.com/tdimino/bg3se-macos/issues/12)** - Savegame data persistence
+1. **[#11 - Ext.Events API](https://github.com/tdimino/bg3se-macos/issues/11)** - ✅ Complete (v0.14.0) - 7 events with GameStateChanged
+2. **[#12 - PersistentVars](https://github.com/tdimino/bg3se-macos/issues/12)** - ✅ Complete (v0.14.0) - File-based persistence
 3. **[#13 - Ext.Vars](https://github.com/tdimino/bg3se-macos/issues/13)** - Entity-attached custom data with sync
 
 ### High Priority
@@ -627,6 +646,8 @@ See [GitHub Issues](https://github.com/tdimino/bg3se-macos/issues) for detailed 
 
 ### Completed
 
+- ✅ **[#11 - Ext.Events API](https://github.com/tdimino/bg3se-macos/issues/11)** - 7 events with GameStateChanged, priority/Once/handler IDs (v0.14.0)
+- ✅ **[#12 - PersistentVars](https://github.com/tdimino/bg3se-macos/issues/12)** - File-based mod data persistence (v0.14.0)
 - ✅ **[#14 - Timer API](https://github.com/tdimino/bg3se-macos/issues/14)** - WaitFor, Cancel, Pause, Resume, IsPaused, MonotonicTime (v0.11.0)
 - ✅ **[#18 - Enhanced Debug Console](https://github.com/tdimino/bg3se-macos/issues/18)** - Multi-line support, console commands, Ext.Debug APIs (v0.11.0)
 - ✅ **[#3 - Ext.Stats API](https://github.com/tdimino/bg3se-macos/issues/3)** - Property read complete, `stat.Damage` returns "1d8" (v0.11.0)

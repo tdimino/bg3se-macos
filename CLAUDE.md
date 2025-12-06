@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.11.0 | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.14.0 | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -73,7 +73,8 @@ osgrep "stats property resolution flow" -p /Users/tomdimino/Desktop/Programming/
 - **Ext.Entity** - GUID lookup, Transform/Level/Physics/Visual components
 - **Ext.Stats** - Property read working (`stat.Damage` returns "1d8")
 - **Ext.Memory** - Read, Search, GetModuleBase for debugging
-- **Ext.Events** - SessionLoading, SessionLoaded, ResetCompleted (3/10+ events)
+- **Ext.Events** - 7 events (SessionLoading/Loaded, ResetCompleted, Tick, StatsLoaded, ModuleLoadStarted, GameStateChanged) with priority ordering, Once flag, handler IDs
+- **Ext.Vars** - PersistentVars for mod data persistence (file-based)
 - **Ext.Debug** - Memory introspection (ReadPtr/U32/I32/Float, ProbeStruct, HexDump)
 
 ## Conventions

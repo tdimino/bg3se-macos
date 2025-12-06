@@ -9,6 +9,7 @@
 
 #include "console.h"
 #include "../core/logging.h"
+#include "../lua/lua_events.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -147,8 +148,20 @@ static int dispatch_console_command(lua_State *L, const char *line) {
     if (strcmp(cmd_name, "help") == 0) {
         log_message("[Console] Available commands:");
         log_message("  !help - Show this help");
+        log_message("  !events - Show event handler counts");
         for (int i = 0; i < s_command_count; i++) {
             log_message("  !%s", s_commands[i].name);
+        }
+        return 1;
+    }
+
+    // Built-in !events command - show handler counts for all events
+    if (strcmp(cmd_name, "events") == 0) {
+        log_message("[Events] Handler counts:");
+        for (int e = 0; e < EVENT_MAX; e++) {
+            int count = events_get_handler_count(e);
+            const char *name = events_get_name(e);
+            log_message("  %s: %d handler(s)", name, count);
         }
         return 1;
     }

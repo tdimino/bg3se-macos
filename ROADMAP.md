@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.11.0
+## Current Status: v0.14.0
 
-**Overall Feature Parity: ~30%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
+**Overall Feature Parity: ~45%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -38,17 +38,17 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.IO` | ✅ Full | ✅ LoadFile, SaveFile | **80%** | 1 |
 | `Ext.Entity` | ✅ Full | ⚠️ Basic access | **40%** | 2 |
 | `Ext.Stats` | ✅ Full | ✅ Read complete (`stat.Damage` → "1d8") | **90%** | 3 |
-| `Ext.Events` | ✅ Full | ⚠️ 3 events only | **10%** | 2.5 |
+| `Ext.Events` | ✅ Full | ✅ 7 events + advanced features | **75%** | 2.5 |
 | `Ext.Timer` | ✅ Full | ✅ Complete | **100%** | 2.3 |
 | `Ext.Debug` | ✅ Full | ✅ Complete | **100%** | 2.3 |
-| `Ext.Vars` | ✅ Full | ❌ Not impl | **0%** | 2.6 |
+| `Ext.Vars` | ✅ Full | ⚠️ PersistentVars only | **25%** | 2.6 |
 | `Ext.Net` | ✅ Full | ❌ Not impl | **0%** | 6 |
 | `Ext.UI` | ✅ Full | ❌ Not impl | **0%** | 8 |
 | `Ext.Math` | ✅ Full | ❌ Not impl | **0%** | 7.5 |
 | `Ext.Input` | ✅ Full | ❌ Not impl | **0%** | 9 |
 | `Ext.Level` | ✅ Full | ❌ Not impl | **0%** | 9 |
 | Console/REPL | ✅ Full | ✅ File-based + commands | **80%** | 5 |
-| PersistentVars | ✅ Full | ❌ Not impl | **0%** | 2.4 |
+| PersistentVars | ✅ Full | ✅ File-based | **90%** | 2.4 |
 | Client Lua State | ✅ Full | ❌ Not impl | **0%** | 2.7 |
 
 ---
@@ -219,75 +219,96 @@ local ms = Ext.Timer.MonotonicTime()  -- High-resolution clock
 - Input validation: delay >= 0, finite, <= 24 hours
 
 ### 2.4 PersistentVars (Savegame Persistence)
-**Status:** ❌ Not Started - **CRITICAL**
+**Status:** ✅ Complete (v0.12.0)
 
-From API.md: "For keeping data through multiple play sessions it is possible to store them in the savegame by storing them in `Mods[ModTable].PersistentVars`."
+File-based persistence for mod variables. Data survives game restarts.
 
-**Target API:**
+**Implemented API:**
 ```lua
--- Initialize per-mod
-PersistentVars = {}
+-- In BootstrapServer.lua
+Mods[ModTable].PersistentVars = {}
 
 -- Store data during gameplay
-function doStuff()
-    PersistentVars['QuestProgress'] = 5
-end
+Mods[ModTable].PersistentVars['QuestProgress'] = 5
+Mods[ModTable].PersistentVars['Inventory'] = { "sword", "shield" }
 
--- Restored before SessionLoaded event
-function OnSessionLoaded()
-    _P(PersistentVars['QuestProgress'])  -- Prints 5
-end
+-- Restored BEFORE SessionLoaded event fires
+Ext.Events.SessionLoaded:Subscribe(function()
+    local progress = Mods[ModTable].PersistentVars['QuestProgress']
+    _P("Restored: " .. tostring(progress))  -- Prints 5
+end)
+
+-- Manual save (auto-saves every 30 seconds if dirty)
+Ext.Vars.SyncPersistentVars()
+
+-- Query state
+Ext.Vars.IsPersistentVarsLoaded() -- true if loaded
+Ext.Vars.ReloadPersistentVars()   -- Force reload from disk
 ```
 
-**Implementation needed:**
-- Hook savegame serialization/deserialization
-- JSON encode/decode PersistentVars table per mod
-- Trigger restoration before `SessionLoaded` event
-- Requires ModTable configuration in Config.json
+**Implementation:**
+- Storage: `~/Library/Application Support/BG3SE/persistentvars/{ModTable}.json`
+- Timing: Restored BEFORE SessionLoaded, auto-saved every 30s if dirty
+- Atomic writes: temp file + rename prevents corruption
+- Per-mod isolation via ModTable name
+- Console commands: `!pv_dump`, `!pv_set`, `!pv_save`, `!pv_reload`
 
-**Impact:** Without this, ALL mod state is lost on reload. Critical for any mod tracking progress.
+**Note:** macOS uses file-based persistence instead of savegame hooks (which would require extensive reverse engineering).
 
 ### 2.5 Ext.Events API (Engine Events)
-**Status:** ⚠️ Partial (3 events) - **CRITICAL for expansion**
+**Status:** ✅ Complete (v0.14.0) - 7 events including GameStateChanged, advanced subscription system
 
 From API.md: "Subscribing to engine events can be done through the `Ext.Events` table."
 
-**Target API:**
+**Implemented API (v0.14.0):**
 ```lua
 -- Subscribe with options
-local handlerId = Ext.Events.GameStateChanged:Subscribe(function(e)
-    _P("State change from " .. e.FromState .. " to " .. e.ToState)
+local handlerId = Ext.Events.SessionLoaded:Subscribe(function(e)
+    _P("Session loaded!")
 end, {
     Priority = 50,   -- Lower = called first (default: 100)
     Once = true      -- Auto-unsubscribe after first call
 })
 
--- Unsubscribe
-Ext.Events.GameStateChanged:Unsubscribe(handlerId)
+-- Unsubscribe by handler ID
+Ext.Events.SessionLoaded:Unsubscribe(handlerId)
 
--- Helper for next tick
+-- Helper for next tick (fires once)
 Ext.OnNextTick(function()
-    -- Runs next frame
+    -- Runs on next game loop iteration
+end)
+
+-- Tick event with delta time
+Ext.Events.Tick:Subscribe(function(e)
+    local dt = e.DeltaTime  -- Seconds since last tick
+end)
+
+-- GameStateChanged event (v0.14.0)
+Ext.Events.GameStateChanged:Subscribe(function(e)
+    _P("State: " .. e.FromState .. " -> " .. e.ToState)
+    -- States: 2=Init, 7=LoadSession, 13=Running, etc.
 end)
 ```
 
 **Available Events (from API.md):**
-| Event | When | Notes |
-|-------|------|-------|
-| `ModuleLoadStarted` | Before mod data loads | Use for `AddPathOverride` |
-| `StatsLoaded` | After stats entries loaded | Apply stat modifications |
-| `SessionLoading` | Session setup started | Early initialization |
-| `SessionLoaded` | Session ready | PersistentVars available |
-| `ResetCompleted` | After `reset` command | Lua state reloaded |
-| `GameStateChanged` | Pause, unpause, etc. | State transitions |
-| `Tick` | Every game loop (~30hz) | High-frequency updates |
+| Event | When | Status |
+|-------|------|--------|
+| `SessionLoading` | Session setup started | ✅ Implemented |
+| `SessionLoaded` | Session ready | ✅ Implemented |
+| `ResetCompleted` | After `reset` command | ✅ Implemented |
+| `Tick` | Every game loop (~30hz) | ✅ Implemented (v0.13.0) |
+| `StatsLoaded` | After stats entries loaded | ✅ Implemented (v0.13.0) |
+| `ModuleLoadStarted` | Before mod scripts load | ✅ Implemented (v0.13.0) |
+| `GameStateChanged` | State transitions (load, run, etc.) | ✅ Implemented (v0.14.0) |
 
-**Implemented Events (v0.11.0):**
-- ✅ `Ext.Events.SessionLoading:Subscribe(callback)` - Before save loads
-- ✅ `Ext.Events.SessionLoaded:Subscribe(callback)` - After save loads
-- ✅ `Ext.Events.ResetCompleted:Subscribe(callback)` - After reset command
-
-**Impact:** Without remaining events, mods cannot react to all engine lifecycle states.
+**Advanced Features (v0.14.0):**
+- Priority-based handler ordering (lower = called first)
+- Once flag for auto-unsubscription
+- Handler ID return for explicit unsubscription
+- Deferred modifications during dispatch (prevents iterator corruption)
+- Protected calls to prevent cascade failures
+- `!events` console command to inspect handler counts
+- GameStateChanged fires on initial load and save reloads
 
 ### 2.6 User & Mod Variables
 **Status:** ❌ Not Started - **CRITICAL**
@@ -903,8 +924,8 @@ Ext.Mod.GetModInfo(guid)
 
 | ID | Feature | Effort | Status |
 |----|---------|--------|--------|
-| A1 | Ext.Events API | Medium | ⚠️ Partial (3/10+ events) |
-| A2 | PersistentVars | Medium | ❌ Not Started |
+| A1 | Ext.Events API | Medium | ✅ 6 events + Tick (v0.13.0) |
+| A2 | PersistentVars | Medium | ✅ Complete |
 | A3 | Stats Property Read/Write | High | ✅ Read Complete |
 | A4 | Component Property Access | High | 🔄 In Progress |
 | A5 | NetChannel API | High | ❌ Not Started |
@@ -949,6 +970,9 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.14.0 | 2025-12-06 | GameStateChanged event, game state tracking module, event-based state inference for macOS |
+| v0.13.0 | 2025-12-06 | Ext.Events expansion (Tick, StatsLoaded, ModuleLoadStarted), priority/Once/handler IDs, Ext.OnNextTick |
+| v0.12.0 | 2025-12-06 | PersistentVars (file-based savegame persistence), Ext.Vars.SyncPersistentVars() |
 | v0.11.0 | 2025-12-05 | Ext.Timer API, Enhanced Debug Console, Ext.Debug APIs, Ext.Stats property read |
 | v0.10.6 | 2025-12-03 | Fixed Osiris function name caching - OsiFunctionDef->Signature->Name two-level indirection |
 | v0.10.4 | 2025-12-02 | TypeId<T>::m_TypeIndex discovery, ComponentTypeToIndex enumeration, Lua bindings for runtime discovery |
