@@ -30,10 +30,10 @@ static int lua_timer_waitfor(lua_State *L) {
 
     // Validate delay
     if (delay_ms < 0 || !isfinite(delay_ms)) {
-        return luaL_error(L, "delay must be >= 0 and finite (got %.2f)", delay_ms);
+        return luaL_error(L, "delay must be >= 0 and finite (got %f)", delay_ms);
     }
     if (delay_ms > TIMER_MAX_DELAY_MS) {
-        return luaL_error(L, "delay must be <= %.0fms (24 hours)", TIMER_MAX_DELAY_MS);
+        return luaL_error(L, "delay must be <= %fms (24 hours)", TIMER_MAX_DELAY_MS);
     }
 
     // Arg 2: callback function
@@ -46,13 +46,13 @@ static int lua_timer_waitfor(lua_State *L) {
 
         // Validate repeat interval
         if (repeat_ms < 0 || !isfinite(repeat_ms)) {
-            return luaL_error(L, "repeat must be >= 0 and finite (got %.2f)", repeat_ms);
+            return luaL_error(L, "repeat must be >= 0 and finite (got %f)", repeat_ms);
         }
         if (repeat_ms > 0 && repeat_ms < 1.0) {
-            return luaL_error(L, "repeat interval must be >= 1ms or 0 (got %.2f)", repeat_ms);
+            return luaL_error(L, "repeat interval must be >= 1ms or 0 (got %f)", repeat_ms);
         }
         if (repeat_ms > TIMER_MAX_DELAY_MS) {
-            return luaL_error(L, "repeat must be <= %.0fms (24 hours)", TIMER_MAX_DELAY_MS);
+            return luaL_error(L, "repeat must be <= %fms (24 hours)", TIMER_MAX_DELAY_MS);
         }
     }
 

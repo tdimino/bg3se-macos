@@ -166,7 +166,9 @@ static int timer_pool_alloc(void) {
 }
 
 static Timer *timer_get(TimerHandle handle) {
-    uint32_t idx = (uint32_t)(handle & 0xFFFFFFFF);
+    // Handles are 1-based (0 = invalid), convert to 0-based index
+    if (handle == 0) return NULL;
+    uint32_t idx = (uint32_t)((handle - 1) & 0xFFFFFFFF);
     if (idx >= TIMER_MAX_COUNT) return NULL;
     if (!s_timers[idx].active) return NULL;
     return &s_timers[idx];
@@ -216,7 +218,8 @@ TimerHandle timer_create(lua_State *L, double delay_ms, int callback_ref, double
     timer->active = true;
     s_timer_count++;
 
-    TimerHandle handle = (TimerHandle)idx;
+    // Handles are 1-based (0 = invalid/error)
+    TimerHandle handle = (TimerHandle)(idx + 1);
 
     if (!queue_push(timer->fire_time, handle, timer->invoke_id)) {
         // Queue full, cancel the timer

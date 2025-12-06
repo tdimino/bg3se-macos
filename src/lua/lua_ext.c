@@ -7,6 +7,7 @@
 #include "lua_ext.h"
 #include "version.h"
 #include "logging.h"
+#include "../console/console.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -347,6 +348,9 @@ void lua_ext_register_basic(lua_State *L, int ext_table_index) {
 
     lua_pushcfunction(L, lua_ext_isclient);
     lua_setfield(L, ext_table_index, "IsClient");
+
+    lua_pushcfunction(L, console_register_command);
+    lua_setfield(L, ext_table_index, "RegisterConsoleCommand");
 }
 
 void lua_ext_register_io(lua_State *L, int ext_table_index) {
