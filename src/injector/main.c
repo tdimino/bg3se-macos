@@ -90,6 +90,9 @@ extern "C" {
 // Math library
 #include "math_ext.h"
 
+// Overlay console
+#include "overlay.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -1511,6 +1514,34 @@ static void load_mod_scripts(lua_State *L) {
     log_message("=== Mod Script Loading Complete ===");
 }
 
+// ============================================================================
+// Overlay Console Callbacks
+// ============================================================================
+
+/**
+ * Callback when user submits a command in the overlay console
+ */
+static void overlay_command_handler(const char *command) {
+    if (!command) return;
+
+    // Execute the Lua command
+    bool success = console_execute_lua(command);
+
+    // Forward output to overlay (Ext.Print already goes to console_send_output,
+    // which we'll wire to overlay_append_output)
+    if (!success) {
+        overlay_append_output("Command failed - check console for details");
+    }
+}
+
+/**
+ * Hotkey callback to toggle overlay visibility
+ */
+static void overlay_toggle_hotkey(void *userData) {
+    (void)userData;
+    overlay_toggle();
+}
+
 /**
  * Initialize Lua runtime
  */
@@ -1561,6 +1592,16 @@ static void init_lua(void) {
 
         // Set Lua state for input event dispatch
         input_set_lua_state(L);
+
+        // Initialize overlay console with Tanit symbol
+        overlay_init();
+        overlay_set_command_callback(overlay_command_handler);
+        console_set_lua_state(L);
+
+        // Register Ctrl+` hotkey to toggle overlay console
+        // macOS keyCode 50 = backtick/grave accent key
+        input_register_hotkey(50, INPUT_MOD_CTRL, overlay_toggle_hotkey, NULL, "ToggleConsole");
+        log_message("[Overlay] Registered Ctrl+` hotkey for console toggle");
     }
 
     // Register Ext.Math namespace

@@ -121,4 +121,23 @@ void console_error(const char *format, ...) __attribute__((format(printf, 1, 2))
  */
 int console_register_command(lua_State *L);
 
+// ============================================================================
+// Direct Lua Execution (for overlay console)
+// ============================================================================
+
+/**
+ * Execute a Lua command directly.
+ * Output is sent via console_send_output (and to overlay if registered).
+ *
+ * @param command The Lua code to execute
+ * @return true on success, false on error
+ */
+bool console_execute_lua(const char *command);
+
+/**
+ * Set the Lua state for direct execution.
+ * Called during initialization.
+ */
+void console_set_lua_state(lua_State *L);
+
 #endif // CONSOLE_H

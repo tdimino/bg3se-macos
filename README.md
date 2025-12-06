@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/tanit.svg" alt="Symbol of Tanit" width="80" height="100"/>
+</p>
+
 # BG3SE-macOS
 
 **Baldur's Gate 3 Script Extender for macOS**
@@ -32,6 +36,7 @@ Script Extender mods now load and execute on macOS with real game data. Lua scri
 | Stats API | ✅ Complete | 15,774 stats accessible, property read/write working (`stat.Damage = "2d6"`) |
 | Timer API | ✅ Complete | WaitFor, Cancel, Pause, Resume, IsPaused, MonotonicTime |
 | Debug Console | ✅ Complete | Socket console + file-based, multi-line, commands, introspection |
+| In-Game Overlay | ✅ Complete | NSWindow overlay with Tanit symbol, Ctrl+` toggle, command history |
 | Events API | ✅ Complete | 8 events with priority, Once, handler IDs, GameStateChanged, KeyInput |
 | PersistentVars | ✅ Complete | File-based persistence for mod data |
 | Input API | ✅ Complete | CGEventTap capture, hotkeys, key injection, KeyInput event |
@@ -82,6 +87,7 @@ Script Extender mods now load and execute on macOS with real game data. Lua scri
 - ✅ **PersistentVars (v0.14.0)** - File-based mod data persistence across sessions
 - ✅ **Ext.Input (v0.16.0)** - CGEventTap keyboard capture, hotkey registration, key injection
 - ✅ **Ext.Math (v0.17.0)** - Full vector/matrix library (vec3, vec4, mat3, mat4), transforms, decomposition
+- ✅ **In-Game Console Overlay (v0.19.0)** - NSWindow overlay with Tanit symbol, Ctrl+` toggle, command history
 
 ## Compatibility
 
@@ -151,9 +157,24 @@ BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
 ### Live Lua Console (Development)
 
-BG3SE-macOS includes both socket-based and file-based Lua consoles for rapid iteration without game restarts.
+BG3SE-macOS includes three ways to interact with the Lua runtime:
 
-#### Socket Console (Recommended)
+1. **In-Game Overlay** - Toggle with Ctrl+` for direct in-game interaction
+2. **Socket Console** - External terminal with readline support
+3. **File-Based Console** - Automation-friendly file polling
+
+#### In-Game Overlay (New in v0.19.0)
+
+Press **Ctrl+`** to toggle the console overlay directly in-game:
+
+- Floating NSWindow above fullscreen game
+- Tanit symbol with warm amber/gold glow (Aldea palette)
+- Scrollable output area for Lua results
+- Input field with command history (up/down arrows)
+- Commands execute via existing console backend
+- Output from `Ext.Print()` appears automatically
+
+#### Socket Console (Recommended for Development)
 
 Real-time bidirectional communication with the running game:
 
@@ -476,8 +497,10 @@ Key Osiris functions now return real game data. Player GUIDs and dialog state ar
 ```
 bg3se-macos/
 ├── src/
-│   ├── console/                # Live Lua console (file-based)
-│   │   └── console.c/h         # Command polling and execution
+│   ├── console/                # Live Lua console
+│   │   └── console.c/h         # Socket server, command polling, Lua execution
+│   ├── overlay/                # In-game console overlay (v0.19.0)
+│   │   └── overlay.m/h         # NSWindow overlay with Tanit symbol
 │   ├── core/                   # Core utilities
 │   │   ├── logging.c/h         # Log output to ~/Library/Application Support/BG3SE/
 │   │   ├── safe_memory.c/h     # Crash-safe memory reading (mach_vm_read)

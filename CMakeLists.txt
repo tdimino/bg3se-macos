@@ -32,6 +32,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/math
     ${CMAKE_SOURCE_DIR}/src/mod
     ${CMAKE_SOURCE_DIR}/src/osiris
+    ${CMAKE_SOURCE_DIR}/src/overlay
     ${CMAKE_SOURCE_DIR}/src/pak
     ${CMAKE_SOURCE_DIR}/src/stats
     ${CMAKE_SOURCE_DIR}/src/strings
@@ -69,6 +70,7 @@ add_library(bg3se SHARED
     src/input/lua_input.c
     src/math/math_ext.c
     src/math/lua_math.c
+    src/overlay/overlay.m
     lib/lz4/lz4.c
 )
 
@@ -83,6 +85,8 @@ target_compile_options(bg3se PRIVATE
 target_link_libraries(bg3se PRIVATE
     "-framework Foundation"
     "-framework CoreFoundation"
+    "-framework AppKit"
+    "-framework QuartzCore"
     ${CMAKE_SOURCE_DIR}/lib/Dobby/libdobby-universal.a
     ${CMAKE_SOURCE_DIR}/lib/lua/liblua-universal.a
     z  # zlib for compression

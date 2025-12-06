@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   id="svg2494"
+   sodipodi:version="0.32"
+   inkscape:version="0.47 r22583"
+   width="900"
+   height="900"
+   version="1.0"
+   sodipodi:docname="Flag_Tanit_Symbol_cropped.svg"
+   inkscape:output_extension="org.inkscape.output.svg.inkscape" viewBox="-150 -80 1000 1000">
+  <metadata
+     id="metadata2499">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <defs
+     id="defs2497">
+    <linearGradient
+       id="linearGradient3794">
+      <stop
+         style="stop-color:#fcfc80;stop-opacity:1;"
+         offset="0"
+         id="stop3796" />
+      <stop
+         style="stop-color:#fbfc80;stop-opacity:0.00392157;"
+         offset="1"
+         id="stop3798" />
+    </linearGradient>
+    <linearGradient
+       id="linearGradient3773"
+       inkscape:collect="always">
+      <stop
+         id="stop3775"
+         offset="0"
+         style="stop-color:#ff7f2a;stop-opacity:1;" />
+      <stop
+         id="stop3777"
+         offset="1"
+         style="stop-color:#ff7f2a;stop-opacity:0;" />
+    </linearGradient>
+    <inkscape:perspective
+       sodipodi:type="inkscape:persp3d"
+       inkscape:vp_x="0 : 526.18109 : 1"
+       inkscape:vp_y="0 : 1000 : 0"
+       inkscape:vp_z="744.09448 : 526.18109 : 1"
+       inkscape:persp3d-origin="372.04724 : 350.78739 : 1"
+       id="perspective2501" />
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient3773"
+       id="radialGradient3771"
+       cx="-94.156929"
+       cy="101.58009"
+       fx="-94.156929"
+       fy="101.58009"
+       r="48.445889"
+       gradientUnits="userSpaceOnUse" />
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient3773"
+       id="radialGradient3828"
+       cx="-101.58009"
+       cy="173.85823"
+       fx="-101.58009"
+       fy="173.85823"
+       r="48.445889"
+       gradientUnits="userSpaceOnUse" />
+  
+    <!-- Aldea Tanit Styling -->
+    <linearGradient id="aldeaGold" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FDE047"/>
+      <stop offset="100%" stop-color="#FBBF24"/>
+    </linearGradient>
+
+    <radialGradient id="glowCircle" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FBBF24" stop-opacity="0.5"/>
+      <stop offset="60%" stop-color="#FBBF24" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#FBBF24" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="warmGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur"/>
+      <feFlood flood-color="#FBBF24" flood-opacity="0.5" result="glowColor"/>
+      <feComposite in="glowColor" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  
+  </defs>
+  <sodipodi:namedview
+     inkscape:window-height="1138"
+     inkscape:window-width="1600"
+     inkscape:pageshadow="2"
+     inkscape:pageopacity="1"
+     guidetolerance="10.0"
+     gridtolerance="10.0"
+     objecttolerance="10.0"
+     borderopacity="1.0"
+     bordercolor="#666666"
+     pagecolor="#ffffff"
+     id="base"
+     showgrid="false"
+     inkscape:zoom="0.6398892"
+     inkscape:cx="358.42862"
+     inkscape:cy="205.12158"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:current-layer="svg2494"
+     inkscape:window-maximized="1" />
+  
+  <!-- Glowing circle backdrop -->
+  <ellipse cx="350" cy="420" rx="480" ry="480" fill="url(#glowCircle)"/>
+
+  <!-- Circular border ring with glow effect -->
+  <ellipse cx="350" cy="420" rx="450" ry="450"
+           fill="none"
+           stroke="url(#aldeaGold)"
+           stroke-width="5"
+           opacity="0.9"
+           filter="url(#warmGlow)"/>
+  <!-- Circular border ring - inner subtle -->
+  <ellipse cx="350" cy="420" rx="440" ry="440"
+           fill="none"
+           stroke="#FBBF24"
+           stroke-width="1.5"
+           opacity="0.4"/>
+  <g
+     id="g4053"
+     transform="matrix(2.4955024,0,0,2.4955024,-1164.4778,-292.04022)">
+    <path
+       d="m 632.9705,180.54951 c 0,16.39034 -13.3023,29.69264 -29.69264,29.69264 -16.39034,0 -29.69264,-13.3023 -29.69264,-29.69264 0,-16.39034 13.3023,-29.69264 29.69264,-29.69264 16.39034,0 29.69264,13.3023 29.69264,29.69264 z M 481.86377,128.08442 c -1.96574,0 -3.87645,0.45842 -5.71875,1.28125 11.70426,5.21863 20.46875,26.08876 20.46875,51.0625 0,11.65633 -1.93161,22.42433 -5.15625,31.125 l 0,0.0625 c -1.59779,4.307 -3.17222,8.03741 -5.34375,11.1875 l 111.84375,0 -47.3125,86.78125 -51.78125,95.0625 103.59375,0 103.59375,0 -51.8125,-95.0625 -47.28125,-86.78125 102.59375,0 c -2.17153,-3.15009 -4.08971,-6.94301 -5.6875,-11.25 l -0.0312,0 c -3.22726,-8.70253 -5.15625,-19.46537 -5.15625,-31.125 0,-25.28641 8.98167,-46.3969 20.90625,-51.28125 -1.70352,-0.69777 -3.47508,-1.0625 -5.28125,-1.0625 -14.44939,0 -26.1875,23.44499 -26.1875,52.34375 0,11.65881 1.92797,22.42287 5.15625,31.125 l -71.125,0 c 10.50284,-6.42879 17.5,-17.97976 17.5,-31.1875 0,-20.18823 -16.37427,-36.59375 -36.5625,-36.59375 -20.18823,0 -36.5625,16.40552 -36.5625,36.59375 0,13.20773 6.99717,24.75871 17.5,31.1875 l -81.125,0 c 3.22828,-8.70213 5.15625,-19.46619 5.15625,-31.125 0,-28.89876 -11.73812,-52.34375 -26.1875,-52.34375 z m 210.57477,268.51419 -89.98859,0 -89.98859,0 44.99429,-82.5601 44.9943,-82.5601 44.99429,82.5601 44.9943,82.5601 z"
+       style="fill:url(#aldeaGold);stroke:#FBBF24;stroke-width:2;stroke-miterlimit:4;stroke-opacity:1"
+       id="path2831" />
+    <path
+       d="m 497.82481,407.7447 c 0.77133,4.93483 1.1875,10.18395 1.1875,15.625 0,6.45193 -0.58739,12.63502 -1.65625,18.34375 l 210.25001,0 c -1.06886,-5.70873 -1.65625,-11.89182 -1.65625,-18.34375 0,-5.44105 0.41617,-10.69017 1.1875,-15.625 l -209.31251,0 z m 6.32549,5.18174 c 0.7247,3.42927 1.11572,7.07694 1.11572,10.85799 0,4.48352 -0.55189,8.78022 -1.55614,12.74728 l 197.54237,0 c -1.00426,-3.96706 -1.55614,-8.26376 -1.55614,-12.74728 0,-3.78105 0.39101,-7.42872 1.11572,-10.85799 l -196.66153,0 z"
+       style="fill:url(#aldeaGold);stroke:#FBBF24;stroke-width:2;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none"
+       id="rect2853" />
+  </g>
+</svg>

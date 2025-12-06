@@ -11,6 +11,7 @@
 #include "console.h"
 #include "../core/logging.h"
 #include "../lua/lua_events.h"
+#include "../overlay/overlay.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -252,7 +253,7 @@ void console_send_output(const char *message, bool is_error) {
 
     size_t len = strlen(buf);
 
-    // Send to all connected clients
+    // Send to all connected socket clients
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (s_client_fds[i] >= 0) {
             ssize_t written = write(s_client_fds[i], buf, len);
@@ -261,6 +262,9 @@ void console_send_output(const char *message, bool is_error) {
             }
         }
     }
+
+    // Also forward to overlay console (without ANSI codes)
+    overlay_append_output(message);
 }
 
 void console_printf(const char *format, ...) {
@@ -660,4 +664,31 @@ void console_poll(lua_State *L) {
 
     // Poll file-based console (fallback)
     file_console_poll(L);
+}
+
+// ============================================================================
+// Direct Lua Execution (for overlay console)
+// ============================================================================
+
+void console_set_lua_state(lua_State *L) {
+    s_lua_state = L;
+}
+
+bool console_execute_lua(const char *command) {
+    if (!command || !s_lua_state) {
+        LOG_CONSOLE_WARN("console_execute_lua: no Lua state available");
+        return false;
+    }
+
+    LOG_CONSOLE_DEBUG("Overlay execute: %s", command);
+
+    int result = luaL_dostring(s_lua_state, command);
+    if (result != LUA_OK) {
+        const char *err = lua_tostring(s_lua_state, -1);
+        console_error("Error: %s", err ? err : "unknown error");
+        lua_pop(s_lua_state, 1);
+        return false;
+    }
+
+    return true;
 }

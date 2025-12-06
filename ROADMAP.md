@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.18.0
+## Current Status: v0.19.0
 
-**Overall Feature Parity: ~53%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
+**Overall Feature Parity: ~55%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -47,7 +47,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Math` | ✅ Full | ✅ Complete | **95%** | 7.5 |
 | `Ext.Input` | ✅ Full | ✅ CGEventTap capture, hotkeys | **85%** | 9 |
 | `Ext.Level` | ✅ Full | ❌ Not impl | **0%** | 9 |
-| Console/REPL | ✅ Full | ✅ Socket + file-based | **90%** | 5 |
+| Console/REPL | ✅ Full | ✅ Socket + file + in-game overlay | **95%** | 5 |
 | PersistentVars | ✅ Full | ✅ File-based | **90%** | 2.4 |
 | Client Lua State | ✅ Full | ❌ Not impl | **0%** | 2.7 |
 
@@ -519,21 +519,36 @@ end)
 ## Phase 5: In-Game Console
 
 ### 5.1 Debug Console
-**Status:** ✅ Complete (v0.15.0) - Socket + file-based implementation
+**Status:** ✅ Complete (v0.19.0) - Socket + file + in-game overlay
 
-Both socket-based and file-based Lua consoles for rapid iteration without game restarts.
+Three ways to interact with the Lua runtime:
 
 **Implemented Features:**
+- ✅ **In-game overlay (v0.19.0)** - NSWindow floating above fullscreen game
+- ✅ **Tanit symbol** with warm amber/gold glow (Aldea palette)
+- ✅ **Ctrl+` hotkey** toggle via Input API
+- ✅ Command history with up/down arrows
 - ✅ Socket console with Unix domain socket (`/tmp/bg3se.sock`)
 - ✅ Standalone readline client (`build/bin/bg3se-console`)
-- ✅ Real-time bidirectional I/O (Ext.Print output to socket)
-- ✅ Up to 4 concurrent clients
+- ✅ Real-time bidirectional I/O (Ext.Print output to socket + overlay)
+- ✅ Up to 4 concurrent socket clients
 - ✅ ANSI color output (errors in red)
 - ✅ Single-line Lua execution
 - ✅ Multi-line mode (`--[[` ... `]]--`)
 - ✅ Console commands (`!command arg1 arg2`)
 - ✅ Comments (`#` prefix outside multi-line)
 - ✅ File-based polling as fallback
+
+**In-Game Overlay (New in v0.19.0):**
+```
+Press Ctrl+` to toggle the console overlay:
+- Floating NSWindow at NSScreenSaverWindowLevel (above fullscreen)
+- Tanit symbol in top-left with pulsing amber glow
+- Scrollable output area with Menlo font
+- Input field with command history
+- Commands execute via console backend
+- Output from Ext.Print() appears automatically
+```
 
 **Socket Console Usage:**
 ```bash
@@ -566,10 +581,8 @@ EOF
 echo '!probe 0x12345678 256' > ~/Library/Application\ Support/BG3SE/commands.txt
 ```
 
-**Not implemented (Windows-specific):**
-- In-game overlay (macOS uses socket approach)
-- Hotkey toggle
-- Client/server context switching
+**Not implemented:**
+- Client/server context switching (requires dual Lua states)
 
 ### 5.2 Custom Console Commands
 **Status:** ✅ Complete (v0.11.0)
@@ -956,7 +969,7 @@ Ext.Mod.GetModInfo(guid)
 |----|---------|--------|--------|
 | B1 | Client Lua State | High | ❌ Not Started |
 | B2 | Timer API | Low | ✅ Complete |
-| B3 | Console/REPL | Medium | ✅ Complete (file-based) |
+| B3 | Console/REPL | Medium | ✅ Complete (socket + file + in-game overlay) |
 | B4 | GetAllComponents | Low | ❌ Not Started |
 | B5 | Stats Create/Sync | Medium | ❌ Not Started |
 | B6 | Userdata Lifetime Scoping | Medium | ❌ Not Started |
@@ -989,6 +1002,7 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.19.0 | 2025-12-06 | In-game console overlay with Tanit symbol, Ctrl+` toggle, command history |
 | v0.18.0 | 2025-12-06 | Stats property write - `stat.Damage = "2d6"` modifies stats at runtime |
 | v0.17.0 | 2025-12-06 | Ext.Math library - vec3/vec4/mat3/mat4 operations, transforms, decomposition |
 | v0.16.0 | 2025-12-06 | Ext.Input API - CGEventTap keyboard capture, hotkey registration, key injection |
