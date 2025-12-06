@@ -31,6 +31,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/pak
     ${CMAKE_SOURCE_DIR}/src/stats
     ${CMAKE_SOURCE_DIR}/src/strings
+    ${CMAKE_SOURCE_DIR}/src/timer
 )
 
 add_library(bg3se SHARED
@@ -55,6 +56,8 @@ add_library(bg3se SHARED
     src/stats/stats_manager.c
     src/strings/fixed_string.c
     src/console/console.c
+    src/timer/timer.c
+    src/lua/lua_timer.c
     lib/lz4/lz4.c
 )
 

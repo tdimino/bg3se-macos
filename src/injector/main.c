@@ -71,6 +71,10 @@ extern "C" {
 // Console
 #include "console.h"
 
+// Timer system
+#include "timer.h"
+#include "lua_timer.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -751,6 +755,9 @@ static void register_ext_api(lua_State *L) {
 
     // Ext.Types namespace (type introspection)
     lua_ext_register_types(L, -1);
+
+    // Ext.Timer namespace (timer system)
+    lua_timer_register(L, -1);
 
     // Set Ext as global
     lua_setglobal(L, "Ext");
@@ -1642,6 +1649,9 @@ static void init_lua(void) {
     // Initialize console (file-based Lua command input)
     console_init();
 
+    // Initialize timer system
+    timer_init();
+
     // Add GetDiscoveredPlayers to Ext.Entity (uses main.c's player tracking)
     lua_getglobal(L, "Ext");
     if (lua_istable(L, -1)) {
@@ -2096,6 +2106,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     // Poll for console commands (file-based Lua console)
     if (L) {
         console_poll(L);
+        timer_update(L);  // Process timer callbacks
     }
 
     // Capture COsiris pointer if we haven't already
