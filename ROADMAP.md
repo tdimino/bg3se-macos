@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.13.0
+## Current Status: v0.14.0
 
-**Overall Feature Parity: ~40%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
+**Overall Feature Parity: ~45%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -38,7 +38,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.IO` | ✅ Full | ✅ LoadFile, SaveFile | **80%** | 1 |
 | `Ext.Entity` | ✅ Full | ⚠️ Basic access | **40%** | 2 |
 | `Ext.Stats` | ✅ Full | ✅ Read complete (`stat.Damage` → "1d8") | **90%** | 3 |
-| `Ext.Events` | ✅ Full | ⚠️ 6 events + Tick | **60%** | 2.5 |
+| `Ext.Events` | ✅ Full | ✅ 7 events + advanced features | **75%** | 2.5 |
 | `Ext.Timer` | ✅ Full | ✅ Complete | **100%** | 2.3 |
 | `Ext.Debug` | ✅ Full | ✅ Complete | **100%** | 2.3 |
 | `Ext.Vars` | ✅ Full | ⚠️ PersistentVars only | **25%** | 2.6 |
@@ -256,11 +256,11 @@ Ext.Vars.ReloadPersistentVars()   -- Force reload from disk
 **Note:** macOS uses file-based persistence instead of savegame hooks (which would require extensive reverse engineering).
 
 ### 2.5 Ext.Events API (Engine Events)
-**Status:** ✅ Major expansion (v0.13.0) - 6 events + Tick, advanced subscription system
+**Status:** ✅ Complete (v0.14.0) - 7 events including GameStateChanged, advanced subscription system
 
 From API.md: "Subscribing to engine events can be done through the `Ext.Events` table."
 
-**Implemented API (v0.13.0):**
+**Implemented API (v0.14.0):**
 ```lua
 -- Subscribe with options
 local handlerId = Ext.Events.SessionLoaded:Subscribe(function(e)
@@ -282,6 +282,12 @@ end)
 Ext.Events.Tick:Subscribe(function(e)
     local dt = e.DeltaTime  -- Seconds since last tick
 end)
+
+-- GameStateChanged event (v0.14.0)
+Ext.Events.GameStateChanged:Subscribe(function(e)
+    _P("State: " .. e.FromState .. " -> " .. e.ToState)
+    -- States: 2=Init, 7=LoadSession, 13=Running, etc.
+end)
 ```
 
 **Available Events (from API.md):**
@@ -293,18 +299,16 @@ end)
 | `Tick` | Every game loop (~30hz) | ✅ Implemented (v0.13.0) |
 | `StatsLoaded` | After stats entries loaded | ✅ Implemented (v0.13.0) |
 | `ModuleLoadStarted` | Before mod scripts load | ✅ Implemented (v0.13.0) |
-| `GameStateChanged` | Pause, unpause, etc. | ⚠️ Deferred (needs hook) |
+| `GameStateChanged` | State transitions (load, run, etc.) | ✅ Implemented (v0.14.0) |
 
-**Advanced Features (v0.13.0):**
+**Advanced Features (v0.14.0):**
 - Priority-based handler ordering (lower = called first)
 - Once flag for auto-unsubscription
 - Handler ID return for explicit unsubscription
 - Deferred modifications during dispatch (prevents iterator corruption)
 - Protected calls to prevent cascade failures
 - `!events` console command to inspect handler counts
-
-**Pending:**
-- [ ] GameStateChanged event (requires game state hook discovery)
+- GameStateChanged fires on initial load and save reloads
 
 ### 2.6 User & Mod Variables
 **Status:** ❌ Not Started - **CRITICAL**
@@ -966,6 +970,7 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.14.0 | 2025-12-06 | GameStateChanged event, game state tracking module, event-based state inference for macOS |
 | v0.13.0 | 2025-12-06 | Ext.Events expansion (Tick, StatsLoaded, ModuleLoadStarted), priority/Once/handler IDs, Ext.OnNextTick |
 | v0.12.0 | 2025-12-06 | PersistentVars (file-based savegame persistence), Ext.Vars.SyncPersistentVars() |
 | v0.11.0 | 2025-12-05 | Ext.Timer API, Enhanced Debug Console, Ext.Debug APIs, Ext.Stats property read |
