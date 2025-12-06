@@ -749,6 +749,9 @@ static void register_ext_api(lua_State *L) {
     // Ext.Debug namespace (memory introspection)
     lua_ext_register_debug(L, -1);
 
+    // Ext.Types namespace (type introspection)
+    lua_ext_register_types(L, -1);
+
     // Set Ext as global
     lua_setglobal(L, "Ext");
 

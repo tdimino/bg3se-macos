@@ -334,6 +334,56 @@ int lua_debug_find_array_pattern(lua_State *L) {
     return 1;
 }
 
+int lua_debug_probe_fixedstring_array(lua_State *L) {
+    uintptr_t base = parse_address(L, 1);
+    int offset = (int)luaL_optinteger(L, 2, 0);
+    int count = (int)luaL_optinteger(L, 3, 10);
+
+    if (base == 0 || count < 1) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    if (count > 1000) count = 1000;  // Limit for safety
+
+    lua_newtable(L);
+
+    uintptr_t array_addr = base + offset;
+    for (int i = 0; i < count; i++) {
+        uint32_t fs_index = 0;
+        if (!safe_memory_read_u32((mach_vm_address_t)(array_addr + i * 4), &fs_index)) {
+            break;  // Stop on read failure
+        }
+
+        // Skip null/invalid indices
+        if (fs_index == 0 || fs_index == 0xFFFFFFFF) {
+            continue;
+        }
+
+        const char *str = fixed_string_resolve(fs_index);
+        if (str) {
+            lua_pushinteger(L, i + 1);  // 1-indexed
+            lua_newtable(L);
+
+            lua_pushstring(L, "index");
+            lua_pushinteger(L, i);
+            lua_settable(L, -3);
+
+            lua_pushstring(L, "fs_index");
+            lua_pushinteger(L, fs_index);
+            lua_settable(L, -3);
+
+            lua_pushstring(L, "value");
+            lua_pushstring(L, str);
+            lua_settable(L, -3);
+
+            lua_settable(L, -3);
+        }
+    }
+
+    return 1;
+}
+
 int lua_debug_hex_dump(lua_State *L) {
     uintptr_t addr = parse_address(L, 1);
     int size = (int)luaL_optinteger(L, 2, 64);
@@ -428,6 +478,9 @@ void lua_ext_register_debug(lua_State *L, int ext_table_index) {
 
     lua_pushcfunction(L, lua_debug_find_array_pattern);
     lua_setfield(L, -2, "FindArrayPattern");
+
+    lua_pushcfunction(L, lua_debug_probe_fixedstring_array);
+    lua_setfield(L, -2, "ProbeFixedStringArray");
 
     lua_pushcfunction(L, lua_debug_hex_dump);
     lua_setfield(L, -2, "HexDump");

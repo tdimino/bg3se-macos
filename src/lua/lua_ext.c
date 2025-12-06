@@ -386,6 +386,185 @@ void lua_ext_register_memory(lua_State *L, int ext_table_index) {
 }
 
 // ============================================================================
+// Ext.Types Namespace (Type Introspection)
+// ============================================================================
+
+// Known userdata type names (metatables we register)
+static const char* const s_known_types[] = {
+    "bg3se.StatsObject",
+    "bg3se.Entity",
+    "bg3se.EntityHandle",
+    NULL
+};
+
+// Ext.Types.GetObjectType(obj) -> string
+// Returns the internal type name of a userdata object
+static int lua_types_getobjecttype(lua_State *L) {
+    if (!lua_isuserdata(L, 1)) {
+        lua_pushstring(L, lua_typename(L, lua_type(L, 1)));
+        return 1;
+    }
+
+    // Get metatable of the userdata
+    if (!lua_getmetatable(L, 1)) {
+        lua_pushstring(L, "userdata (no metatable)");
+        return 1;
+    }
+
+    // Check against known metatables
+    for (int i = 0; s_known_types[i] != NULL; i++) {
+        luaL_getmetatable(L, s_known_types[i]);
+        if (lua_rawequal(L, -1, -2)) {
+            lua_pop(L, 2);  // Pop both metatables
+            lua_pushstring(L, s_known_types[i]);
+            return 1;
+        }
+        lua_pop(L, 1);  // Pop the known metatable
+    }
+
+    // Try to get __name field from metatable
+    lua_getfield(L, -1, "__name");
+    if (lua_isstring(L, -1)) {
+        const char *name = lua_tostring(L, -1);
+        lua_pop(L, 2);  // Pop __name and metatable
+        lua_pushstring(L, name);
+        return 1;
+    }
+    lua_pop(L, 2);  // Pop __name (nil) and metatable
+
+    lua_pushstring(L, "userdata (unknown type)");
+    return 1;
+}
+
+// Ext.Types.Validate(obj) -> boolean
+// Checks if an object reference is still valid
+static int lua_types_validate(lua_State *L) {
+    if (lua_isnil(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (!lua_isuserdata(L, 1)) {
+        // Non-userdata types are always valid
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+
+    // For userdata, check if it has a metatable (basic validity check)
+    if (!lua_getmetatable(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pop(L, 1);
+
+    // For StatsObject, check if the internal pointer is valid
+    luaL_getmetatable(L, "bg3se.StatsObject");
+    int has_mt = lua_getmetatable(L, 1);
+    if (has_mt && lua_rawequal(L, -1, -2)) {
+        lua_pop(L, 2);
+        // StatsObject has a pointer member - check it
+        void **ptr = (void **)lua_touserdata(L, 1);
+        if (ptr && *ptr != NULL) {
+            lua_pushboolean(L, 1);
+        } else {
+            lua_pushboolean(L, 0);
+        }
+        return 1;
+    }
+    if (has_mt) lua_pop(L, 1);
+    lua_pop(L, 1);
+
+    // For other userdata, assume valid if has metatable
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// Ext.Types.GetTypeInfo(typeName) -> table
+// Returns metadata about a registered type
+static int lua_types_gettypeinfo(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+
+    lua_newtable(L);
+
+    lua_pushstring(L, type_name);
+    lua_setfield(L, -2, "Name");
+
+    // Check if this is a known type
+    int found = 0;
+    for (int i = 0; s_known_types[i] != NULL; i++) {
+        if (strcmp(s_known_types[i], type_name) == 0) {
+            found = 1;
+            break;
+        }
+    }
+
+    lua_pushboolean(L, found);
+    lua_setfield(L, -2, "Registered");
+
+    // Try to get the metatable
+    luaL_getmetatable(L, type_name);
+    if (!lua_isnil(L, -1)) {
+        lua_pushboolean(L, 1);
+        lua_setfield(L, -3, "HasMetatable");
+
+        // Count methods in metatable
+        int method_count = 0;
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            method_count++;
+            lua_pop(L, 1);  // Pop value, keep key
+        }
+        lua_pushinteger(L, method_count);
+        lua_setfield(L, -3, "MethodCount");
+    } else {
+        lua_pushboolean(L, 0);
+        lua_setfield(L, -3, "HasMetatable");
+    }
+    lua_pop(L, 1);  // Pop metatable (or nil)
+
+    return 1;
+}
+
+// Ext.Types.GetAllTypes() -> table
+// Returns list of all known/registered types
+static int lua_types_getalltypes(lua_State *L) {
+    lua_newtable(L);
+
+    for (int i = 0; s_known_types[i] != NULL; i++) {
+        lua_pushstring(L, s_known_types[i]);
+        lua_rawseti(L, -2, i + 1);
+    }
+
+    return 1;
+}
+
+void lua_ext_register_types(lua_State *L, int ext_table_index) {
+    // Convert negative index to absolute
+    if (ext_table_index < 0) {
+        ext_table_index = lua_gettop(L) + ext_table_index + 1;
+    }
+
+    // Create Ext.Types table
+    lua_newtable(L);
+
+    lua_pushcfunction(L, lua_types_getobjecttype);
+    lua_setfield(L, -2, "GetObjectType");
+
+    lua_pushcfunction(L, lua_types_validate);
+    lua_setfield(L, -2, "Validate");
+
+    lua_pushcfunction(L, lua_types_gettypeinfo);
+    lua_setfield(L, -2, "GetTypeInfo");
+
+    lua_pushcfunction(L, lua_types_getalltypes);
+    lua_setfield(L, -2, "GetAllTypes");
+
+    lua_setfield(L, ext_table_index, "Types");
+
+    log_message("[Lua] Ext.Types namespace registered");
+}
+
+// ============================================================================
 // Global Helper Registration (for rapid debugging)
 // ============================================================================
 
@@ -441,5 +620,109 @@ void lua_ext_register_global_helpers(lua_State *L) {
         lua_pop(L, 1);
     }
 
+    // Register built-in console commands
+    const char *console_commands =
+        "-- !probe <addr> [range] - Probe memory at address\n"
+        "Ext.RegisterConsoleCommand('probe', function(cmd, addr, range)\n"
+        "  local base = tonumber(addr, 16) or tonumber(addr) or 0\n"
+        "  local r = tonumber(range) or 256\n"
+        "  if base == 0 then\n"
+        "    Ext.Print('Usage: !probe <addr> [range]')\n"
+        "    return\n"
+        "  end\n"
+        "  Ext.Print('Probing ' .. _H(base) .. ' range=' .. r)\n"
+        "  local results = Ext.Debug.ProbeStruct(base, 0, r, 8)\n"
+        "  for offset, data in pairs(results) do\n"
+        "    local line = string.format('+0x%x:', offset)\n"
+        "    if data.ptr and data.ptr ~= 0 then line = line .. ' ptr=' .. _H(data.ptr) end\n"
+        "    if data.u32 then line = line .. ' u32=' .. data.u32 end\n"
+        "    if data.float and data.float ~= 0 then line = line .. string.format(' f=%.3f', data.float) end\n"
+        "    Ext.Print(line)\n"
+        "  end\n"
+        "end)\n"
+        "\n"
+        "-- !dumpstat <name> - Dump stat object details\n"
+        "Ext.RegisterConsoleCommand('dumpstat', function(cmd, name)\n"
+        "  if not name then\n"
+        "    Ext.Print('Usage: !dumpstat <statName>')\n"
+        "    return\n"
+        "  end\n"
+        "  local stat = Ext.Stats.Get(name)\n"
+        "  if not stat then\n"
+        "    Ext.Print('Stat not found: ' .. name)\n"
+        "    return\n"
+        "  end\n"
+        "  Ext.Print('=== ' .. name .. ' ===')\n"
+        "  Ext.Print('Type: ' .. (stat.Type or 'unknown'))\n"
+        "  Ext.Print('Level: ' .. (stat.Level or 0))\n"
+        "  if stat.Using then Ext.Print('Using: ' .. stat.Using) end\n"
+        "  -- Get raw data\n"
+        "  local raw = Ext.Stats.GetObjectRaw(name)\n"
+        "  if raw then\n"
+        "    Ext.Print('Address: ' .. _H(raw.Address))\n"
+        "    Ext.Print('PropertyCount: ' .. raw.PropertyCount)\n"
+        "  end\n"
+        "end)\n"
+        "\n"
+        "-- !findstr <pattern> - Search memory for string\n"
+        "Ext.RegisterConsoleCommand('findstr', function(cmd, pattern)\n"
+        "  if not pattern then\n"
+        "    Ext.Print('Usage: !findstr <pattern>')\n"
+        "    return\n"
+        "  end\n"
+        "  Ext.Print('Searching for: ' .. pattern)\n"
+        "  -- Convert string to hex pattern\n"
+        "  local hex = ''\n"
+        "  for i = 1, #pattern do\n"
+        "    hex = hex .. string.format('%02x ', string.byte(pattern, i))\n"
+        "  end\n"
+        "  Ext.Print('Pattern: ' .. hex)\n"
+        "  local results = Ext.Memory.Search(hex)\n"
+        "  if #results == 0 then\n"
+        "    Ext.Print('No matches found')\n"
+        "  else\n"
+        "    Ext.Print('Found ' .. #results .. ' matches:')\n"
+        "    for i, addr in ipairs(results) do\n"
+        "      if i <= 20 then\n"
+        "        Ext.Print('  ' .. _H(addr))\n"
+        "      end\n"
+        "    end\n"
+        "    if #results > 20 then\n"
+        "      Ext.Print('  ... and ' .. (#results - 20) .. ' more')\n"
+        "    end\n"
+        "  end\n"
+        "end)\n"
+        "\n"
+        "-- !hexdump <addr> [size] - Hex dump memory\n"
+        "Ext.RegisterConsoleCommand('hexdump', function(cmd, addr, size)\n"
+        "  local base = tonumber(addr, 16) or tonumber(addr) or 0\n"
+        "  local sz = tonumber(size) or 64\n"
+        "  if base == 0 then\n"
+        "    Ext.Print('Usage: !hexdump <addr> [size]')\n"
+        "    return\n"
+        "  end\n"
+        "  local dump = Ext.Debug.HexDump(base, sz)\n"
+        "  if dump then\n"
+        "    Ext.Print(dump)\n"
+        "  else\n"
+        "    Ext.Print('Failed to read memory at ' .. _H(base))\n"
+        "  end\n"
+        "end)\n"
+        "\n"
+        "-- !types - List registered types\n"
+        "Ext.RegisterConsoleCommand('types', function(cmd)\n"
+        "  Ext.Print('Registered types:')\n"
+        "  for i, t in ipairs(Ext.Types.GetAllTypes()) do\n"
+        "    Ext.Print('  ' .. t)\n"
+        "  end\n"
+        "end)\n";
+
+    if (luaL_dostring(L, console_commands) != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        log_message("[Lua] Warning: Failed to register console commands: %s", err ? err : "(unknown)");
+        lua_pop(L, 1);
+    }
+
     log_message("[Lua] Global helpers registered (_P, _D, _DS, _H, _PTR, _PE)");
+    log_message("[Lua] Built-in console commands registered (!probe, !dumpstat, !findstr, !hexdump, !types)");
 }

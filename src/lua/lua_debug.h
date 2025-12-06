@@ -95,6 +95,15 @@ int lua_debug_probe_struct(lua_State *L);
 int lua_debug_find_array_pattern(lua_State *L);
 
 /**
+ * Ext.Debug.ProbeFixedStringArray(base, offset, count) - Read array of FixedStrings
+ * @param base Base address
+ * @param offset Offset to array start (default 0)
+ * @param count Number of entries to read (default 10, max 1000)
+ * @return Table of { index, fs_index, value } entries
+ */
+int lua_debug_probe_fixedstring_array(lua_State *L);
+
+/**
  * Ext.Debug.HexDump(addr, size) - Format memory as hex dump
  * @param addr Address
  * @param size Number of bytes (default 64)

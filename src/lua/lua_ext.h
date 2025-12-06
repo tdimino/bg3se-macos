@@ -118,6 +118,22 @@ int lua_ext_memory_getmodulebase(lua_State *L);
 void lua_ext_register_memory(lua_State *L, int ext_table_index);
 
 // ============================================================================
+// Ext.Types Namespace (Type Introspection)
+// ============================================================================
+
+/**
+ * Register Ext.Types namespace functions:
+ *   GetObjectType(obj) -> string  (returns type name of userdata)
+ *   Validate(obj) -> boolean      (checks if reference is valid)
+ *   GetTypeInfo(name) -> table    (metadata about registered type)
+ *   GetAllTypes() -> table        (list of known types)
+ *
+ * @param L Lua state
+ * @param ext_table_index Stack index of Ext table
+ */
+void lua_ext_register_types(lua_State *L, int ext_table_index);
+
+// ============================================================================
 // Global Helper Functions (for rapid debugging)
 // ============================================================================
 
