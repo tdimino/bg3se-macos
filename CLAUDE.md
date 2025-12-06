@@ -27,22 +27,35 @@ cd build && cmake .. && cmake --build .
 # Test (launches BG3 with dylib)
 ./scripts/launch_bg3.sh
 
-# Watch logs
-tail -f "/Users/tomdimino/Library/Application Support/BG3SE/bg3se.log"
+# IMPORTANT: Check system time BEFORE checking logs (to filter old entries)
+date && tail -f "/Users/tomdimino/Library/Application Support/BG3SE/bg3se.log"
 
 # Live Lua console (send commands to running game)
 echo 'Ext.Print("test")' > "/Users/tomdimino/Library/Application Support/BG3SE/commands.txt"
 ```
 
-## Codebase Search
+## Codebase Search (osgrep)
+
+**Semantic search** - use natural language queries, not just keywords:
 
 ```bash
-# Search this project
+# Search this project (bg3se-macos, indexed)
 osgrep "how does event dispatch work"
+osgrep "where are stats properties resolved"
+osgrep "ARM64 indirect return pattern"
 
-# Search Windows BG3SE reference
+# Search Windows BG3SE reference (indexed)
 osgrep "entity manager" -p /Users/tomdimino/Desktop/Programming/bg3se
+osgrep "how does Lua component binding work" -p /Users/tomdimino/Desktop/Programming/bg3se
+osgrep "stats property resolution flow" -p /Users/tomdimino/Desktop/Programming/bg3se
 ```
+
+**Indexed repositories:**
+
+- `/Users/tomdimino/Desktop/Programming/bg3se-macos` (this project)
+- `/Users/tomdimino/Desktop/Programming/bg3se` (Windows reference implementation)
+
+**Tips:** Ask complete questions rather than keywords. osgrep understands context and returns relevant code snippets with surrounding lines.
 
 ## Ghidra Analysis
 
