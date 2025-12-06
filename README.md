@@ -31,7 +31,7 @@ Script Extender mods now load and execute on macOS with real game data. Lua scri
 | Component Access | 🔄 In Progress | Data structure traversal implemented, testing with discovered indices |
 | Stats API | ✅ Complete | 15,774 stats accessible, property read working (`stat.Damage` → "1d8") |
 | Timer API | ✅ Complete | WaitFor, Cancel, Pause, Resume, IsPaused, MonotonicTime |
-| Debug Console | ✅ Complete | Multi-line support, console commands, memory introspection |
+| Debug Console | ✅ Complete | Socket console + file-based, multi-line, commands, introspection |
 | Events API | ✅ Complete | 7 events with priority, Once, handler IDs, GameStateChanged |
 | PersistentVars | ✅ Complete | File-based persistence for mod data |
 
@@ -73,6 +73,7 @@ Script Extender mods now load and execute on macOS with real game data. Lua scri
 - ✅ **Ext.Stats.Get(name) retrieves stats by name** - Property access via `__index`
 - ✅ **Stats property read working** - `stat.Damage` returns "1d8" for WPN_Longsword
 - ✅ **Timer API complete** - Ext.Timer.WaitFor(), Cancel(), Pause(), Resume()
+- ✅ **Socket console (v0.15.0)** - Real-time bidirectional I/O via Unix socket, readline client
 - ✅ **Enhanced debug console** - Multi-line blocks, console commands (!probe, !dumpstat, etc.)
 - ✅ **Memory introspection APIs** - Ext.Debug.ReadPtr/U32/Float, ProbeStruct, HexDump
 - ✅ **Ext.Events expansion (v0.14.0)** - 7 events including GameStateChanged, priority ordering, Once flag
@@ -146,7 +147,36 @@ BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
 
 ### Live Lua Console (Development)
 
-BG3SE-macOS includes a file-based Lua console for rapid iteration without game restarts:
+BG3SE-macOS includes both socket-based and file-based Lua consoles for rapid iteration without game restarts.
+
+#### Socket Console (Recommended)
+
+Real-time bidirectional communication with the running game:
+
+```bash
+# Launch the game with BG3SE
+./scripts/launch_bg3.sh
+
+# In another terminal, connect with the console client
+./build/bin/bg3se-console
+
+# Or use socat/nc directly
+socat - UNIX-CONNECT:/tmp/bg3se.sock
+nc -U /tmp/bg3se.sock
+```
+
+**Socket Console Features:**
+
+- Real-time output (Ext.Print goes directly to console)
+- Command history with arrow keys (readline)
+- Multi-line input with `--[[` and `]]--` delimiters
+- ANSI color output (errors in red)
+- Automatic reconnection on disconnect
+- Up to 4 concurrent clients
+
+#### File-Based Console (Fallback)
+
+For simpler use cases or automation:
 
 ```bash
 # Terminal 1: Watch log output
@@ -159,12 +189,13 @@ echo 'Ext.Print("Hello from console")' > ~/Library/Application\ Support/BG3SE/co
 echo 'local base = Ext.Memory.GetModuleBase("Baldur"); Ext.Print("Game: " .. string.format("0x%x", base))' > ~/Library/Application\ Support/BG3SE/commands.txt
 ```
 
-**Console Features:**
+**Console Features (both modes):**
+
 - **Single-line mode:** Each line executed as Lua
 - **Multi-line mode:** Use `--[[` to start, `]]--` to end and execute
 - **Console commands:** Lines starting with `!` dispatch to registered handlers
 - Lines starting with `#` are comments (skipped outside multi-line blocks)
-- File is deleted after processing
+- File is deleted after processing (file-based mode)
 - Output appears in the log with `[Console]` and `[Lua]` prefixes
 
 **Multi-line Example:**
@@ -494,6 +525,7 @@ bg3se-macos/
 │   └── *.example               # Example wrapper scripts
 ├── tools/
 │   ├── automation/             # Claude Code MCP configs & skills
+│   ├── bg3se-console.c         # Socket console client (readline-based)
 │   ├── skills/                 # Claude Code skills for development
 │   │   └── bg3se-macos-ghidra/ # Ghidra + BG3SE development skill
 │   ├── frida/                  # Frida scripts for runtime analysis
@@ -502,7 +534,7 @@ bg3se-macos/
 │   └── lib/
 │       └── libbg3se.dylib      # Built dylib (universal: arm64 + x86_64)
 ├── CLAUDE.md                   # Development guide for Claude Code
-├── ROADMAP.md                  # Feature parity tracking (~45%)
+├── ROADMAP.md                  # Feature parity tracking (~47%)
 └── README.md
 ```
 

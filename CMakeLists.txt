@@ -91,6 +91,29 @@ set_target_properties(bg3se PROPERTIES
 )
 
 # ============================================
+# Console client tool
+# ============================================
+
+# Find readline (usually at /usr/local/opt/readline on macOS with Homebrew)
+find_library(READLINE_LIBRARY readline PATHS /usr/local/opt/readline/lib /opt/homebrew/opt/readline/lib)
+find_path(READLINE_INCLUDE_DIR readline/readline.h PATHS /usr/local/opt/readline/include /opt/homebrew/opt/readline/include)
+
+if(READLINE_LIBRARY AND READLINE_INCLUDE_DIR)
+    add_executable(bg3se-console tools/bg3se-console.c)
+    target_include_directories(bg3se-console PRIVATE ${READLINE_INCLUDE_DIR})
+    target_link_libraries(bg3se-console PRIVATE ${READLINE_LIBRARY})
+    target_compile_options(bg3se-console PRIVATE -Wall -Wextra)
+    # Console client is native arch only (not universal)
+    set_target_properties(bg3se-console PROPERTIES
+        OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}"
+    )
+    message(STATUS "Building bg3se-console with readline from ${READLINE_LIBRARY}")
+else()
+    message(WARNING "readline not found - bg3se-console will not be built")
+    message(STATUS "Install with: brew install readline")
+endif()
+
+# ============================================
 # Installation
 # ============================================
 install(TARGETS bg3se

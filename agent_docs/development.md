@@ -16,7 +16,36 @@ tail -f "/Users/tomdimino/Library/Application Support/BG3SE/bg3se.log"
 
 ## Live Console (Rapid Iteration)
 
-Send Lua commands to the running game without restart:
+Send Lua commands to the running game without restart.
+
+### Socket Console (Recommended)
+
+The interactive socket console provides real-time bidirectional communication:
+
+```bash
+# Launch the game with BG3SE
+./scripts/launch_bg3.sh
+
+# In another terminal, connect with the console client
+./build/bin/bg3se-console
+
+# Or use socat/nc directly
+socat - UNIX-CONNECT:/tmp/bg3se.sock
+nc -U /tmp/bg3se.sock
+```
+
+Features:
+
+- Real-time output (Ext.Print goes directly to console)
+- Command history with arrow keys (readline)
+- Multi-line input with `--[[` and `]]--` delimiters
+- Tab completion (if configured in readline)
+- ANSI color output for errors
+- Automatic reconnection on disconnect
+
+### File-Based Console (Fallback)
+
+For simpler use cases or automation:
 
 ```bash
 # Terminal 1: Watch output

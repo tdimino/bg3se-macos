@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.14.0 | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.15.0 | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -14,8 +14,10 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 
 - `src/injector/main.c` - Core injection, hooks, Lua state
 - `src/lua/lua_*.c` - Ext.* API implementations
+- `src/console/console.c` - Socket server + file-based console
 - `src/stats/stats_manager.c` - RPGStats system (stat property access)
 - `src/entity/` - Entity Component System (GUID lookup, components)
+- `tools/bg3se-console.c` - Standalone readline console client
 - `ghidra/offsets/` - Reverse-engineered offsets documentation
 
 ## Commands
@@ -30,7 +32,10 @@ cd build && cmake .. && cmake --build .
 # IMPORTANT: Check system time BEFORE checking logs (to filter old entries)
 date && tail -f "/Users/tomdimino/Library/Application Support/BG3SE/bg3se.log"
 
-# Live Lua console (send commands to running game)
+# Live Lua console - interactive socket (recommended)
+./build/bin/bg3se-console
+
+# Live Lua console - file-based fallback
 echo 'Ext.Print("test")' > "/Users/tomdimino/Library/Application Support/BG3SE/commands.txt"
 ```
 

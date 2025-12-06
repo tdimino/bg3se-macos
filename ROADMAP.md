@@ -47,7 +47,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Math` | ✅ Full | ❌ Not impl | **0%** | 7.5 |
 | `Ext.Input` | ✅ Full | ❌ Not impl | **0%** | 9 |
 | `Ext.Level` | ✅ Full | ❌ Not impl | **0%** | 9 |
-| Console/REPL | ✅ Full | ✅ File-based + commands | **80%** | 5 |
+| Console/REPL | ✅ Full | ✅ Socket + file-based | **90%** | 5 |
 | PersistentVars | ✅ Full | ✅ File-based | **90%** | 2.4 |
 | Client Lua State | ✅ Full | ❌ Not impl | **0%** | 2.7 |
 
@@ -517,18 +517,36 @@ end)
 ## Phase 5: In-Game Console
 
 ### 5.1 Debug Console
-**Status:** ✅ Complete (v0.11.0) - File-based implementation
+**Status:** ✅ Complete (v0.15.0) - Socket + file-based implementation
 
-File-based Lua console for rapid iteration without game restarts.
+Both socket-based and file-based Lua consoles for rapid iteration without game restarts.
 
 **Implemented Features:**
+- ✅ Socket console with Unix domain socket (`/tmp/bg3se.sock`)
+- ✅ Standalone readline client (`build/bin/bg3se-console`)
+- ✅ Real-time bidirectional I/O (Ext.Print output to socket)
+- ✅ Up to 4 concurrent clients
+- ✅ ANSI color output (errors in red)
 - ✅ Single-line Lua execution
 - ✅ Multi-line mode (`--[[` ... `]]--`)
 - ✅ Console commands (`!command arg1 arg2`)
 - ✅ Comments (`#` prefix outside multi-line)
-- ✅ File polling from Osiris event hook
+- ✅ File-based polling as fallback
 
-**Usage:**
+**Socket Console Usage:**
+```bash
+# Launch game with BG3SE
+./scripts/launch_bg3.sh
+
+# Connect with console client (recommended)
+./build/bin/bg3se-console
+
+# Or use socat/nc
+socat - UNIX-CONNECT:/tmp/bg3se.sock
+nc -U /tmp/bg3se.sock
+```
+
+**File-Based Usage (fallback):**
 ```bash
 # Single line
 echo 'Ext.Print("hello")' > ~/Library/Application\ Support/BG3SE/commands.txt
@@ -547,9 +565,8 @@ echo '!probe 0x12345678 256' > ~/Library/Application\ Support/BG3SE/commands.txt
 ```
 
 **Not implemented (Windows-specific):**
-- In-game overlay (macOS uses file-based approach)
+- In-game overlay (macOS uses socket approach)
 - Hotkey toggle
-- Command history (use shell history instead)
 - Client/server context switching
 
 ### 5.2 Custom Console Commands
@@ -970,6 +987,7 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.15.0 | 2025-12-06 | Socket console with Unix domain socket, readline client, real-time bidirectional I/O |
 | v0.14.0 | 2025-12-06 | GameStateChanged event, game state tracking module, event-based state inference for macOS |
 | v0.13.0 | 2025-12-06 | Ext.Events expansion (Tick, StatsLoaded, ModuleLoadStarted), priority/Once/handler IDs, Ext.OnNextTick |
 | v0.12.0 | 2025-12-06 | PersistentVars (file-based savegame persistence), Ext.Vars.SyncPersistentVars() |

@@ -39,6 +39,9 @@ int lua_ext_print(lua_State *L) {
     const char *msg = lua_tostring(L, -1);
     log_message("[Lua] %s", msg);
 
+    // Forward to connected console clients
+    console_send_output(msg, false);
+
     return 0;
 }
 
