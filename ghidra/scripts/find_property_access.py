@@ -66,37 +66,37 @@ def analyze_function(func_addr, depth=30):
 
         # Look for LDR with offset (loading from struct field)
         if mnemonic == "ldr":
-            ops = inst.getDefaultOperandRepresentationList()
-            for op in ops:
-                op_str = str(op)
-                # Pattern: [reg, #0xNN] - accessing struct field
-                if "[" in op_str and "#0x" in op_str:
-                    # Extract offset
-                    try:
+            num_ops = inst.getNumOperands()
+            for op_idx in range(num_ops):
+                try:
+                    op_str = inst.getDefaultOperandRepresentation(op_idx)
+                    # Pattern: [reg, #0xNN] - accessing struct field
+                    if "[" in op_str and "#0x" in op_str:
+                        # Extract offset
                         import re
                         match = re.search(r'#0x([0-9a-fA-F]+)', op_str)
                         if match:
                             offset = int(match.group(1), 16)
                             if offset > 0 and offset < 0x400:  # Reasonable struct offset
                                 offsets_found.append((inst.getAddress(), offset, op_str))
-                    except:
-                        pass
+                except:
+                    pass
 
         # Look for ADD with immediate (calculating field address)
         if mnemonic == "add":
-            ops = inst.getDefaultOperandRepresentationList()
-            for op in ops:
-                op_str = str(op)
-                if "#0x" in op_str:
-                    try:
+            num_ops = inst.getNumOperands()
+            for op_idx in range(num_ops):
+                try:
+                    op_str = inst.getDefaultOperandRepresentation(op_idx)
+                    if "#0x" in op_str:
                         import re
                         match = re.search(r'#0x([0-9a-fA-F]+)', op_str)
                         if match:
                             offset = int(match.group(1), 16)
                             if offset > 0 and offset < 0x400:
                                 offsets_found.append((inst.getAddress(), offset, "ADD " + op_str))
-                    except:
-                        pass
+                except:
+                    pass
 
     return offsets_found
 

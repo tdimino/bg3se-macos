@@ -13,26 +13,47 @@ Scripts located at `/Users/tomdimino/Desktop/Programming/bg3se-macos/ghidra/scri
 
 ## Headless Analysis Setup
 
-### Basic Command
+### Wrapper Script (Recommended)
+
+Always use the wrapper script for analysis:
+
+```bash
+# Run script on already-analyzed project (read-only, fast)
+./ghidra/scripts/run_analysis.sh find_modifierlist_offsets.py
+
+# Force re-analysis with optimized settings (slow, only if needed)
+./ghidra/scripts/run_analysis.sh find_modifierlist_offsets.py -analyze
+
+# Monitor progress in real-time:
+tail -f /tmp/ghidra_progress.log
+```
+
+The wrapper script:
+- **Default mode**: Uses `-noanalysis` for fast read-only script execution
+- **With `-analyze`**: Applies `optimize_analysis.py` prescript for re-analysis
+- Logs progress to `/tmp/ghidra_progress.log`
+- Saves full output to `/tmp/ghidra_output.log`
+
+### Manual Command (if needed)
 ```bash
 JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
   ~/ghidra/support/analyzeHeadless ~/ghidra_projects BG3Analysis \
   -process BG3_arm64_thin \
+  -noanalysis \
   -scriptPath /Users/tomdimino/Desktop/Programming/bg3se-macos/ghidra/scripts \
-  -preScript optimize_analysis.py \
   -postScript <your_script.py>
 ```
 
 ### Key Flags
-- `-noanalysis` - Skip analysis, use cached results
-- `-preScript` - Run before analysis
+- `-noanalysis` - Skip analysis, use cached results (default in wrapper)
+- `-preScript` - Run before analysis (used with `-analyze` flag)
 - `-postScript` - Run after analysis
 - `-process` - Binary name in project
 
 ### Performance Notes
 - Full analysis of 1GB+ binary: 2+ hours
 - With `optimize_analysis.py` prescript: 15-20 minutes
-- Use `-noanalysis` for repeat runs
+- Use wrapper's default mode (no `-analyze`) for fast repeat runs
 
 ## Optimization Prescript
 
@@ -335,7 +356,11 @@ def analyze_variables(func_addr):
 | Script | Purpose | Key Functions |
 |--------|---------|---------------|
 | `optimize_analysis.py` | Prescript for fast analysis | `setAnalysisOption()` |
+| `run_analysis.sh` | Wrapper script (use this!) | `-noanalysis`, `-analyze` |
 | `find_rpgstats.py` | Find RPGStats global | String search + XREF |
+| `find_modifierlist_offsets.py` | Find ModifierList offsets | Stats structure analysis |
+| `find_property_access.py` | Find stats property offsets | Pool/attribute discovery |
+| `find_modifier_attributes.py` | Find Modifier struct layout | Symbol search, XREF analysis |
 | `find_osiris_offsets.py` | Find Osiris functions | Pattern matching |
 | `find_entity_offsets.py` | Find ECS offsets | Symbol search |
 | `find_uuid_mapping.py` | Find GUID mapping | Type string search |
@@ -343,6 +368,15 @@ def analyze_variables(func_addr):
 | `quick_component_search.py` | Fast XREF search | XREF analysis |
 | `decompile_getcomponent.py` | Decompile templates | DecompInterface |
 | `analyze_osiris_functions.py` | Enumerate Osiris | Function iteration |
+
+### find_modifier_attributes.py Results (Dec 2025)
+
+**Key Discovery:** Attribute names like "Damage", "DamageType" are NOT in the binary - they're loaded from game data files at runtime.
+
+**Found:**
+- 419 RPGStats-related symbols
+- 170 GetAttribute* functions with offset patterns
+- Key function: `eoc::active_roll::ComputeFinalModifiers` at `0x101149030`
 
 ## Key Binary Information
 
