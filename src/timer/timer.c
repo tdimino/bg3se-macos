@@ -122,7 +122,7 @@ static void queue_sift_down(int idx) {
 
 static bool queue_push(double fire_time, TimerHandle handle, uint32_t invoke_id) {
     if (s_queue_size >= QUEUE_MAX_SIZE) {
-        log_message("[Timer] Warning: Queue full, cannot schedule timer");
+        LOG_TIMER_WARN("Queue full, cannot schedule timer");
         return false;
     }
 
@@ -191,18 +191,18 @@ void timer_init(void) {
     // Clear queue
     s_queue_size = 0;
 
-    log_message("[Timer] Timer system initialized");
+    LOG_TIMER_INFO("Timer system initialized");
 }
 
 void timer_shutdown(lua_State *L) {
     timer_clear_all(L);
-    log_message("[Timer] Timer system shut down");
+    LOG_TIMER_INFO("Timer system shut down");
 }
 
 TimerHandle timer_create(lua_State *L, double delay_ms, int callback_ref, double repeat_ms) {
     int idx = timer_pool_alloc();
     if (idx < 0) {
-        log_message("[Timer] Error: Timer pool exhausted (%d max)", TIMER_MAX_COUNT);
+        LOG_TIMER_ERROR("Timer pool exhausted (%d max)", TIMER_MAX_COUNT);
         luaL_unref(L, LUA_REGISTRYINDEX, callback_ref);
         return 0;
     }
@@ -278,7 +278,7 @@ bool timer_resume(TimerHandle handle) {
 
     // Re-queue the timer
     if (!queue_push(timer->fire_time, handle, timer->invoke_id)) {
-        log_message("[Timer] Warning: Failed to resume timer (queue full)");
+        LOG_TIMER_WARN("Failed to resume timer (queue full)");
         timer->paused = true;  // Restore paused state
         return false;
     }
@@ -317,7 +317,7 @@ void timer_update(lua_State *L) {
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            log_message("[Timer] Callback error: %s", err ? err : "(unknown)");
+            LOG_TIMER_ERROR("Callback error: %s", err ? err : "(unknown)");
             lua_pop(L, 1);
         }
 
@@ -329,7 +329,7 @@ void timer_update(lua_State *L) {
             timer->fire_time = now + repeat_interval;
             if (!queue_push(timer->fire_time, entry.handle, timer->invoke_id)) {
                 // Queue full, cancel the timer
-                log_message("[Timer] Warning: Queue full during repeat, cancelling timer");
+                LOG_TIMER_WARN("Queue full during repeat, cancelling timer");
                 if (timer->callback_ref != LUA_NOREF) {
                     luaL_unref(L, LUA_REGISTRYINDEX, timer->callback_ref);
                     timer->callback_ref = LUA_NOREF;
@@ -363,5 +363,5 @@ void timer_clear_all(lua_State *L) {
     s_timer_count = 0;
     s_queue_size = 0;
 
-    log_message("[Timer] All timers cleared");
+    LOG_TIMER_INFO("All timers cleared");
 }

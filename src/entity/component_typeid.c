@@ -11,23 +11,7 @@
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
 
-#include <stdio.h>
 #include <string.h>
-#include <stdarg.h>
-
-// ============================================================================
-// Logging
-// ============================================================================
-
-static void log_typeid(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void log_typeid(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    log_message("[ComponentTypeId] %s", buf);
-}
 
 // ============================================================================
 // Known TypeId Addresses
@@ -90,14 +74,14 @@ static bool g_Initialized = false;
 
 bool component_typeid_init(void *binaryBase) {
     if (!binaryBase) {
-        log_typeid("ERROR: binaryBase is NULL");
+        LOG_ENTITY_DEBUG("ERROR: binaryBase is NULL");
         return false;
     }
 
     g_BinaryBase = binaryBase;
     g_Initialized = true;
 
-    log_typeid("Initialized with binary base: %p", binaryBase);
+    LOG_ENTITY_DEBUG("Initialized with binary base: %p", binaryBase);
     return true;
 }
 
@@ -122,14 +106,14 @@ bool component_typeid_read(uint64_t ghidraAddr, uint16_t *outIndex) {
     /* Validate the runtime address before attempting to read */
     SafeMemoryInfo info = safe_memory_check_address(runtimeAddr);
     if (!info.is_valid || !info.is_readable) {
-        log_typeid("  Address 0x%llx (Ghidra 0x%llx) is not readable",
+        LOG_ENTITY_DEBUG("  Address 0x%llx (Ghidra 0x%llx) is not readable",
                    (unsigned long long)runtimeAddr, (unsigned long long)ghidraAddr);
         return false;
     }
 
     /* Check for GPU carveout region */
     if (safe_memory_is_gpu_region(runtimeAddr)) {
-        log_typeid("  Address 0x%llx (Ghidra 0x%llx) is in GPU region",
+        LOG_ENTITY_DEBUG("  Address 0x%llx (Ghidra 0x%llx) is in GPU region",
                    (unsigned long long)runtimeAddr, (unsigned long long)ghidraAddr);
         return false;
     }
@@ -138,20 +122,20 @@ bool component_typeid_read(uint64_t ghidraAddr, uint16_t *outIndex) {
      * TypeId<T>::m_TypeIndex is typically a 32-bit integer */
     int32_t rawValue = -1;
     if (!safe_memory_read_i32(runtimeAddr, &rawValue)) {
-        log_typeid("  Failed to safely read from 0x%llx (Ghidra 0x%llx)",
+        LOG_ENTITY_DEBUG("  Failed to safely read from 0x%llx (Ghidra 0x%llx)",
                    (unsigned long long)runtimeAddr, (unsigned long long)ghidraAddr);
         return false;
     }
 
     /* Check for uninitialized (-1 or very large values indicate not yet registered) */
     if (rawValue < 0 || rawValue > 0xFFFF) {
-        log_typeid("  Invalid TypeIndex value %d at 0x%llx (expected 0-65535)",
+        LOG_ENTITY_DEBUG("  Invalid TypeIndex value %d at 0x%llx (expected 0-65535)",
                    rawValue, (unsigned long long)runtimeAddr);
         return false;
     }
 
     *outIndex = (uint16_t)rawValue;
-    log_typeid("  TypeIndex=%u at 0x%llx (Ghidra 0x%llx)",
+    LOG_ENTITY_DEBUG("  TypeIndex=%u at 0x%llx (Ghidra 0x%llx)",
                *outIndex, (unsigned long long)runtimeAddr, (unsigned long long)ghidraAddr);
     return true;
 }
@@ -162,11 +146,11 @@ bool component_typeid_read(uint64_t ghidraAddr, uint16_t *outIndex) {
 
 int component_typeid_discover(void) {
     if (!component_typeid_ready()) {
-        log_typeid("ERROR: Not initialized, cannot discover");
+        LOG_ENTITY_DEBUG("ERROR: Not initialized, cannot discover");
         return 0;
     }
 
-    log_typeid("Discovering component type indices from TypeId globals...");
+    LOG_ENTITY_DEBUG("Discovering component type indices from TypeId globals...");
 
     int discovered = 0;
 
@@ -175,7 +159,7 @@ int component_typeid_discover(void) {
 
         uint16_t typeIndex;
         if (component_typeid_read(entry->ghidraAddr, &typeIndex)) {
-            log_typeid("  %s: index=%u (from 0x%llx)",
+            LOG_ENTITY_DEBUG("  %s: index=%u (from 0x%llx)",
                        entry->componentName, typeIndex, (unsigned long long)entry->ghidraAddr);
 
             // Update the component registry with this discovered index
@@ -190,12 +174,12 @@ int component_typeid_discover(void) {
                 discovered++;
             }
         } else {
-            log_typeid("  %s: FAILED to read from 0x%llx",
+            LOG_ENTITY_DEBUG("  %s: FAILED to read from 0x%llx",
                        entry->componentName, (unsigned long long)entry->ghidraAddr);
         }
     }
 
-    log_typeid("Discovered %d component type indices", discovered);
+    LOG_ENTITY_DEBUG("Discovered %d component type indices", discovered);
     return discovered;
 }
 
@@ -205,47 +189,47 @@ int component_typeid_discover(void) {
 
 void component_typeid_dump(void) {
     if (!component_typeid_ready()) {
-        log_typeid("Not initialized");
+        LOG_ENTITY_DEBUG("Not initialized");
         return;
     }
 
-    log_typeid("=== TypeId<T>::m_TypeIndex Dump ===");
-    log_typeid("Binary base: %p", g_BinaryBase);
+    LOG_ENTITY_DEBUG("=== TypeId<T>::m_TypeIndex Dump ===");
+    LOG_ENTITY_DEBUG("Binary base: %p", g_BinaryBase);
 
     for (int i = 0; g_KnownTypeIds[i].componentName != NULL; i++) {
         const TypeIdEntry *entry = &g_KnownTypeIds[i];
 
         mach_vm_address_t runtimeAddr = entry->ghidraAddr - GHIDRA_BASE_ADDRESS + (mach_vm_address_t)g_BinaryBase;
 
-        log_typeid("  %s:", entry->componentName);
-        log_typeid("    Ghidra addr: 0x%llx", (unsigned long long)entry->ghidraAddr);
-        log_typeid("    Runtime addr: 0x%llx", (unsigned long long)runtimeAddr);
+        LOG_ENTITY_DEBUG("  %s:", entry->componentName);
+        LOG_ENTITY_DEBUG("    Ghidra addr: 0x%llx", (unsigned long long)entry->ghidraAddr);
+        LOG_ENTITY_DEBUG("    Runtime addr: 0x%llx", (unsigned long long)runtimeAddr);
 
         /* Check if address is readable */
         SafeMemoryInfo info = safe_memory_check_address(runtimeAddr);
         if (!info.is_valid || !info.is_readable) {
-            log_typeid("    => NOT READABLE");
+            LOG_ENTITY_DEBUG("    => NOT READABLE");
             continue;
         }
 
         if (safe_memory_is_gpu_region(runtimeAddr)) {
-            log_typeid("    => GPU REGION (unsafe)");
+            LOG_ENTITY_DEBUG("    => GPU REGION (unsafe)");
             continue;
         }
 
         /* Safely read the value */
         int32_t rawValue = -1;
         if (!safe_memory_read_i32(runtimeAddr, &rawValue)) {
-            log_typeid("    => READ FAILED");
+            LOG_ENTITY_DEBUG("    => READ FAILED");
             continue;
         }
 
-        log_typeid("    Raw value: %d (0x%x)", rawValue, rawValue);
+        LOG_ENTITY_DEBUG("    Raw value: %d (0x%x)", rawValue, rawValue);
 
         if (rawValue >= 0 && rawValue <= 0xFFFF) {
-            log_typeid("    => TypeIndex: %u", (uint16_t)rawValue);
+            LOG_ENTITY_DEBUG("    => TypeIndex: %u", (uint16_t)rawValue);
         } else {
-            log_typeid("    => INVALID (uninitialized or error)");
+            LOG_ENTITY_DEBUG("    => INVALID (uninitialized or error)");
         }
     }
 }

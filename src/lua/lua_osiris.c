@@ -27,7 +27,7 @@ int lua_ext_osiris_registerlistener(lua_State *L) {
     luaL_checktype(L, 4, LUA_TFUNCTION);
 
     if (osiris_listener_count >= MAX_OSIRIS_LISTENERS) {
-        log_message("[Lua] Warning: Max Osiris listeners reached");
+        LOG_LUA_DEBUG("Warning: Max Osiris listeners reached");
         return 0;
     }
 
@@ -45,7 +45,7 @@ int lua_ext_osiris_registerlistener(lua_State *L) {
 
     osiris_listener_count++;
 
-    log_message("[Lua] Registered Osiris listener: %s (arity=%d, timing=%s)",
+    LOG_LUA_DEBUG("Registered Osiris listener: %s (arity=%d, timing=%s)",
                 event, arity, timing);
 
     return 0;
@@ -88,5 +88,5 @@ void lua_osiris_register(lua_State *L) {
 
     lua_pop(L, 1);  // Pop Ext table
 
-    log_message("Ext.Osiris API registered");
+    LOG_OSIRIS_INFO("Ext.Osiris API registered");
 }

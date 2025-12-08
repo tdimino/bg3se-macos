@@ -15,27 +15,12 @@
 
 #include <string.h>
 #include <stdlib.h>
-#include <stdarg.h>
 
 // Forward declarations
 static int lua_stats_object_get_property(lua_State *L);
 static int lua_stats_object_set_property(lua_State *L);
 static int lua_stats_object_dump(lua_State *L);
 static int lua_stats_object_get_raw_property(lua_State *L);
-
-// ============================================================================
-// Logging
-// ============================================================================
-
-static void log_lua_stats(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void log_lua_stats(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    log_message("[Lua.Stats] %s", buf);
-}
 
 // ============================================================================
 // StatsObject Userdata
@@ -180,20 +165,20 @@ static int lua_stats_object_newindex(lua_State *L) {
         const char *value = lua_tostring(L, 3);
         bool success = stats_set_string(ud->obj, key, value);
         if (!success) {
-            log_lua_stats("Failed to set string property '%s'", key);
+            LOG_STATS_DEBUG("Failed to set string property '%s'", key);
         }
     } else if (value_type == LUA_TNUMBER) {
         if (lua_isinteger(L, 3)) {
             int64_t value = lua_tointeger(L, 3);
             bool success = stats_set_int(ud->obj, key, value);
             if (!success) {
-                log_lua_stats("Failed to set integer property '%s'", key);
+                LOG_STATS_DEBUG("Failed to set integer property '%s'", key);
             }
         } else {
             float value = (float)lua_tonumber(L, 3);
             bool success = stats_set_float(ud->obj, key, value);
             if (!success) {
-                log_lua_stats("Failed to set float property '%s'", key);
+                LOG_STATS_DEBUG("Failed to set float property '%s'", key);
             }
         }
     } else {
@@ -325,7 +310,7 @@ static int lua_stats_get(lua_State *L) {
     const char *name = luaL_checkstring(L, 1);
 
     if (!stats_manager_ready()) {
-        log_lua_stats("Stats system not ready");
+        LOG_STATS_DEBUG("Stats system not ready");
         lua_pushnil(L);
         return 1;
     }
@@ -343,7 +328,7 @@ static int lua_stats_getall(lua_State *L) {
     }
 
     if (!stats_manager_ready()) {
-        log_lua_stats("Stats system not ready");
+        LOG_STATS_DEBUG("Stats system not ready");
         lua_newtable(L);  // Return empty array
         return 1;
     }
@@ -387,7 +372,7 @@ static int lua_stats_create(lua_State *L) {
     }
 
     if (!stats_manager_ready()) {
-        log_lua_stats("Stats system not ready");
+        LOG_STATS_DEBUG("Stats system not ready");
         lua_pushnil(L);
         return 1;
     }
@@ -580,7 +565,7 @@ static int lua_stats_dumpmodifierlist(lua_State *L) {
     else if (strcmp(type_name, "Weapon") == 0) ml_index = 8;
 
     if (ml_index < 0) {
-        log_lua_stats("Unknown modifier list type: %s", type_name);
+        LOG_STATS_DEBUG("Unknown modifier list type: %s", type_name);
         lua_pushnil(L);
         return 1;
     }
@@ -631,7 +616,7 @@ static const luaL_Reg stats_functions[] = {
 };
 
 void lua_stats_register(lua_State *L, int ext_table_index) {
-    log_lua_stats("Registering Ext.Stats API");
+    LOG_STATS_DEBUG("Registering Ext.Stats API");
 
     // Convert negative index to absolute since we'll be pushing onto stack
     if (ext_table_index < 0) {
@@ -650,5 +635,5 @@ void lua_stats_register(lua_State *L, int ext_table_index) {
     // Set as Ext.Stats
     lua_setfield(L, ext_table_index, "Stats");
 
-    log_lua_stats("Ext.Stats API registered");
+    LOG_STATS_DEBUG("Ext.Stats API registered");
 }

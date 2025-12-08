@@ -137,18 +137,18 @@ EntityHandle hashmap_lookup_guid(const HashMapGuidEntityHandle *hashmap, const G
 
 void hashmap_dump(const HashMapGuidEntityHandle *hashmap, int max_entries) {
     if (!hashmap) {
-        log_message("[GuidLookup] HashMap is NULL");
+        LOG_ENTITY_DEBUG("HashMap is NULL");
         return;
     }
 
-    log_message("[GuidLookup] HashMap dump:");
-    log_message("  HashKeys: buf=%p, size=%u",
+    LOG_ENTITY_DEBUG("HashMap dump:");
+    LOG_ENTITY_DEBUG("  HashKeys: buf=%p, size=%u",
                 (void*)hashmap->HashKeys.buf, hashmap->HashKeys.size);
-    log_message("  NextIds: buf=%p, capacity=%u, size=%u",
+    LOG_ENTITY_DEBUG("  NextIds: buf=%p, capacity=%u, size=%u",
                 (void*)hashmap->NextIds.buf, hashmap->NextIds.capacity, hashmap->NextIds.size);
-    log_message("  Keys: buf=%p, capacity=%u, size=%u",
+    LOG_ENTITY_DEBUG("  Keys: buf=%p, capacity=%u, size=%u",
                 (void*)hashmap->Keys.buf, hashmap->Keys.capacity, hashmap->Keys.size);
-    log_message("  Values: buf=%p, size=%u",
+    LOG_ENTITY_DEBUG("  Values: buf=%p, size=%u",
                 (void*)hashmap->Values.buf, hashmap->Values.size);
 
     // Dump some entries
@@ -159,12 +159,12 @@ void hashmap_dump(const HashMapGuidEntityHandle *hashmap, int max_entries) {
     for (int i = 0; i < count; i++) {
         Guid *key = &hashmap->Keys.buf[i];
         EntityHandle value = hashmap->Values.buf[i];
-        log_message("  [%d] GUID: %016llx-%016llx -> Handle: 0x%llx",
+        LOG_ENTITY_DEBUG("  [%d] GUID: %016llx-%016llx -> Handle: 0x%llx",
                     i, (unsigned long long)key->lo, (unsigned long long)key->hi,
                     (unsigned long long)value);
     }
 
     if ((int)hashmap->Keys.size > count) {
-        log_message("  ... (%u more entries)", hashmap->Keys.size - count);
+        LOG_ENTITY_DEBUG("  ... (%u more entries)", hashmap->Keys.size - count);
     }
 }

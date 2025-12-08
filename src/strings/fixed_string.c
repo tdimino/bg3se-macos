@@ -88,20 +88,20 @@ static bool load_offset_cache(void) {
 
     // Validate magic and version
     if (cache.magic != GST_CACHE_MAGIC || cache.version != GST_CACHE_VERSION) {
-        log_message("[FixedString] Cache file invalid (magic/version mismatch)");
+        LOG_CORE_WARN("Cache file invalid (magic/version mismatch)");
         return false;
     }
 
     // Validate checksum
     uint32_t expected_checksum = calc_cache_checksum(&cache);
     if (cache.checksum != expected_checksum) {
-        log_message("[FixedString] Cache file corrupt (checksum mismatch)");
+        LOG_CORE_WARN("Cache file corrupt (checksum mismatch)");
         return false;
     }
 
     // Sanity check offsets
     if (cache.off_buckets == 0 || cache.subtable_size == 0 || cache.gst_offset == 0) {
-        log_message("[FixedString] Cache file has invalid offsets");
+        LOG_CORE_WARN("Cache file has invalid offsets");
         return false;
     }
 
@@ -113,9 +113,9 @@ static bool load_offset_cache(void) {
     g_OffsetEntriesPerBucket = cache.off_entries_per_bkt;
     g_SubTableSize = cache.subtable_size;
 
-    log_message("[FixedString] Loaded cached offsets from %s", cache_path);
-    log_message("[FixedString]   GST offset: 0x%llx", (unsigned long long)g_CachedGSTOffset);
-    log_message("[FixedString]   Buckets: 0x%x, NumBuckets: 0x%x, EntrySize: 0x%x",
+    LOG_CORE_DEBUG("Loaded cached offsets from %s", cache_path);
+    LOG_CORE_DEBUG("  GST offset: 0x%llx", (unsigned long long)g_CachedGSTOffset);
+    LOG_CORE_DEBUG("  Buckets: 0x%x, NumBuckets: 0x%x, EntrySize: 0x%x",
                g_OffsetBuckets, g_OffsetNumBuckets, g_OffsetEntrySize);
 
     return true;
@@ -137,12 +137,12 @@ static void save_offset_cache(uintptr_t gst_offset) {
     const char *cache_path = bg3se_get_data_path(BG3SE_CACHE_FILENAME);
     FILE *f = fopen(cache_path, "wb");
     if (!f) {
-        log_message("[FixedString] Warning: Could not write cache file to %s", cache_path);
+        LOG_CORE_WARN(" Could not write cache file to %s", cache_path);
         return;
     }
 
     if (fwrite(&cache, sizeof(cache), 1, f) == 1) {
-        log_message("[FixedString] Saved discovered offsets to %s", cache_path);
+        LOG_CORE_DEBUG("Saved discovered offsets to %s", cache_path);
     }
     fclose(f);
 }
@@ -258,7 +258,7 @@ static bool discover_arm64_offsets(void *gst);
 static void *try_dlsym_discovery(void) {
     void *handle = dlopen(NULL, RTLD_NOW);
     if (!handle) {
-        log_message("[FixedString] dlopen(NULL) failed");
+        LOG_CORE_DEBUG("dlopen(NULL) failed");
         return NULL;
     }
 
@@ -276,13 +276,13 @@ static void *try_dlsym_discovery(void) {
     for (int i = 0; symbol_names[i]; i++) {
         void *sym = dlsym(handle, symbol_names[i]);
         if (sym) {
-            log_message("[FixedString] Found via dlsym('%s'): %p",
+            LOG_CORE_DEBUG("Found via dlsym('%s'): %p",
                        symbol_names[i], sym);
             return sym;
         }
     }
 
-    log_message("[FixedString] dlsym discovery failed - symbol not exported");
+    LOG_CORE_DEBUG("dlsym discovery failed - symbol not exported");
     return NULL;
 }
 
@@ -435,28 +435,28 @@ static bool try_reference_based_discovery(void) {
     uintptr_t data_start = base + 0x8000000ULL;
     uintptr_t data_end = base + 0xC000000ULL;
 
-    log_message("[FixedString] Trying reference-based discovery (searching for known strings)...");
+    LOG_CORE_DEBUG("Trying reference-based discovery (searching for known strings)...");
 
     // Try each known string
     for (int str_idx = 0; g_KnownStrings[str_idx] != NULL; str_idx++) {
         const char *needle = g_KnownStrings[str_idx];
 
-        log_message("[FixedString] Searching for \"%s\"...", needle);
+        LOG_CORE_DEBUG("Searching for \"%s\"...", needle);
         uintptr_t str_addr = find_string_in_range(needle, data_start, data_end);
 
         if (str_addr == 0) {
-            log_message("[FixedString]   Not found in __DATA range");
+            LOG_CORE_DEBUG("  Not found in __DATA range");
             continue;
         }
 
-        log_message("[FixedString]   Found at 0x%llx", (unsigned long long)str_addr);
+        LOG_CORE_DEBUG("  Found at 0x%llx", (unsigned long long)str_addr);
 
         // StringEntry header is 24 bytes before string data
         uintptr_t entry_addr = str_addr - STRING_ENTRY_HEADER_SIZE;
 
         // Validate this looks like a StringEntry
         if (!validate_string_entry_header(entry_addr, needle)) {
-            log_message("[FixedString]   Invalid StringEntry header at 0x%llx", (unsigned long long)entry_addr);
+            LOG_CORE_DEBUG("  Invalid StringEntry header at 0x%llx", (unsigned long long)entry_addr);
             continue;
         }
 
@@ -468,7 +468,7 @@ static bool try_reference_based_discovery(void) {
         uint32_t bucket_idx = (fs_id >> 4) & 0xFFFF;
         uint32_t entry_idx = fs_id >> 20;
 
-        log_message("[FixedString]   FixedString Id: 0x%08x (sub=%u, bucket=%u, entry=%u)",
+        LOG_CORE_DEBUG("  FixedString Id: 0x%08x (sub=%u, bucket=%u, entry=%u)",
                    fs_id, subtable_idx, bucket_idx, entry_idx);
 
         // The entry lives in a bucket. The bucket is an array of entries.
@@ -522,12 +522,12 @@ static bool try_reference_based_discovery(void) {
                         if (safe_read_ptr((void *)(probe + subtable_size + off_buckets), &buckets1) &&
                             is_valid_string_ptr(buckets1)) {
 
-                            log_message("[FixedString] *** FOUND via reference discovery! ***");
-                            log_message("[FixedString]   SubTable[%u] at: 0x%llx",
+                            LOG_CORE_INFO("*** FOUND via reference discovery! ***");
+                            LOG_CORE_DEBUG("  SubTable[%u] at: 0x%llx",
                                        subtable_idx, (unsigned long long)(probe - subtable_idx * subtable_size));
-                            log_message("[FixedString]   Buckets offset: 0x%x", off_buckets);
-                            log_message("[FixedString]   Entry size: %llu", entry_size);
-                            log_message("[FixedString]   SubTable size: 0x%x", subtable_size);
+                            LOG_CORE_DEBUG("  Buckets offset: 0x%x", off_buckets);
+                            LOG_CORE_DEBUG("  Entry size: %llu", entry_size);
+                            LOG_CORE_DEBUG("  SubTable size: 0x%x", subtable_size);
 
                             // Calculate GlobalStringTable base (SubTable[0])
                             uintptr_t gst_addr = probe - subtable_idx * subtable_size;
@@ -542,7 +542,7 @@ static bool try_reference_based_discovery(void) {
                                 if (safe_read_u32((void *)(probe + off_nb), &num_buckets) &&
                                     num_buckets > bucket_idx && num_buckets < 500000) {
                                     g_OffsetNumBuckets = off_nb;
-                                    log_message("[FixedString]   NumBuckets offset: 0x%x (value=%u)",
+                                    LOG_CORE_DEBUG("  NumBuckets offset: 0x%x (value=%u)",
                                                off_nb, num_buckets);
                                     break;
                                 }
@@ -553,7 +553,7 @@ static bool try_reference_based_discovery(void) {
                                 uint64_t es = 0;
                                 if (safe_read_u64((void *)(probe + off_es), &es) && es == entry_size) {
                                     g_OffsetEntrySize = off_es;
-                                    log_message("[FixedString]   EntrySize offset: 0x%x", off_es);
+                                    LOG_CORE_DEBUG("  EntrySize offset: 0x%x", off_es);
                                     break;
                                 }
                             }
@@ -573,10 +573,10 @@ static bool try_reference_based_discovery(void) {
             }
         }
 
-        log_message("[FixedString]   Could not backtrack to SubTable from \"%s\"", needle);
+        LOG_CORE_DEBUG("  Could not backtrack to SubTable from \"%s\"", needle);
     }
 
-    log_message("[FixedString] Reference-based discovery failed");
+    LOG_CORE_DEBUG("Reference-based discovery failed");
     return false;
 }
 
@@ -587,11 +587,11 @@ static bool try_reference_based_discovery(void) {
  */
 static bool try_runtime_probe(void) {
     if (!g_MainBinaryBase) {
-        log_message("[FixedString] Cannot probe - binary base not set");
+        LOG_CORE_WARN("Cannot probe - binary base not set");
         return false;
     }
 
-    log_message("[FixedString] Starting __DATA section probe for GlobalStringTable...");
+    LOG_CORE_DEBUG("Starting __DATA section probe for GlobalStringTable...");
 
     // Calculate base addresses
     uintptr_t base = (uintptr_t)g_MainBinaryBase;
@@ -601,7 +601,7 @@ static bool try_runtime_probe(void) {
     uintptr_t data_start = base + 0x8000000ULL;
     uintptr_t data_end = base + 0xC000000ULL;
 
-    log_message("[FixedString] Scanning __DATA from 0x%llx to 0x%llx (64MB)",
+    LOG_CORE_DEBUG("Scanning __DATA from 0x%llx to 0x%llx (64MB)",
                (unsigned long long)data_start, (unsigned long long)data_end);
 
     int pages_checked = 0;
@@ -664,18 +664,18 @@ static bool try_runtime_probe(void) {
                                 char sample[64] = {0};
                                 safe_read_bytes((char *)first_bucket + 0x18, sample, sizeof(sample) - 1);
 
-                                log_message("[FixedString] *** FOUND GlobalStringTable! ***");
-                                log_message("[FixedString]   Address: 0x%llx", (unsigned long long)addr);
-                                log_message("[FixedString]   Ghidra offset: 0x%llx",
+                                LOG_CORE_INFO("*** FOUND GlobalStringTable! ***");
+                                LOG_CORE_DEBUG("  Address: 0x%llx", (unsigned long long)addr);
+                                LOG_CORE_DEBUG("  Ghidra offset: 0x%llx",
                                            (unsigned long long)(addr - base + GHIDRA_BASE_ADDRESS));
-                                log_message("[FixedString]   Buckets offset: 0x%x", off_buckets);
-                                log_message("[FixedString]   NumBuckets offset: 0x%x", off_nb);
-                                log_message("[FixedString]   EntrySize offset: 0x%x", off_es);
-                                log_message("[FixedString]   SubTable size: 0x%x", subtable_size);
-                                log_message("[FixedString]   SubTable[0]: NumBuckets=%u EntrySize=%llu",
+                                LOG_CORE_DEBUG("  Buckets offset: 0x%x", off_buckets);
+                                LOG_CORE_DEBUG("  NumBuckets offset: 0x%x", off_nb);
+                                LOG_CORE_DEBUG("  EntrySize offset: 0x%x", off_es);
+                                LOG_CORE_DEBUG("  SubTable size: 0x%x", subtable_size);
+                                LOG_CORE_DEBUG("  SubTable[0]: NumBuckets=%u EntrySize=%llu",
                                            num_buckets, entry_size);
-                                log_message("[FixedString]   SubTable[1]: NumBuckets=%u", num_buckets1);
-                                log_message("[FixedString]   Sample string: \"%s\"", sample);
+                                LOG_CORE_DEBUG("  SubTable[1]: NumBuckets=%u", num_buckets1);
+                                LOG_CORE_DEBUG("  Sample string: \"%s\"", sample);
 
                                 // Store offsets
                                 g_OffsetBuckets = off_buckets;
@@ -702,12 +702,12 @@ static bool try_runtime_probe(void) {
 
         pages_checked++;
         if (pages_checked % 4000 == 0) {
-            log_message("[FixedString] Probing __DATA... checked %d pages, %d candidates",
+            LOG_CORE_DEBUG("Probing __DATA... checked %d pages, %d candidates",
                        pages_checked, valid_structures);
         }
     }
 
-    log_message("[FixedString] __DATA probe complete: checked %d pages, %d candidates, no match",
+    LOG_CORE_DEBUG("__DATA probe complete: checked %d pages, %d candidates, no match",
                pages_checked, valid_structures);
     return false;
 }
@@ -750,19 +750,19 @@ static bool try_validate_gst_with_discovery(void *gst) {
  */
 bool fixed_string_probe_near_ptr(void *stats_ptr) {
     if (!stats_ptr) {
-        log_message("[FixedString] Cannot probe - stats_ptr is NULL");
+        LOG_CORE_WARN("Cannot probe - stats_ptr is NULL");
         return false;
     }
 
     if (g_pGlobalStringTable) {
         void *gst = NULL;
         if (safe_read_ptr(g_pGlobalStringTable, &gst) && gst) {
-            log_message("[FixedString] GlobalStringTable already found at %p", gst);
+            LOG_CORE_DEBUG("GlobalStringTable already found at %p", gst);
             return true;  // Already found
         }
     }
 
-    log_message("[FixedString] Probing near stats_ptr %p...", stats_ptr);
+    LOG_CORE_DEBUG("Probing near stats_ptr %p...", stats_ptr);
 
     // Search a narrower window around the stats pointer
     // GlobalStringTable is likely stored in the same data region
@@ -775,7 +775,7 @@ bool fixed_string_probe_near_ptr(void *stats_ptr) {
     int candidates_checked = 0;
     int valid_pointers = 0;
 
-    log_message("[FixedString] Searching from 0x%llx to 0x%llx",
+    LOG_CORE_DEBUG("Searching from 0x%llx to 0x%llx",
                (unsigned long long)search_start, (unsigned long long)search_end);
 
     // Step by 0x1000 (4KB page alignment) for faster initial scan
@@ -795,9 +795,9 @@ bool fixed_string_probe_near_ptr(void *stats_ptr) {
 
         // Try to validate this as GlobalStringTable
         if (try_validate_gst_with_discovery(gst)) {
-            log_message("[FixedString] *** FOUND GlobalStringTable! ***");
-            log_message("[FixedString]   Pointer at: 0x%llx", (unsigned long long)addr);
-            log_message("[FixedString]   GlobalStringTable: %p", gst);
+            LOG_CORE_INFO("*** FOUND GlobalStringTable! ***");
+            LOG_CORE_DEBUG("  Pointer at: 0x%llx", (unsigned long long)addr);
+            LOG_CORE_DEBUG("  GlobalStringTable: %p", gst);
 
             // Set the global pointer
             static void *stored_gst_ptr = NULL;
@@ -814,17 +814,17 @@ bool fixed_string_probe_near_ptr(void *stats_ptr) {
 
         candidates_checked++;
         if (candidates_checked % 5000 == 0) {
-            log_message("[FixedString] Probing... checked %d pages, %d valid pointers",
+            LOG_CORE_DEBUG("Probing... checked %d pages, %d valid pointers",
                        candidates_checked, valid_pointers);
         }
     }
 
-    log_message("[FixedString] Probe near stats_ptr complete: checked %d pages, %d valid pointers",
+    LOG_CORE_DEBUG("Probe near stats_ptr complete: checked %d pages, %d valid pointers",
                candidates_checked, valid_pointers);
 
     // Last resort: Try treating stats_ptr region directly as potential GST location
     // Some games store the GST in the same data section
-    log_message("[FixedString] Trying direct memory scan for GST structure...");
+    LOG_CORE_DEBUG("Trying direct memory scan for GST structure...");
 
     // Scan for the actual GST structure (not pointer to it)
     for (uintptr_t addr = search_start; addr < search_end; addr += 0x1000) {
@@ -846,7 +846,7 @@ bool fixed_string_probe_near_ptr(void *stats_ptr) {
                 is_valid_string_ptr(first_bucket) &&
                 validate_string_at_entry(first_bucket, entry_size)) {
 
-                log_message("[FixedString] *** FOUND GST directly at 0x%llx! ***",
+                LOG_CORE_INFO("*** FOUND GST directly at 0x%llx! ***",
                            (unsigned long long)addr);
 
                 // Store this directly
@@ -878,9 +878,9 @@ bool fixed_string_probe_near_ptr(void *stats_ptr) {
                                     is_valid_string_ptr(first_bucket) &&
                                     validate_string_at_entry(first_bucket, entry_size)) {
 
-                                    log_message("[FixedString] *** FOUND ARM64 GST at 0x%llx! ***",
+                                    LOG_CORE_INFO("*** FOUND ARM64 GST at 0x%llx! ***",
                                                (unsigned long long)addr);
-                                    log_message("[FixedString]   Buckets at +0x%x, NumBuckets at +0x%x, EntrySize at +0x%x",
+                                    LOG_CORE_DEBUG("  Buckets at +0x%x, NumBuckets at +0x%x, EntrySize at +0x%x",
                                                off, nb_off, es_off);
 
                                     g_OffsetBuckets = off;
@@ -900,7 +900,7 @@ bool fixed_string_probe_near_ptr(void *stats_ptr) {
         }
     }
 
-    log_message("[FixedString] Direct scan complete - no GST found");
+    LOG_CORE_DEBUG("Direct scan complete - no GST found");
     return false;
 }
 
@@ -958,7 +958,7 @@ static bool validate_string_at_entry(void *entry, uint64_t entry_size) {
  * ARM64 macOS doesn't have Windows cache-line padding, so offsets differ.
  */
 static bool discover_arm64_offsets(void *gst) {
-    log_message("[FixedString] Starting ARM64 offset discovery at %p...", gst);
+    LOG_CORE_DEBUG("Starting ARM64 offset discovery at %p...", gst);
 
     // SubTable starts with Element[64] = 64 * 64 = 0x1000 bytes
     // After that, fields are more compact on ARM64 without Windows padding
@@ -1044,16 +1044,16 @@ static bool discover_arm64_offsets(void *gst) {
                                 char sample[64] = {0};
                                 safe_read_bytes((char *)first_bucket + 0x18, sample, sizeof(sample) - 1);
 
-                                log_message("[FixedString] *** DISCOVERED ARM64 OFFSETS! ***");
-                                log_message("[FixedString]   Buckets offset: 0x%x", off_buckets);
-                                log_message("[FixedString]   NumBuckets offset: 0x%x", off_num_buckets);
-                                log_message("[FixedString]   EntrySize offset: 0x%x", off_entry_size);
-                                log_message("[FixedString]   EntriesPerBucket offset: 0x%x", off_epb);
-                                log_message("[FixedString]   SubTable size: 0x%x", estimated_subtable_size);
-                                log_message("[FixedString]   SubTable[0]: NumBuckets=%u EntrySize=%llu",
+                                LOG_CORE_INFO("*** DISCOVERED ARM64 OFFSETS! ***");
+                                LOG_CORE_DEBUG("  Buckets offset: 0x%x", off_buckets);
+                                LOG_CORE_DEBUG("  NumBuckets offset: 0x%x", off_num_buckets);
+                                LOG_CORE_DEBUG("  EntrySize offset: 0x%x", off_entry_size);
+                                LOG_CORE_DEBUG("  EntriesPerBucket offset: 0x%x", off_epb);
+                                LOG_CORE_DEBUG("  SubTable size: 0x%x", estimated_subtable_size);
+                                LOG_CORE_DEBUG("  SubTable[0]: NumBuckets=%u EntrySize=%llu",
                                            num_buckets, entry_size);
-                                log_message("[FixedString]   SubTable[1]: NumBuckets=%u", num_buckets1);
-                                log_message("[FixedString]   Sample string: \"%s\"", sample);
+                                LOG_CORE_DEBUG("  SubTable[1]: NumBuckets=%u", num_buckets1);
+                                LOG_CORE_DEBUG("  Sample string: \"%s\"", sample);
                                 return true;
                             }
                         }
@@ -1063,7 +1063,7 @@ static bool discover_arm64_offsets(void *gst) {
         }
     }
 
-    log_message("[FixedString] ARM64 offset discovery failed (tested %d candidates)", candidates_tested);
+    LOG_CORE_DEBUG("ARM64 offset discovery failed (tested %d candidates)", candidates_tested);
     return false;
 }
 
@@ -1072,17 +1072,17 @@ static bool discover_arm64_offsets(void *gst) {
  */
 bool fixed_string_probe_offsets(void) {
     if (!g_pGlobalStringTable || !*g_pGlobalStringTable) {
-        log_message("[FixedString] Cannot probe - GlobalStringTable not found");
+        LOG_CORE_WARN("Cannot probe - GlobalStringTable not found");
         return false;
     }
 
     void *gst = NULL;
     if (!safe_read_ptr(g_pGlobalStringTable, &gst) || !gst) {
-        log_message("[FixedString] Cannot read GlobalStringTable pointer");
+        LOG_CORE_WARN("Cannot read GlobalStringTable pointer");
         return false;
     }
 
-    log_message("[FixedString] GlobalStringTable at %p", gst);
+    LOG_CORE_DEBUG("GlobalStringTable at %p", gst);
 
     // Try Windows x64 offsets first
     void *subtable0 = gst;  // First SubTable at offset 0
@@ -1096,15 +1096,15 @@ bool fixed_string_probe_offsets(void) {
         void *first_bucket = NULL;
         if (safe_read_ptr(buckets, &first_bucket) && first_bucket &&
             validate_string_at_entry(first_bucket, entry_size)) {
-            log_message("[FixedString] SubTable[0] valid with Windows x64 offsets:");
-            log_message("[FixedString]   NumBuckets=%d EntrySize=%llu Buckets=%p",
+            LOG_CORE_DEBUG("SubTable[0] valid with Windows x64 offsets:");
+            LOG_CORE_DEBUG("  NumBuckets=%d EntrySize=%llu Buckets=%p",
                        num_buckets, entry_size, buckets);
             return true;
         }
     }
 
     // Windows offsets didn't work - try dynamic ARM64 offset discovery
-    log_message("[FixedString] Windows x64 offsets failed, trying ARM64 discovery...");
+    LOG_CORE_DEBUG("Windows x64 offsets failed, trying ARM64 discovery...");
     return discover_arm64_offsets(gst);
 }
 
@@ -1114,12 +1114,12 @@ bool fixed_string_probe_offsets(void) {
 
 void fixed_string_init(void *main_binary_base) {
     if (g_Initialized) {
-        log_message("[FixedString] Already initialized");
+        LOG_CORE_DEBUG("Already initialized");
         return;
     }
 
     g_MainBinaryBase = main_binary_base;
-    log_message("[FixedString] Initializing with binary base %p", main_binary_base);
+    LOG_CORE_DEBUG("Initializing with binary base %p", main_binary_base);
 
     // Try dlsym first
     g_pGlobalStringTable = try_dlsym_discovery();
@@ -1127,12 +1127,12 @@ void fixed_string_init(void *main_binary_base) {
     if (g_pGlobalStringTable) {
         void *gst = NULL;
         if (safe_read_ptr(g_pGlobalStringTable, &gst) && gst) {
-            log_message("[FixedString] GlobalStringTable = %p", gst);
+            LOG_CORE_DEBUG("GlobalStringTable = %p", gst);
 
             // Probe for correct offsets
             if (fixed_string_probe_offsets()) {
                 g_Initialized = true;
-                log_message("[FixedString] Initialization complete");
+                LOG_CORE_DEBUG("Initialization complete");
                 return;
             }
         }
@@ -1143,17 +1143,17 @@ void fixed_string_init(void *main_binary_base) {
         uintptr_t runtime_addr = (uintptr_t)g_MainBinaryBase +
                                   (OFFSET_GLOBAL_STRING_TABLE - GHIDRA_BASE_ADDRESS);
         g_pGlobalStringTable = (void **)runtime_addr;
-        log_message("[FixedString] Using Ghidra offset: %p (base %p + 0x%llx)",
+        LOG_CORE_DEBUG("Using Ghidra offset: %p (base %p + 0x%llx)",
                    (void *)g_pGlobalStringTable, g_MainBinaryBase,
                    (unsigned long long)(OFFSET_GLOBAL_STRING_TABLE - GHIDRA_BASE_ADDRESS));
 
         void *gst = NULL;
         if (safe_read_ptr(g_pGlobalStringTable, &gst) && gst) {
-            log_message("[FixedString] GlobalStringTable = %p", gst);
+            LOG_CORE_DEBUG("GlobalStringTable = %p", gst);
 
             if (fixed_string_probe_offsets()) {
                 g_Initialized = true;
-                log_message("[FixedString] Initialization complete via Ghidra offset");
+                LOG_CORE_DEBUG("Initialization complete via Ghidra offset");
                 return;
             }
         }
@@ -1161,8 +1161,8 @@ void fixed_string_init(void *main_binary_base) {
 
     // Defer heavy runtime probing to first resolution attempt (lazy discovery)
     // This avoids slowing down game startup when FixedString may not be used
-    log_message("[FixedString] Heavy probing deferred to first resolution (lazy discovery)");
-    log_message("[FixedString] GlobalStringTable not yet found - will probe on first use");
+    LOG_CORE_DEBUG("Heavy probing deferred to first resolution (lazy discovery)");
+    LOG_CORE_DEBUG("GlobalStringTable not yet found - will probe on first use");
 
     g_Initialized = true;  // Mark as initialized, but GST not yet found
 }
@@ -1177,7 +1177,7 @@ static bool try_lazy_discovery(void) {
     }
     g_LazyDiscoveryAttempted = true;
 
-    log_message("[FixedString] Lazy discovery triggered on first resolution attempt...");
+    LOG_CORE_DEBUG("Lazy discovery triggered on first resolution attempt...");
 
     // Strategy 1: Try to load from cache (instant - no scanning needed)
     if (load_offset_cache() && g_CachedGSTOffset != 0 && g_MainBinaryBase) {
@@ -1194,31 +1194,31 @@ static bool try_lazy_discovery(void) {
             // Quick validation: try to read SubTable[0].Buckets
             void *buckets = NULL;
             if (safe_read_ptr((char *)gst_addr + g_OffsetBuckets, &buckets) && buckets) {
-                log_message("[FixedString] Cache hit! GST at %p", (void *)gst_addr);
+                LOG_CORE_DEBUG("Cache hit! GST at %p", (void *)gst_addr);
                 return true;
             }
         }
-        log_message("[FixedString] Cache invalid - will re-probe");
+        LOG_CORE_DEBUG("Cache invalid - will re-probe");
         g_pGlobalStringTable = NULL;
     }
 
     // Strategy 2: Reference-based discovery (find known string, backtrack)
     // This is faster than exhaustive scanning and works regardless of ARM64 layout
     if (try_reference_based_discovery()) {
-        log_message("[FixedString] Lazy discovery succeeded via reference-based discovery");
+        LOG_CORE_DEBUG("Lazy discovery succeeded via reference-based discovery");
         return true;
     }
 
     // Strategy 3: Exhaustive runtime memory probe (slowest fallback)
-    log_message("[FixedString] Trying exhaustive memory probe as last resort...");
+    LOG_CORE_DEBUG("Trying exhaustive memory probe as last resort...");
     if (try_runtime_probe()) {
         if (fixed_string_probe_offsets()) {
-            log_message("[FixedString] Lazy discovery succeeded via runtime probe");
+            LOG_CORE_DEBUG("Lazy discovery succeeded via runtime probe");
             return true;
         }
     }
 
-    log_message("[FixedString] Lazy discovery failed - GlobalStringTable not found");
+    LOG_CORE_DEBUG("Lazy discovery failed - GlobalStringTable not found");
     return false;
 }
 
@@ -1336,18 +1336,18 @@ void fixed_string_get_stats(uint32_t *out_resolved, uint32_t *out_failed) {
 
 void fixed_string_dump_subtable_info(int subtable_idx) {
     if (subtable_idx < 0 || subtable_idx >= GST_NUM_SUBTABLES) {
-        log_message("[FixedString] Invalid SubTable index: %d", subtable_idx);
+        LOG_CORE_WARN("Invalid SubTable index: %d", subtable_idx);
         return;
     }
 
     if (!g_pGlobalStringTable || !*g_pGlobalStringTable) {
-        log_message("[FixedString] GlobalStringTable not available");
+        LOG_CORE_WARN("GlobalStringTable not available");
         return;
     }
 
     void *gst = NULL;
     if (!safe_read_ptr(g_pGlobalStringTable, &gst) || !gst) {
-        log_message("[FixedString] Cannot read GlobalStringTable");
+        LOG_CORE_WARN("Cannot read GlobalStringTable");
         return;
     }
 
@@ -1363,11 +1363,11 @@ void fixed_string_dump_subtable_info(int subtable_idx) {
     safe_read_u64((char *)subTable + g_OffsetEntrySize, &entrySize);
     safe_read_ptr((char *)subTable + g_OffsetBuckets, &buckets);
 
-    log_message("[FixedString] SubTable[%d] at %p:", subtable_idx, subTable);
-    log_message("[FixedString]   NumBuckets: %u", numBuckets);
-    log_message("[FixedString]   EntriesPerBucket: %u", entriesPerBucket);
-    log_message("[FixedString]   EntrySize: %llu", entrySize);
-    log_message("[FixedString]   Buckets: %p", buckets);
+    LOG_CORE_DEBUG("SubTable[%d] at %p:", subtable_idx, subTable);
+    LOG_CORE_DEBUG("  NumBuckets: %u", numBuckets);
+    LOG_CORE_DEBUG("  EntriesPerBucket: %u", entriesPerBucket);
+    LOG_CORE_DEBUG("  EntrySize: %llu", entrySize);
+    LOG_CORE_DEBUG("  Buckets: %p", buckets);
 
     // Try to read first string
     if (buckets && numBuckets > 0 && entrySize > 0) {
@@ -1379,7 +1379,7 @@ void fixed_string_dump_subtable_info(int subtable_idx) {
 
             if (safe_read_bytes((char *)entry + STRING_ENTRY_HEADER_SIZE,
                                strBuf, sizeof(strBuf) - 1)) {
-                log_message("[FixedString]   First string: \"%s\"", strBuf);
+                LOG_CORE_DEBUG("  First string: \"%s\"", strBuf);
             }
         }
     }

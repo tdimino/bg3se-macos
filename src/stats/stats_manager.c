@@ -18,25 +18,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdarg.h>
 #include <string.h>
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
-
-// ============================================================================
-// Logging Helper
-// ============================================================================
-
-static void log_stats(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void log_stats(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    log_message("[Stats] %s", buf);
-}
 
 // ============================================================================
 // Memory Safety
@@ -231,14 +216,14 @@ static const char* read_fixed_string(void *addr);
 
 void stats_manager_init(void *main_binary_base) {
     if (g_Initialized) {
-        log_stats("Already initialized");
+        LOG_STATS_DEBUG("Already initialized");
         return;
     }
 
     g_MainBinaryBase = main_binary_base;
 
-    log_stats("=== Stats Manager Initialization ===");
-    log_stats("Main binary base: %p", main_binary_base);
+    LOG_STATS_DEBUG("=== Stats Manager Initialization ===");
+    LOG_STATS_DEBUG("Main binary base: %p", main_binary_base);
 
     // Initialize FixedString resolution system
     fixed_string_init(main_binary_base);
@@ -249,9 +234,9 @@ void stats_manager_init(void *main_binary_base) {
     if (handle) {
         g_pRPGStatsPtr = (void**)dlsym(handle, RPGSTATS_M_PTR_SYMBOL);
         if (g_pRPGStatsPtr) {
-            log_stats("Resolved %s via dlsym: %p", RPGSTATS_M_PTR_SYMBOL, (void*)g_pRPGStatsPtr);
+            LOG_STATS_DEBUG("Resolved %s via dlsym: %p", RPGSTATS_M_PTR_SYMBOL, (void*)g_pRPGStatsPtr);
         } else {
-            log_stats("dlsym failed for %s: %s", RPGSTATS_M_PTR_SYMBOL, dlerror());
+            LOG_STATS_DEBUG("dlsym failed for %s: %s", RPGSTATS_M_PTR_SYMBOL, dlerror());
         }
     }
 
@@ -260,7 +245,7 @@ void stats_manager_init(void *main_binary_base) {
         uintptr_t runtime_addr = (uintptr_t)main_binary_base +
                                   (OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS);
         g_pRPGStatsPtr = (void**)runtime_addr;
-        log_stats("Using Ghidra offset: %p (base %p + offset 0x%llx)",
+        LOG_STATS_DEBUG("Using Ghidra offset: %p (base %p + offset 0x%llx)",
                   (void*)g_pRPGStatsPtr, main_binary_base,
                   (unsigned long long)(OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS));
     }
@@ -269,63 +254,63 @@ void stats_manager_init(void *main_binary_base) {
 
     // Check if stats system is ready yet
     if (stats_manager_ready()) {
-        log_stats("Stats system is READY");
+        LOG_STATS_DEBUG("Stats system is READY");
         void *rpgstats = stats_manager_get_raw();
-        log_stats("RPGStats instance: %p", rpgstats);
+        LOG_STATS_DEBUG("RPGStats instance: %p", rpgstats);
     } else {
-        log_stats("Stats system not yet ready (m_ptr is NULL - will retry at SessionLoaded)");
+        LOG_STATS_DEBUG("Stats system not yet ready (m_ptr is NULL - will retry at SessionLoaded)");
     }
 }
 
 void stats_manager_on_session_loaded(void) {
-    log_stats("=== SessionLoaded: Checking Stats System ===");
+    LOG_STATS_DEBUG("=== SessionLoaded: Checking Stats System ===");
 
     if (!g_Initialized) {
-        log_stats("ERROR: Stats manager not initialized");
+        LOG_STATS_DEBUG("ERROR: Stats manager not initialized");
         return;
     }
 
     if (!g_pRPGStatsPtr) {
-        log_stats("ERROR: g_pRPGStatsPtr is NULL");
+        LOG_STATS_DEBUG("ERROR: g_pRPGStatsPtr is NULL");
         return;
     }
 
     // Read the pointer value
     void *stats_ptr = NULL;
     if (!safe_read_ptr(g_pRPGStatsPtr, &stats_ptr)) {
-        log_stats("ERROR: Failed to read m_ptr (bad address?)");
+        LOG_STATS_DEBUG("ERROR: Failed to read m_ptr (bad address?)");
         return;
     }
 
     if (!stats_ptr) {
-        log_stats("WARNING: m_ptr is still NULL after SessionLoaded");
+        LOG_STATS_DEBUG("WARNING: m_ptr is still NULL after SessionLoaded");
         return;
     }
 
-    log_stats("Stats system pointer (from m_ptr): %p", stats_ptr);
+    LOG_STATS_DEBUG("Stats system pointer (from m_ptr): %p", stats_ptr);
 
     // FixedString will be discovered lazily on first resolution attempt
     // This avoids slow startup - discovery uses reference-based search for speed
     if (fixed_string_is_ready()) {
-        log_stats("FixedString system: READY");
+        LOG_STATS_DEBUG("FixedString system: READY");
     } else {
-        log_stats("FixedString system: Will initialize on first use (lazy discovery)");
+        LOG_STATS_DEBUG("FixedString system: Will initialize on first use (lazy discovery)");
     }
 
     // Check if we need another level of indirection
     void *first_qword = NULL;
     if (safe_read_ptr(stats_ptr, &first_qword)) {
-        log_stats("  First qword at stats_ptr: %p", first_qword);
+        LOG_STATS_DEBUG("  First qword at stats_ptr: %p", first_qword);
         // If it looks like a heap pointer (not VMT), we might need to dereference again
         if (first_qword && (uintptr_t)first_qword > 0x100000000ULL &&
             ((uintptr_t)first_qword >> 32) != 0x1) {  // Not a code pointer
-            log_stats("  First qword looks like heap ptr, using as actual RPGStats");
+            LOG_STATS_DEBUG("  First qword looks like heap ptr, using as actual RPGStats");
             stats_ptr = first_qword;
         }
     }
 
     // Probe for CNamedElementManager-like structures at various offsets
-    log_stats("Probing for Objects manager at various offsets:");
+    LOG_STATS_DEBUG("Probing for Objects manager at various offsets:");
     for (int off = 0x00; off <= 0x180; off += 0x08) {
         void *mgr = (char*)stats_ptr + off;
         void *buf = NULL;
@@ -341,21 +326,21 @@ void stats_manager_on_session_loaded(void) {
 
         // Look for reasonable array sizes (100-50000)
         if (sz >= 100 && sz <= 50000 && cap >= sz) {
-            log_stats("  +0x%03x: buf=%p, cap=%u, size=%u", off, buf, cap, sz);
+            LOG_STATS_DEBUG("  +0x%03x: buf=%p, cap=%u, size=%u", off, buf, cap, sz);
 
             // Try to read first element and its name (safely)
             void *elem = NULL;
             if (safe_read_ptr(buf, &elem) && elem) {
-                log_stats("    elem[0]=%p", elem);
+                LOG_STATS_DEBUG("    elem[0]=%p", elem);
 
                 // Only do detailed dump for the 15774-size manager (likely Objects)
                 if (sz == 15774 && off == 0xC0) {
                     // Dump first 64 bytes of element as hex
-                    log_stats("    Dumping elem[0] structure:");
+                    LOG_STATS_DEBUG("    Dumping elem[0] structure:");
                     for (int dump_off = 0; dump_off < 64; dump_off += 8) {
                         void *val = NULL;
                         if (safe_read_ptr((char*)elem + dump_off, &val)) {
-                            log_stats("      +0x%02x: %p", dump_off, val);
+                            LOG_STATS_DEBUG("      +0x%02x: %p", dump_off, val);
 
                             // Try to read content from heap pointers
                             if (val && (uintptr_t)val > 0x100000000ULL &&
@@ -368,7 +353,7 @@ void stats_manager_on_session_loaded(void) {
                                     memcpy(raw_buf, (void*)raw_data, 24);
                                     vm_deallocate(mach_task_self(), raw_data, raw_sz);
                                     // Print first 16 bytes as hex
-                                    log_stats("        -> %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x",
+                                    LOG_STATS_DEBUG("        -> %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x",
                                         raw_buf[0], raw_buf[1], raw_buf[2], raw_buf[3],
                                         raw_buf[4], raw_buf[5], raw_buf[6], raw_buf[7],
                                         raw_buf[8], raw_buf[9], raw_buf[10], raw_buf[11],
@@ -376,7 +361,7 @@ void stats_manager_on_session_loaded(void) {
                                     // Also try as string if printable
                                     if (raw_buf[0] >= 0x20 && raw_buf[0] < 0x7F) {
                                         raw_buf[23] = 0;
-                                        log_stats("        -> str: \"%s\"", (char*)raw_buf);
+                                        LOG_STATS_DEBUG("        -> str: \"%s\"", (char*)raw_buf);
                                     }
                                 }
                             }
@@ -400,55 +385,55 @@ void stats_manager_on_session_loaded(void) {
                             // Check if it looks like a stat name (alphanumeric start)
                             if ((name_buf[0] >= 'A' && name_buf[0] <= 'Z') ||
                                 (name_buf[0] >= 'a' && name_buf[0] <= 'z')) {
-                                log_stats("    elem+0x%02x -> \"%s\"", name_off, name_buf);
+                                LOG_STATS_DEBUG("    elem+0x%02x -> \"%s\"", name_off, name_buf);
                             }
                         }
                     }
                 }
             } else {
-                log_stats("    elem[0]=NULL or unreadable");
+                LOG_STATS_DEBUG("    elem[0]=NULL or unreadable");
             }
         }
     }
 
     // Get the Objects manager using current offset
     void *objects_mgr = (char*)stats_ptr + RPGSTATS_OFFSET_OBJECTS;
-    log_stats("Using Objects manager at: %p (RPGStats+0x%02x)", objects_mgr, RPGSTATS_OFFSET_OBJECTS);
+    LOG_STATS_DEBUG("Using Objects manager at: %p (RPGStats+0x%02x)", objects_mgr, RPGSTATS_OFFSET_OBJECTS);
 
     // Read raw buffer pointer and count
     void *buf_ptr = NULL;
     if (safe_read_ptr((char*)objects_mgr + CNEM_OFFSET_VALUES_BUF, &buf_ptr)) {
-        log_stats("  Values.buf_: %p", buf_ptr);
+        LOG_STATS_DEBUG("  Values.buf_: %p", buf_ptr);
     }
     uint32_t capacity = 0, size = 0;
     safe_read_u32((char*)objects_mgr + CNEM_OFFSET_VALUES_CAP, &capacity);
     safe_read_u32((char*)objects_mgr + CNEM_OFFSET_VALUES_SIZE, &size);
-    log_stats("  Values.capacity_: %u, Values.size_: %u", capacity, size);
+    LOG_STATS_DEBUG("  Values.capacity_: %u, Values.size_: %u", capacity, size);
 
     // Get count
     int count = get_manager_count(objects_mgr);
-    log_stats("Stats Objects count: %d", count);
+    LOG_STATS_DEBUG("Stats Objects count: %d", count);
 
     if (count <= 0 || count > 100000) {
-        log_stats("ERROR: Invalid count - offsets may be wrong");
+        LOG_STATS_DEBUG("ERROR: Invalid count - offsets may be wrong");
         return;
     }
 
     // Try to read first stat name as a sanity check
     void *first_obj = get_manager_element(objects_mgr, 0);
-    log_stats("First element ptr: %p", first_obj);
+    LOG_STATS_DEBUG("First element ptr: %p", first_obj);
     if (first_obj) {
         const char *name = read_fixed_string((char*)first_obj + OBJECT_OFFSET_NAME);
         if (name) {
-            log_stats("First stat: \"%s\"", name);
+            LOG_STATS_DEBUG("First stat: \"%s\"", name);
         } else {
-            log_stats("First stat: (name read failed at +0x%02x)", OBJECT_OFFSET_NAME);
+            LOG_STATS_DEBUG("First stat: (name read failed at +0x%02x)", OBJECT_OFFSET_NAME);
         }
     } else {
-        log_stats("ERROR: Could not read first element from buffer");
+        LOG_STATS_DEBUG("ERROR: Could not read first element from buffer");
     }
 
-    log_stats("Stats system READY with %d entries", count);
+    LOG_STATS_DEBUG("Stats system READY with %d entries", count);
 }
 
 bool stats_manager_ready(void) {
@@ -517,20 +502,20 @@ static const char* get_rpgstats_fixedstring(int32_t index) {
     // Read buffer pointer (offset 0x00)
     void *buf = NULL;
     if (!safe_read_ptr(fs_array, &buf) || !buf) {
-        log_stats("get_rpgstats_fixedstring: failed to read buf at offset 0x%x", RPGSTATS_OFFSET_FIXEDSTRINGS);
+        LOG_STATS_DEBUG("get_rpgstats_fixedstring: failed to read buf at offset 0x%x", RPGSTATS_OFFSET_FIXEDSTRINGS);
         return NULL;
     }
 
     // Read size (offset 0x0C for TrackedCompactSet)
     uint32_t size = 0;
     if (!safe_read_u32((char*)fs_array + 0x0C, &size)) {
-        log_stats("get_rpgstats_fixedstring: failed to read size");
+        LOG_STATS_DEBUG("get_rpgstats_fixedstring: failed to read size");
         return NULL;
     }
 
     // Bounds check
     if ((uint32_t)index >= size) {
-        log_stats("get_rpgstats_fixedstring: index %d out of bounds (size=%u)", index, size);
+        LOG_STATS_DEBUG("get_rpgstats_fixedstring: index %d out of bounds (size=%u)", index, size);
         return NULL;
     }
 
@@ -645,7 +630,7 @@ StatsObjectPtr stats_get(const char *name) {
 
     void *objects = get_objects_manager();
     if (!objects) {
-        log_stats("Failed to get Objects manager");
+        LOG_STATS_DEBUG("Failed to get Objects manager");
         return NULL;
     }
 
@@ -653,7 +638,7 @@ StatsObjectPtr stats_get(const char *name) {
     // TODO: Implement hash table lookup for performance
     int count = get_manager_count(objects);
     if (count <= 0) {
-        log_stats("No stats objects found (count: %d)", count);
+        LOG_STATS_DEBUG("No stats objects found (count: %d)", count);
         return NULL;
     }
 
@@ -814,10 +799,10 @@ static void* get_object_modifier_list(StatsObjectPtr obj) {
     // ModifierListIndex is a uint8_t at offset 0x00
     uint8_t modifier_list_idx = 0;
     if (!safe_read_u8((char*)obj + OBJECT_OFFSET_MODIFIERLIST_IDX, &modifier_list_idx)) {
-        log_stats("get_object_modifier_list: failed to read ModifierListIndex at +0x%x", OBJECT_OFFSET_MODIFIERLIST_IDX);
+        LOG_STATS_DEBUG("get_object_modifier_list: failed to read ModifierListIndex at +0x%x", OBJECT_OFFSET_MODIFIERLIST_IDX);
         return NULL;
     }
-    log_stats("get_object_modifier_list: ModifierListIndex = %u", (uint32_t)modifier_list_idx);
+    LOG_STATS_DEBUG("get_object_modifier_list: ModifierListIndex = %u", (uint32_t)modifier_list_idx);
 
     void *modifier_lists = get_modifier_lists_manager();
     if (!modifier_lists) return NULL;
@@ -836,18 +821,18 @@ static int find_property_index_by_name(void *modifier_list, const char *prop_nam
     // Read attributes count
     uint32_t attr_count = 0;
     if (!safe_read_u32((char*)attrs_mgr + CNEM_OFFSET_VALUES_SIZE, &attr_count)) {
-        log_stats("find_property_index_by_name: failed to read attr_count");
+        LOG_STATS_DEBUG("find_property_index_by_name: failed to read attr_count");
         return -1;
     }
-    log_stats("find_property_index_by_name: attr_count = %u", attr_count);
+    LOG_STATS_DEBUG("find_property_index_by_name: attr_count = %u", attr_count);
 
     // Read attributes buffer
     void *attrs_buf = NULL;
     if (!safe_read_ptr((char*)attrs_mgr + CNEM_OFFSET_VALUES_BUF, &attrs_buf) || !attrs_buf) {
-        log_stats("find_property_index_by_name: failed to read attrs_buf");
+        LOG_STATS_DEBUG("find_property_index_by_name: failed to read attrs_buf");
         return -1;
     }
-    log_stats("find_property_index_by_name: attrs_buf = %p", attrs_buf);
+    LOG_STATS_DEBUG("find_property_index_by_name: attrs_buf = %p", attrs_buf);
 
     // Linear search through Modifiers to find by name
     for (uint32_t i = 0; i < attr_count && i < 5; i++) {  // Log first 5 for debug
@@ -858,7 +843,7 @@ static int find_property_index_by_name(void *modifier_list, const char *prop_nam
 
         // Read the Modifier's name at offset 0x0C
         const char *mod_name = read_fixed_string((char*)modifier_ptr + MODIFIER_OFFSET_NAME);
-        log_stats("  attr[%u] = '%s'", i, mod_name ? mod_name : "(null)");
+        LOG_STATS_DEBUG("  attr[%u] = '%s'", i, mod_name ? mod_name : "(null)");
         if (mod_name && strcmp(mod_name, prop_name) == 0) {
             return (int)i;  // Found! Return the index
         }
@@ -936,14 +921,14 @@ static void *get_property_write_address(StatsObjectPtr obj, const char *prop,
                                          int *out_prop_index, const char *caller_name) {
     int prop_index = get_property_index(obj, prop);
     if (prop_index < 0) {
-        log_stats("%s: property '%s' not found", caller_name, prop);
+        LOG_STATS_DEBUG("%s: property '%s' not found", caller_name, prop);
         return NULL;
     }
 
     void *idx_props = (char*)obj + OBJECT_OFFSET_INDEXED_PROPS;
     void *begin_ptr = NULL;
     if (!safe_read_ptr((char*)idx_props + VECTOR_OFFSET_BEGIN, &begin_ptr) || !begin_ptr) {
-        log_stats("%s: failed to read IndexedProperties", caller_name);
+        LOG_STATS_DEBUG("%s: failed to read IndexedProperties", caller_name);
         return NULL;
     }
 
@@ -960,16 +945,16 @@ bool stats_set_string(StatsObjectPtr obj, const char *prop, const char *value) {
 
     int32_t pool_index = find_fixedstring_pool_index(value);
     if (pool_index < 0) {
-        log_stats("stats_set_string: value '%s' not found in FixedStrings pool", value);
+        LOG_STATS_DEBUG("stats_set_string: value '%s' not found in FixedStrings pool", value);
         return false;
     }
 
     if (!safe_write_i32(write_addr, pool_index)) {
-        log_stats("stats_set_string: failed to write pool index");
+        LOG_STATS_DEBUG("stats_set_string: failed to write pool index");
         return false;
     }
 
-    log_stats("stats_set_string: %s = '%s' (prop_index=%d, pool_index=%d)", prop, value, prop_index, pool_index);
+    LOG_STATS_DEBUG("stats_set_string: %s = '%s' (prop_index=%d, pool_index=%d)", prop, value, prop_index, pool_index);
     return true;
 }
 
@@ -982,11 +967,11 @@ bool stats_set_int(StatsObjectPtr obj, const char *prop, int64_t value) {
 
     int32_t val32 = (int32_t)value;
     if (!safe_write_i32(write_addr, val32)) {
-        log_stats("stats_set_int: failed to write value");
+        LOG_STATS_DEBUG("stats_set_int: failed to write value");
         return false;
     }
 
-    log_stats("stats_set_int: %s = %d (index %d)", prop, val32, prop_index);
+    LOG_STATS_DEBUG("stats_set_int: %s = %d (index %d)", prop, val32, prop_index);
     return true;
 }
 
@@ -1000,11 +985,11 @@ bool stats_set_float(StatsObjectPtr obj, const char *prop, float value) {
     union { float f; int32_t i; } conv;
     conv.f = value;
     if (!safe_write_i32(write_addr, conv.i)) {
-        log_stats("stats_set_float: failed to write value");
+        LOG_STATS_DEBUG("stats_set_float: failed to write value");
         return false;
     }
 
-    log_stats("stats_set_float: %s = %f (index %d)", prop, value, prop_index);
+    LOG_STATS_DEBUG("stats_set_float: %s = %f (index %d)", prop, value, prop_index);
     return true;
 }
 
@@ -1015,7 +1000,7 @@ bool stats_set_float(StatsObjectPtr obj, const char *prop, float value) {
 bool stats_sync(const char *name) {
     if (!name) return false;
 
-    log_stats("stats_sync not yet implemented");
+    LOG_STATS_DEBUG("stats_sync not yet implemented");
     return false;
 }
 
@@ -1092,7 +1077,7 @@ StatsObjectPtr stats_create(const char *name, const char *type, const char *temp
     if (!name || !type) return NULL;
 
     (void)template_name;  // Unused for now
-    log_stats("stats_create not yet implemented");
+    LOG_STATS_DEBUG("stats_create not yet implemented");
     return NULL;
 }
 
@@ -1102,7 +1087,7 @@ StatsObjectPtr stats_create(const char *name, const char *type, const char *temp
 
 void stats_dump(StatsObjectPtr obj) {
     if (!obj) {
-        log_stats("Cannot dump NULL stat object");
+        LOG_STATS_DEBUG("Cannot dump NULL stat object");
         return;
     }
 
@@ -1111,36 +1096,36 @@ void stats_dump(StatsObjectPtr obj) {
     int level = stats_get_level(obj);
     const char *using_stat = stats_get_using(obj);
 
-    log_stats("=== Stat Object Dump ===");
-    log_stats("  Address: %p", obj);
-    log_stats("  Name: %s", name ? name : "(null)");
-    log_stats("  Type: %s", type ? type : "(null)");
-    log_stats("  Level: %d", level);
-    log_stats("  Using: %s", using_stat ? using_stat : "(none)");
+    LOG_STATS_DEBUG("=== Stat Object Dump ===");
+    LOG_STATS_DEBUG("  Address: %p", obj);
+    LOG_STATS_DEBUG("  Name: %s", name ? name : "(null)");
+    LOG_STATS_DEBUG("  Type: %s", type ? type : "(null)");
+    LOG_STATS_DEBUG("  Level: %d", level);
+    LOG_STATS_DEBUG("  Using: %s", using_stat ? using_stat : "(none)");
 }
 
 void stats_dump_types(void) {
     if (!stats_manager_ready()) {
-        log_stats("Stats system not ready");
+        LOG_STATS_DEBUG("Stats system not ready");
         return;
     }
 
     void *modifier_lists = get_modifier_lists_manager();
     if (!modifier_lists) {
-        log_stats("Failed to get ModifierLists manager");
+        LOG_STATS_DEBUG("Failed to get ModifierLists manager");
         return;
     }
 
     int count = get_manager_count(modifier_lists);
-    log_stats("=== Stat Types (ModifierLists) ===");
-    log_stats("Total: %d", count);
+    LOG_STATS_DEBUG("=== Stat Types (ModifierLists) ===");
+    LOG_STATS_DEBUG("Total: %d", count);
 
     for (int i = 0; i < count && i < 50; i++) {  // Limit output
         void *ml = get_manager_element(modifier_lists, i);
         if (!ml) continue;
 
         const char *name = read_fixed_string((char*)ml + MODIFIERLIST_OFFSET_NAME);
-        log_stats("  [%d] %s", i, name ? name : "(unnamed)");
+        LOG_STATS_DEBUG("  [%d] %s", i, name ? name : "(unnamed)");
     }
 }
 
@@ -1151,25 +1136,25 @@ void stats_dump_types(void) {
 void stats_dump_modifierlist_attributes(int ml_index) {
     void *modifier_lists = get_modifier_lists_manager();
     if (!modifier_lists) {
-        log_stats("ModifierLists not available");
+        LOG_STATS_DEBUG("ModifierLists not available");
         return;
     }
 
     int ml_count = get_manager_count(modifier_lists);
     if (ml_index < 0 || ml_index >= ml_count) {
-        log_stats("Invalid ModifierList index: %d (max: %d)", ml_index, ml_count - 1);
+        LOG_STATS_DEBUG("Invalid ModifierList index: %d (max: %d)", ml_index, ml_count - 1);
         return;
     }
 
     void *ml = get_manager_element(modifier_lists, ml_index);
     if (!ml) {
-        log_stats("Failed to get ModifierList[%d]", ml_index);
+        LOG_STATS_DEBUG("Failed to get ModifierList[%d]", ml_index);
         return;
     }
 
     const char *ml_name = read_fixed_string((char*)ml + MODIFIERLIST_OFFSET_NAME);
-    log_stats("=== ModifierList[%d] '%s' Attributes ===", ml_index, ml_name ? ml_name : "(unknown)");
-    log_stats("ModifierList ptr: %p", ml);
+    LOG_STATS_DEBUG("=== ModifierList[%d] '%s' Attributes ===", ml_index, ml_name ? ml_name : "(unknown)");
+    LOG_STATS_DEBUG("ModifierList ptr: %p", ml);
 
     // ModifierList starts with CNamedElementManager<Modifier> Attributes
     void *attrs_mgr = ml;  // Attributes is at offset 0
@@ -1177,33 +1162,33 @@ void stats_dump_modifierlist_attributes(int ml_index) {
     // Read attributes count from different potential offsets to diagnose
     uint32_t attr_count = 0;
     if (!safe_read_u32((char*)attrs_mgr + CNEM_OFFSET_VALUES_SIZE, &attr_count)) {
-        log_stats("Failed to read attributes count at +0x%x", CNEM_OFFSET_VALUES_SIZE);
+        LOG_STATS_DEBUG("Failed to read attributes count at +0x%x", CNEM_OFFSET_VALUES_SIZE);
         return;
     }
 
     void *attrs_buf = NULL;
     if (!safe_read_ptr((char*)attrs_mgr + CNEM_OFFSET_VALUES_BUF, &attrs_buf) || !attrs_buf) {
-        log_stats("Failed to read attributes buffer at +0x%x", CNEM_OFFSET_VALUES_BUF);
+        LOG_STATS_DEBUG("Failed to read attributes buffer at +0x%x", CNEM_OFFSET_VALUES_BUF);
         return;
     }
 
-    log_stats("Attributes count: %u, buf: %p (read from +0x%x, +0x%x)",
+    LOG_STATS_DEBUG("Attributes count: %u, buf: %p (read from +0x%x, +0x%x)",
               attr_count, attrs_buf, CNEM_OFFSET_VALUES_SIZE, CNEM_OFFSET_VALUES_BUF);
 
     // Dump first few pointers to understand structure
-    log_stats("First 5 pointer values in attrs_buf:");
+    LOG_STATS_DEBUG("First 5 pointer values in attrs_buf:");
     for (int i = 0; i < 5 && (uint32_t)i < attr_count; i++) {
         void *ptr = NULL;
         safe_read_ptr((char*)attrs_buf + i * sizeof(void*), &ptr);
-        log_stats("  buf[%d] = %p", i, ptr);
+        LOG_STATS_DEBUG("  buf[%d] = %p", i, ptr);
     }
 
     // Try to enumerate first few modifiers with extra debug info
-    log_stats("Enumerating first 10 Modifier entries:");
+    LOG_STATS_DEBUG("Enumerating first 10 Modifier entries:");
     for (uint32_t i = 0; i < attr_count && i < 10; i++) {
         void *modifier_ptr = NULL;
         if (!safe_read_ptr((char*)attrs_buf + i * sizeof(void*), &modifier_ptr) || !modifier_ptr) {
-            log_stats("  [%u] ptr=NULL", i);
+            LOG_STATS_DEBUG("  [%u] ptr=NULL", i);
             continue;
         }
 
@@ -1222,7 +1207,7 @@ void stats_dump_modifierlist_attributes(int ml_index) {
         const char *name_10 = read_fixed_string((char*)modifier_ptr + 0x10);
         const char *name_18 = read_fixed_string((char*)modifier_ptr + 0x18);
 
-        log_stats("  [%u] ptr=%p: f0=%d f1=%d f2=%d | name@0C='%s' name@10='%s' name@18='%s'",
+        LOG_STATS_DEBUG("  [%u] ptr=%p: f0=%d f1=%d f2=%d | name@0C='%s' name@10='%s' name@18='%s'",
                   i, modifier_ptr, field0, field1, field2,
                   name_0c ? name_0c : "(null)",
                   name_10 ? name_10 : "(null)",
@@ -1234,13 +1219,13 @@ void stats_dump_modifierlist_attributes(int ml_index) {
 void stats_probe_fixedstrings_offset(void) {
     void *rpgstats = stats_manager_get_raw();
     if (!rpgstats) {
-        log_stats("Cannot probe: RPGStats not ready");
+        LOG_STATS_DEBUG("Cannot probe: RPGStats not ready");
         return;
     }
 
-    log_stats("=== Probing RPGStats.FixedStrings offset ===");
-    log_stats("RPGStats base: %p", rpgstats);
-    log_stats("Expected Windows offset: 0x324 (based on field_2F0 + LegacyRefMap + TreasureRarities[7])");
+    LOG_STATS_DEBUG("=== Probing RPGStats.FixedStrings offset ===");
+    LOG_STATS_DEBUG("RPGStats base: %p", rpgstats);
+    LOG_STATS_DEBUG("Expected Windows offset: 0x324 (based on field_2F0 + LegacyRefMap + TreasureRarities[7])");
 
     // Focus on area around expected offset 0x300-0x380
     // Show ALL data at these offsets for diagnosis
@@ -1255,19 +1240,19 @@ void stats_probe_fixedstrings_offset(void) {
         safe_read_u32((char*)candidate + 0x08, &cap);
         safe_read_u32((char*)candidate + 0x0C, &size);
 
-        log_stats("  +0x%03x: buf=%p cap=%u size=%u", offset, buf, cap, size);
+        LOG_STATS_DEBUG("  +0x%03x: buf=%p cap=%u size=%u", offset, buf, cap, size);
 
         // If buf looks like a valid pointer and size is reasonable, probe elements
         uintptr_t buf_addr = (uintptr_t)buf;
         if (buf && buf_addr > 0x100000000 && buf_addr < 0x800000000000 && size > 100 && size < 100000) {
             // Try reading a few elements as FixedStrings
-            log_stats("    Probing elements (assuming FixedString array):");
+            LOG_STATS_DEBUG("    Probing elements (assuming FixedString array):");
             for (int idx = 0; idx < 5; idx++) {
                 void *e = (char*)buf + idx * sizeof(uint32_t);
                 uint32_t raw = 0;
                 safe_read_u32(e, &raw);
                 const char *s = read_fixed_string(e);
-                log_stats("      [%d] raw=0x%08x str='%s'", idx, raw, s ? s : "(null)");
+                LOG_STATS_DEBUG("      [%d] raw=0x%08x str='%s'", idx, raw, s ? s : "(null)");
             }
             // Also check index 2303 (our known Damage value index)
             if (size > 2303) {
@@ -1275,10 +1260,10 @@ void stats_probe_fixedstrings_offset(void) {
                 uint32_t raw = 0;
                 safe_read_u32(e, &raw);
                 const char *s = read_fixed_string(e);
-                log_stats("      [2303] raw=0x%08x str='%s' <-- Damage value", raw, s ? s : "(null)");
+                LOG_STATS_DEBUG("      [2303] raw=0x%08x str='%s' <-- Damage value", raw, s ? s : "(null)");
             }
         }
     }
 
-    log_stats("=== End FixedStrings probe ===");
+    LOG_STATS_DEBUG("=== End FixedStrings probe ===");
 }

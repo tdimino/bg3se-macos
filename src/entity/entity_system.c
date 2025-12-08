@@ -12,9 +12,7 @@
 #include "arm64_call.h"
 #include "logging.h"
 
-#include <stdio.h>
 #include <stdlib.h>
-#include <stdarg.h>
 #include <string.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
@@ -34,17 +32,6 @@
 #include "../../lib/lua/src/lua.h"
 #include "../../lib/lua/src/lauxlib.h"
 #include "../../lib/lua/src/lualib.h"
-
-// Logging helper for entity module
-static void log_entity(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void log_entity(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    log_message("[Entity] %s", buf);
-}
 
 // ============================================================================
 // Global State
@@ -191,7 +178,7 @@ static bool get_data_segment_bounds(void *binary_base, uintptr_t *start, uintptr
 
     // Verify it's a 64-bit Mach-O
     if (header->magic != MH_MAGIC_64) {
-        log_entity("Not a 64-bit Mach-O binary");
+        LOG_ENTITY_DEBUG("Not a 64-bit Mach-O binary");
         return false;
     }
 
@@ -208,7 +195,7 @@ static bool get_data_segment_bounds(void *binary_base, uintptr_t *start, uintptr
             if (strncmp(seg->segname, "__DATA", 6) == 0) {
                 *start = (uintptr_t)binary_base + seg->vmaddr - 0x100000000ULL;
                 *end = *start + seg->vmsize;
-                log_entity("Found %s segment: 0x%llx - 0x%llx (size: 0x%llx)",
+                LOG_ENTITY_DEBUG("Found %s segment: 0x%llx - 0x%llx (size: 0x%llx)",
                            seg->segname, (unsigned long long)*start,
                            (unsigned long long)*end, (unsigned long long)seg->vmsize);
                 return true;
@@ -218,7 +205,7 @@ static bool get_data_segment_bounds(void *binary_base, uintptr_t *start, uintptr
         ptr += cmd->cmdsize;
     }
 
-    log_entity("__DATA segment not found");
+    LOG_ENTITY_DEBUG("__DATA segment not found");
     return false;
 }
 
@@ -227,16 +214,16 @@ static bool get_data_segment_bounds(void *binary_base, uintptr_t *start, uintptr
 // contains a pointer at offset 0x288 (EntityWorld)
 static void *scan_for_eocserver_singleton(void) {
     if (!g_MainBinaryBase) {
-        log_entity("Cannot scan: main binary base not set");
+        LOG_ENTITY_DEBUG("Cannot scan: main binary base not set");
         return NULL;
     }
 
-    log_entity("=== Scanning for EoCServer Singleton ===");
+    LOG_ENTITY_DEBUG("=== Scanning for EoCServer Singleton ===");
 
     // Get __DATA segment bounds
     uintptr_t data_start = 0, data_end = 0;
     if (!get_data_segment_bounds(g_MainBinaryBase, &data_start, &data_end)) {
-        log_entity("Failed to get __DATA segment bounds");
+        LOG_ENTITY_DEBUG("Failed to get __DATA segment bounds");
         return NULL;
     }
 
@@ -245,7 +232,7 @@ static void *scan_for_eocserver_singleton(void) {
     uintptr_t scan_start = data_start;
     uintptr_t scan_end = data_end;
 
-    log_entity("Scanning range: 0x%llx - 0x%llx",
+    LOG_ENTITY_DEBUG("Scanning range: 0x%llx - 0x%llx",
                (unsigned long long)scan_start, (unsigned long long)scan_end);
 
     int candidates_checked = 0;
@@ -291,15 +278,15 @@ static void *scan_for_eocserver_singleton(void) {
         // Further validation: EntityWorld should also be readable
         if (!is_valid_pointer(potential_entityworld)) continue;
 
-        log_entity("CANDIDATE FOUND at global 0x%llx:", (unsigned long long)addr);
-        log_entity("  EoCServer*: %p", potential_eocserver);
-        log_entity("  EntityWorld* (at +0x288): %p", potential_entityworld);
+        LOG_ENTITY_DEBUG("CANDIDATE FOUND at global 0x%llx:", (unsigned long long)addr);
+        LOG_ENTITY_DEBUG("  EoCServer*: %p", potential_eocserver);
+        LOG_ENTITY_DEBUG("  EntityWorld* (at +0x288): %p", potential_entityworld);
 
         // This looks promising! Return it
         return potential_eocserver;
     }
 
-    log_entity("Scan complete: checked %d candidates, %d had valid pointers, none matched pattern",
+    LOG_ENTITY_DEBUG("Scan complete: checked %d candidates, %d had valid pointers, none matched pattern",
                candidates_checked, valid_candidates);
 
     return NULL;
@@ -310,7 +297,7 @@ static void *scan_for_eocserver_singleton(void) {
 static void *scan_for_eocserver_via_instructions(void) {
     if (!g_MainBinaryBase) return NULL;
 
-    log_entity("=== Scanning via instruction patterns ===");
+    LOG_ENTITY_DEBUG("=== Scanning via instruction patterns ===");
 
     // The StartUp function at known offset loads EoCServer
     // We can look at functions that access EoCServer+0x288 (EntityWorld)
@@ -323,7 +310,7 @@ static void *scan_for_eocserver_via_instructions(void) {
     // esv::EocServer::GetEntityWorld would be ideal, but we'll use StartUp
     uintptr_t startup_addr = OFFSET_EOC_SERVER_STARTUP - ghidra_base + actual_base;
 
-    log_entity("Analyzing function at 0x%llx for EoCServer global reference",
+    LOG_ENTITY_DEBUG("Analyzing function at 0x%llx for EoCServer global reference",
                (unsigned long long)startup_addr);
 
     // Read the first 64 instructions of StartUp looking for ADRP pattern
@@ -360,23 +347,23 @@ static void *scan_for_eocserver_via_instructions(void) {
                     if (rn == rd) {
                         uintptr_t global_addr = page_addr + imm12;
 
-                        log_entity("Found ADRP+LDR pattern at instruction %d:", i);
-                        log_entity("  Page: 0x%llx, Offset: 0x%x",
+                        LOG_ENTITY_DEBUG("Found ADRP+LDR pattern at instruction %d:", i);
+                        LOG_ENTITY_DEBUG("  Page: 0x%llx, Offset: 0x%x",
                                    (unsigned long long)page_addr, imm12);
-                        log_entity("  Global address: 0x%llx", (unsigned long long)global_addr);
+                        LOG_ENTITY_DEBUG("  Global address: 0x%llx", (unsigned long long)global_addr);
 
                         // Try to read from this global
                         if (is_valid_pointer((void *)global_addr)) {
                             void *potential_eocserver = *(void **)global_addr;
-                            log_entity("  Value at global: %p", potential_eocserver);
+                            LOG_ENTITY_DEBUG("  Value at global: %p", potential_eocserver);
 
                             if (is_valid_pointer(potential_eocserver)) {
                                 // Check offset 0x288
                                 void *potential_ew = *(void **)((char *)potential_eocserver + 0x288);
-                                log_entity("  Value at +0x288: %p", potential_ew);
+                                LOG_ENTITY_DEBUG("  Value at +0x288: %p", potential_ew);
 
                                 if (is_valid_pointer(potential_ew)) {
-                                    log_entity("  SUCCESS: Found EoCServer singleton!");
+                                    LOG_ENTITY_DEBUG("  SUCCESS: Found EoCServer singleton!");
                                     return potential_eocserver;
                                 }
                             }
@@ -387,7 +374,7 @@ static void *scan_for_eocserver_via_instructions(void) {
         }
     }
 
-    log_entity("No EoCServer reference found via instruction analysis");
+    LOG_ENTITY_DEBUG("No EoCServer reference found via instruction analysis");
     return NULL;
 }
 
@@ -395,7 +382,7 @@ static void *scan_for_eocserver_via_instructions(void) {
 // This is the simplest and most reliable approach now that we have the exact address
 static void *read_eocserver_from_global(void) {
     if (!g_MainBinaryBase) {
-        log_entity("Cannot read EoCServer: main binary base not set");
+        LOG_ENTITY_DEBUG("Cannot read EoCServer: main binary base not set");
         return NULL;
     }
 
@@ -404,8 +391,8 @@ static void *read_eocserver_from_global(void) {
     uintptr_t actual_base = (uintptr_t)g_MainBinaryBase;
     uintptr_t global_addr = OFFSET_EOCSERVER_SINGLETON_PTR - ghidra_base + actual_base;
 
-    log_entity("Reading EoCServer from global at 0x%llx", (unsigned long long)global_addr);
-    log_entity("  (Ghidra offset: 0x%llx, base: %p)",
+    LOG_ENTITY_DEBUG("Reading EoCServer from global at 0x%llx", (unsigned long long)global_addr);
+    LOG_ENTITY_DEBUG("  (Ghidra offset: 0x%llx, base: %p)",
                (unsigned long long)OFFSET_EOCSERVER_SINGLETON_PTR, g_MainBinaryBase);
 
     // Safely read the pointer using vm_read
@@ -415,7 +402,7 @@ static void *read_eocserver_from_global(void) {
                                data_size, &data, (mach_msg_type_number_t*)&data_size);
 
     if (kr != KERN_SUCCESS) {
-        log_entity("Failed to read EoCServer global (kern_return: %d)", kr);
+        LOG_ENTITY_DEBUG("Failed to read EoCServer global (kern_return: %d)", kr);
         return NULL;
     }
 
@@ -423,15 +410,15 @@ static void *read_eocserver_from_global(void) {
     vm_deallocate(mach_task_self(), data, data_size);
 
     if (!eocserver) {
-        log_entity("EoCServer global is NULL (server not yet initialized)");
+        LOG_ENTITY_DEBUG("EoCServer global is NULL (server not yet initialized)");
         return NULL;
     }
 
-    log_entity("Read EoCServer pointer: %p", eocserver);
+    LOG_ENTITY_DEBUG("Read EoCServer pointer: %p", eocserver);
 
     // Validate the pointer
     if (!is_valid_pointer(eocserver)) {
-        log_entity("EoCServer pointer appears invalid");
+        LOG_ENTITY_DEBUG("EoCServer pointer appears invalid");
         return NULL;
     }
 
@@ -441,11 +428,11 @@ static void *read_eocserver_from_global(void) {
 // Public function: Try to discover EntityWorld
 bool entity_discover_world(void) {
     if (g_EntityWorld) {
-        log_entity("EntityWorld already discovered: %p", g_EntityWorld);
+        LOG_ENTITY_DEBUG("EntityWorld already discovered: %p", g_EntityWorld);
         return true;
     }
 
-    log_entity("Attempting to discover EntityWorld...");
+    LOG_ENTITY_DEBUG("Attempting to discover EntityWorld...");
 
     // Method 1 (PRIMARY): Direct read from known global address
     // This is the most reliable method using the address discovered via Ghidra:
@@ -454,13 +441,13 @@ bool entity_discover_world(void) {
 
     // Method 2 (FALLBACK): Try instruction pattern analysis
     if (!eocserver) {
-        log_entity("Direct read failed, trying instruction pattern analysis...");
+        LOG_ENTITY_DEBUG("Direct read failed, trying instruction pattern analysis...");
         eocserver = scan_for_eocserver_via_instructions();
     }
 
     // Method 3 (FALLBACK): Data segment scan
     if (!eocserver) {
-        log_entity("Pattern analysis failed, trying data segment scan...");
+        LOG_ENTITY_DEBUG("Pattern analysis failed, trying data segment scan...");
         eocserver = scan_for_eocserver_singleton();
     }
 
@@ -472,38 +459,38 @@ bool entity_discover_world(void) {
 
         if (entityworld && is_valid_pointer(entityworld)) {
             g_EntityWorld = entityworld;
-            log_entity("SUCCESS: Discovered EoCServer=%p, EntityWorld=%p",
+            LOG_ENTITY_DEBUG("SUCCESS: Discovered EoCServer=%p, EntityWorld=%p",
                        g_EoCServer, g_EntityWorld);
 
             // Initialize component registry now that we have EntityWorld
             if (component_registry_init(g_EntityWorld)) {
-                log_entity("Component registry initialized");
+                LOG_ENTITY_DEBUG("Component registry initialized");
             }
 
             // Initialize component lookup (data structure traversal for macOS)
             if (component_lookup_init(g_EntityWorld, g_MainBinaryBase)) {
-                log_entity("Component lookup initialized (data structure traversal enabled)");
+                LOG_ENTITY_DEBUG("Component lookup initialized (data structure traversal enabled)");
             } else {
-                log_entity("WARNING: Component lookup init failed - GetComponent may not work");
+                LOG_ENTITY_DEBUG("WARNING: Component lookup init failed - GetComponent may not work");
             }
 
             // Initialize TypeId discovery and discover component indices
             if (component_typeid_init(g_MainBinaryBase)) {
-                log_entity("TypeId discovery initialized");
+                LOG_ENTITY_DEBUG("TypeId discovery initialized");
                 int discovered = component_typeid_discover();
-                log_entity("Discovered %d component type indices from TypeId globals", discovered);
+                LOG_ENTITY_DEBUG("Discovered %d component type indices from TypeId globals", discovered);
             } else {
-                log_entity("WARNING: TypeId discovery init failed - indices remain UNDEFINED");
+                LOG_ENTITY_DEBUG("WARNING: TypeId discovery init failed - indices remain UNDEFINED");
             }
 
             return true;
         } else {
-            log_entity("Found EoCServer but EntityWorld at +0x288 is NULL or invalid");
-            log_entity("(Server may not be fully initialized yet)");
+            LOG_ENTITY_DEBUG("Found EoCServer but EntityWorld at +0x288 is NULL or invalid");
+            LOG_ENTITY_DEBUG("(Server may not be fully initialized yet)");
         }
     }
 
-    log_entity("Failed to discover EntityWorld");
+    LOG_ENTITY_DEBUG("Failed to discover EntityWorld");
     return false;
 }
 
@@ -524,17 +511,17 @@ static void hook_EocServerStartUp(void *eocServer, void *serverInit) {
     // Capture EoCServer pointer (this) on first call
     if (!g_EoCServer && eocServer) {
         g_EoCServer = eocServer;
-        log_entity("Captured EoCServer singleton: %p", eocServer);
+        LOG_ENTITY_DEBUG("Captured EoCServer singleton: %p", eocServer);
 
         // Get EntityWorld from EoCServer + 0x288
         void **entityWorldPtr = (void**)((char*)eocServer + OFFSET_ENTITYWORLD_IN_EOCSERVER);
         g_EntityWorld = *entityWorldPtr;
 
         if (g_EntityWorld) {
-            log_entity("Got EntityWorld from EoCServer+0x%x: %p",
+            LOG_ENTITY_DEBUG("Got EntityWorld from EoCServer+0x%x: %p",
                        OFFSET_ENTITYWORLD_IN_EOCSERVER, g_EntityWorld);
         } else {
-            log_entity("EntityWorld at EoCServer+0x%x is NULL (not yet initialized)",
+            LOG_ENTITY_DEBUG("EntityWorld at EoCServer+0x%x is NULL (not yet initialized)",
                        OFFSET_ENTITYWORLD_IN_EOCSERVER);
         }
     }
@@ -551,9 +538,9 @@ static void hook_EocServerStartUp(void *eocServer, void *serverInit) {
         g_EntityWorld = *entityWorldPtr;
 
         if (g_EntityWorld) {
-            log_entity("Got EntityWorld after StartUp: %p", g_EntityWorld);
+            LOG_ENTITY_DEBUG("Got EntityWorld after StartUp: %p", g_EntityWorld);
         } else {
-            log_entity("EntityWorld still NULL after StartUp");
+            LOG_ENTITY_DEBUG("EntityWorld still NULL after StartUp");
         }
     }
 }
@@ -564,7 +551,7 @@ static void update_entity_world_from_server(void) {
         void **entityWorldPtr = (void**)((char*)g_EoCServer + OFFSET_ENTITYWORLD_IN_EOCSERVER);
         if (entityWorldPtr && *entityWorldPtr) {
             g_EntityWorld = *entityWorldPtr;
-            log_entity("Updated EntityWorld from EoCServer: %p", g_EntityWorld);
+            LOG_ENTITY_DEBUG("Updated EntityWorld from EoCServer: %p", g_EntityWorld);
         }
     }
 }
@@ -593,13 +580,13 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
     if (!g_UuidMappingComponent && g_TryGetUuidMappingSingleton && g_EntityWorld) {
         // TryGetSingleton returns ls::Result<T,E> via x8 buffer (ARM64 ABI)
         // Use wrapper that properly sets x8 to the result buffer address
-        log_entity("Calling TryGetSingleton with x8 ABI wrapper...");
+        LOG_ENTITY_DEBUG("Calling TryGetSingleton with x8 ABI wrapper...");
         g_UuidMappingComponent = call_try_get_singleton_with_x8(
             g_TryGetUuidMappingSingleton, g_EntityWorld);
         if (g_UuidMappingComponent) {
-            log_entity("Got UuidToHandleMappingComponent: %p", g_UuidMappingComponent);
+            LOG_ENTITY_DEBUG("Got UuidToHandleMappingComponent: %p", g_UuidMappingComponent);
         } else {
-            log_entity("Failed to get UuidToHandleMappingComponent");
+            LOG_ENTITY_DEBUG("Failed to get UuidToHandleMappingComponent");
         }
     }
 
@@ -607,7 +594,7 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
         // Parse the GUID
         Guid guid;
         if (!guid_parse(guid_str, &guid)) {
-            log_entity("Failed to parse GUID: %s", guid_str);
+            LOG_ENTITY_DEBUG("Failed to parse GUID: %s", guid_str);
             return ENTITY_HANDLE_INVALID;
         }
 
@@ -619,28 +606,28 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
         static bool dumped = false;
         if (!dumped) {
             dumped = true;
-            log_entity("=== UuidToHandleMappingComponent raw dump ===");
-            log_entity("Component ptr: %p", g_UuidMappingComponent);
+            LOG_ENTITY_DEBUG("=== UuidToHandleMappingComponent raw dump ===");
+            LOG_ENTITY_DEBUG("Component ptr: %p", g_UuidMappingComponent);
             uint8_t *bytes = (uint8_t*)g_UuidMappingComponent;
             for (int i = 0; i < 128; i += 8) {
-                log_entity("  +0x%02x: %02x %02x %02x %02x %02x %02x %02x %02x",
+                LOG_ENTITY_DEBUG("  +0x%02x: %02x %02x %02x %02x %02x %02x %02x %02x",
                            i, bytes[i], bytes[i+1], bytes[i+2], bytes[i+3],
                            bytes[i+4], bytes[i+5], bytes[i+6], bytes[i+7]);
             }
-            log_entity("=== HashMap field values ===");
-            log_entity("  HashKeys.buf: %p, size: %u", (void*)hashmap->HashKeys.buf, hashmap->HashKeys.size);
-            log_entity("  NextIds.buf: %p, cap: %u, size: %u", (void*)hashmap->NextIds.buf, hashmap->NextIds.capacity, hashmap->NextIds.size);
-            log_entity("  Keys.buf: %p, cap: %u, size: %u", (void*)hashmap->Keys.buf, hashmap->Keys.capacity, hashmap->Keys.size);
-            log_entity("  Values.buf: %p, size: %u", (void*)hashmap->Values.buf, hashmap->Values.size);
+            LOG_ENTITY_DEBUG("=== HashMap field values ===");
+            LOG_ENTITY_DEBUG("  HashKeys.buf: %p, size: %u", (void*)hashmap->HashKeys.buf, hashmap->HashKeys.size);
+            LOG_ENTITY_DEBUG("  NextIds.buf: %p, cap: %u, size: %u", (void*)hashmap->NextIds.buf, hashmap->NextIds.capacity, hashmap->NextIds.size);
+            LOG_ENTITY_DEBUG("  Keys.buf: %p, cap: %u, size: %u", (void*)hashmap->Keys.buf, hashmap->Keys.capacity, hashmap->Keys.size);
+            LOG_ENTITY_DEBUG("  Values.buf: %p, size: %u", (void*)hashmap->Values.buf, hashmap->Values.size);
 
             // Dump first few keys if available
             if (hashmap->Keys.buf && hashmap->Keys.size > 0) {
                 int dump_count = hashmap->Keys.size < 5 ? hashmap->Keys.size : 5;
-                log_entity("  First %d keys:", dump_count);
+                LOG_ENTITY_DEBUG("  First %d keys:", dump_count);
                 for (int i = 0; i < dump_count; i++) {
                     char guid_str_buf[64];
                     guid_to_string(&hashmap->Keys.buf[i], guid_str_buf);
-                    log_entity("    [%d] %s (hi=0x%llx, lo=0x%llx)", i, guid_str_buf,
+                    LOG_ENTITY_DEBUG("    [%d] %s (hi=0x%llx, lo=0x%llx)", i, guid_str_buf,
                                (unsigned long long)hashmap->Keys.buf[i].hi,
                                (unsigned long long)hashmap->Keys.buf[i].lo);
                 }
@@ -649,13 +636,13 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
 
         // Validate HashMap structure
         if (!hashmap->HashKeys.buf || hashmap->HashKeys.size == 0) {
-            log_entity("HashMap not initialized (HashKeys.buf=%p, size=%u)",
+            LOG_ENTITY_DEBUG("HashMap not initialized (HashKeys.buf=%p, size=%u)",
                        (void*)hashmap->HashKeys.buf, hashmap->HashKeys.size);
             return ENTITY_HANDLE_INVALID;
         }
 
         // Debug: show parsed GUID
-        log_entity("Looking up GUID: %s (hi=0x%llx, lo=0x%llx)", guid_str,
+        LOG_ENTITY_DEBUG("Looking up GUID: %s (hi=0x%llx, lo=0x%llx)", guid_str,
                    (unsigned long long)guid.hi, (unsigned long long)guid.lo);
 
         // Hash the GUID: hash = lo ^ hi
@@ -668,7 +655,7 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
         while (keyIndex >= 0) {
             // Bounds check
             if ((uint32_t)keyIndex >= hashmap->Keys.size) {
-                log_entity("HashMap corruption: keyIndex %d >= Keys.size %u",
+                LOG_ENTITY_DEBUG("HashMap corruption: keyIndex %d >= Keys.size %u",
                            keyIndex, hashmap->Keys.size);
                 break;
             }
@@ -687,19 +674,19 @@ EntityHandle entity_get_by_guid(const char *guid_str) {
                     g_GuidCacheCount++;
                 }
 
-                log_entity("GUID lookup success: %s -> 0x%llx", guid_str, (unsigned long long)handle);
+                LOG_ENTITY_DEBUG("GUID lookup success: %s -> 0x%llx", guid_str, (unsigned long long)handle);
                 return handle;
             }
 
             // Follow collision chain
             if ((uint32_t)keyIndex >= hashmap->NextIds.size) {
-                log_entity("HashMap corruption: NextIds index out of bounds");
+                LOG_ENTITY_DEBUG("HashMap corruption: NextIds index out of bounds");
                 break;
             }
             keyIndex = hashmap->NextIds.buf[keyIndex];
         }
 
-        log_entity("GUID not found in mapping: %s", guid_str);
+        LOG_ENTITY_DEBUG("GUID not found in mapping: %s", guid_str);
     }
 
     return ENTITY_HANDLE_INVALID;
@@ -751,7 +738,7 @@ void* entity_get_component(EntityHandle handle, ComponentType type) {
             if (g_GetStatsComponent) {
                 component = g_GetStatsComponent(g_EntityWorld, handle);
             } else {
-                log_entity("GetComponent<Stats> address not yet discovered");
+                LOG_ENTITY_DEBUG("GetComponent<Stats> address not yet discovered");
             }
             break;
 
@@ -759,7 +746,7 @@ void* entity_get_component(EntityHandle handle, ComponentType type) {
             if (g_GetBaseHpComponent) {
                 component = g_GetBaseHpComponent(g_EntityWorld, handle);
             } else {
-                log_entity("GetComponent<BaseHp> address not yet discovered");
+                LOG_ENTITY_DEBUG("GetComponent<BaseHp> address not yet discovered");
             }
             break;
 
@@ -767,7 +754,7 @@ void* entity_get_component(EntityHandle handle, ComponentType type) {
             if (g_GetHealthComponent) {
                 component = g_GetHealthComponent(g_EntityWorld, handle);
             } else {
-                log_entity("GetComponent<Health> address not yet discovered");
+                LOG_ENTITY_DEBUG("GetComponent<Health> address not yet discovered");
             }
             break;
 
@@ -775,7 +762,7 @@ void* entity_get_component(EntityHandle handle, ComponentType type) {
             if (g_GetArmorComponent) {
                 component = g_GetArmorComponent(g_EntityWorld, handle);
             } else {
-                log_entity("GetComponent<Armor> address not yet discovered");
+                LOG_ENTITY_DEBUG("GetComponent<Armor> address not yet discovered");
             }
             break;
 
@@ -783,22 +770,22 @@ void* entity_get_component(EntityHandle handle, ComponentType type) {
             if (g_GetClassesComponent) {
                 component = g_GetClassesComponent(g_EntityWorld, handle);
             } else {
-                log_entity("GetComponent<Classes> address not yet discovered");
+                LOG_ENTITY_DEBUG("GetComponent<Classes> address not yet discovered");
             }
             break;
 
         case COMPONENT_RACE:
         case COMPONENT_PLAYER:
-            log_entity("GetComponent for type %d not yet implemented", type);
+            LOG_ENTITY_DEBUG("GetComponent for type %d not yet implemented", type);
             break;
 
         default:
-            log_entity("Unknown component type: %d", type);
+            LOG_ENTITY_DEBUG("Unknown component type: %d", type);
             break;
     }
 
     if (component) {
-        log_entity("Got component type %d for handle 0x%llx: %p",
+        LOG_ENTITY_DEBUG("Got component type %d for handle 0x%llx: %p",
                    type, (unsigned long long)handle, component);
     }
 
@@ -820,17 +807,17 @@ const char** entity_get_component_names(EntityHandle handle, int *count) {
 
 int entity_system_init(void *main_binary_base) {
     if (g_Initialized) {
-        log_entity("Already initialized");
+        LOG_ENTITY_DEBUG("Already initialized");
         return 0;
     }
 
     if (!main_binary_base) {
-        log_entity("ERROR: main_binary_base is NULL");
+        LOG_ENTITY_DEBUG("ERROR: main_binary_base is NULL");
         return -1;
     }
 
     g_MainBinaryBase = main_binary_base;
-    log_entity("Initializing with main binary base: %p", main_binary_base);
+    LOG_ENTITY_DEBUG("Initializing with main binary base: %p", main_binary_base);
 
     // Calculate actual function address
     // Note: The offsets from Ghidra include the base load address (0x100000000)
@@ -850,8 +837,8 @@ int entity_system_init(void *main_binary_base) {
     // The old approach of hooking EocServer::StartUp is disabled:
     // uintptr_t startup_addr = OFFSET_EOC_SERVER_STARTUP - ghidra_base + actual_base;
     // DobbyHook((void*)startup_addr, (void*)hook_EocServerStartUp, (void**)&orig_EocServerStartUp);
-    log_entity("Main binary hooks disabled (macOS memory protection issues)");
-    log_entity("EntityWorld must be set manually via Ext.Entity.SetWorldPtr() or discovered via Osiris hooks");
+    LOG_ENTITY_DEBUG("Main binary hooks disabled (macOS memory protection issues)");
+    LOG_ENTITY_DEBUG("EntityWorld must be set manually via Ext.Entity.SetWorldPtr() or discovered via Osiris hooks");
 
     // Set up function pointers for component accessors and singleton getters
     // These don't need hooks - we just need to know where to call
@@ -889,23 +876,23 @@ int entity_system_init(void *main_binary_base) {
         g_GetClassesComponent = (GetComponentFn)(OFFSET_GET_CLASSES_COMPONENT - ghidra_base + actual_base);
     }
 
-    log_entity("Function pointers initialized:");
-    log_entity("  TryGetUuidMappingSingleton: %p", (void*)g_TryGetUuidMappingSingleton);
-    log_entity("  GetTransformComponent: %p", (void*)g_GetTransformComponent);
-    log_entity("  GetLevelComponent: %p", (void*)g_GetLevelComponent);
-    log_entity("  GetStatsComponent: %p", (void*)g_GetStatsComponent);
-    log_entity("  GetBaseHpComponent: %p", (void*)g_GetBaseHpComponent);
-    log_entity("  GetHealthComponent: %p", (void*)g_GetHealthComponent);
-    log_entity("  GetArmorComponent: %p", (void*)g_GetArmorComponent);
+    LOG_ENTITY_DEBUG("Function pointers initialized:");
+    LOG_ENTITY_DEBUG("  TryGetUuidMappingSingleton: %p", (void*)g_TryGetUuidMappingSingleton);
+    LOG_ENTITY_DEBUG("  GetTransformComponent: %p", (void*)g_GetTransformComponent);
+    LOG_ENTITY_DEBUG("  GetLevelComponent: %p", (void*)g_GetLevelComponent);
+    LOG_ENTITY_DEBUG("  GetStatsComponent: %p", (void*)g_GetStatsComponent);
+    LOG_ENTITY_DEBUG("  GetBaseHpComponent: %p", (void*)g_GetBaseHpComponent);
+    LOG_ENTITY_DEBUG("  GetHealthComponent: %p", (void*)g_GetHealthComponent);
+    LOG_ENTITY_DEBUG("  GetArmorComponent: %p", (void*)g_GetArmorComponent);
 
     // Initialize TypeId discovery and read component indices from game memory
     // This doesn't require EntityWorld - just the binary base address
     if (component_typeid_init(main_binary_base)) {
-        log_entity("TypeId discovery initialized");
+        LOG_ENTITY_DEBUG("TypeId discovery initialized");
         int discovered = component_typeid_discover();
-        log_entity("Discovered %d component type indices from TypeId globals", discovered);
+        LOG_ENTITY_DEBUG("Discovered %d component type indices from TypeId globals", discovered);
     } else {
-        log_entity("WARNING: TypeId discovery init failed");
+        LOG_ENTITY_DEBUG("WARNING: TypeId discovery init failed");
     }
 
     g_Initialized = true;
@@ -940,13 +927,13 @@ int entity_retry_typeid_discovery(void) {
     }
 
     if (!g_MainBinaryBase) {
-        log_entity("Cannot retry TypeId discovery - binary base not set");
+        LOG_ENTITY_DEBUG("Cannot retry TypeId discovery - binary base not set");
         return 0;
     }
 
     // Ensure TypeId module is initialized
     if (!component_typeid_init(g_MainBinaryBase)) {
-        log_entity("TypeId discovery init failed on retry");
+        LOG_ENTITY_DEBUG("TypeId discovery init failed on retry");
         return 0;
     }
 
@@ -969,15 +956,15 @@ int entity_retry_typeid_discovery(void) {
 
         if (hasValidIndex) {
             g_TypeIdDiscoveryComplete = true;
-            log_entity("TypeId discovery complete: %d components with valid indices", discovered);
+            LOG_ENTITY_DEBUG("TypeId discovery complete: %d components with valid indices", discovered);
         } else {
             g_TypeIdRetryCount++;
-            log_entity("TypeId discovery attempt %d/%d: %d components read (indices still 0)",
+            LOG_ENTITY_DEBUG("TypeId discovery attempt %d/%d: %d components read (indices still 0)",
                       g_TypeIdRetryCount, TYPEID_MAX_RETRIES, discovered);
         }
     } else {
         g_TypeIdRetryCount++;
-        log_entity("TypeId discovery attempt %d/%d: no components discovered",
+        LOG_ENTITY_DEBUG("TypeId discovery attempt %d/%d: no components discovered",
                   g_TypeIdRetryCount, TYPEID_MAX_RETRIES);
     }
 
@@ -987,11 +974,11 @@ int entity_retry_typeid_discovery(void) {
 // Called from SessionLoaded event handler to retry TypeId discovery
 void entity_on_session_loaded(void) {
     if (g_TypeIdDiscoveryComplete) {
-        log_entity("SessionLoaded: TypeId discovery already complete");
+        LOG_ENTITY_DEBUG("SessionLoaded: TypeId discovery already complete");
         return;
     }
 
-    log_entity("SessionLoaded: Retrying TypeId discovery...");
+    LOG_ENTITY_DEBUG("SessionLoaded: Retrying TypeId discovery...");
     entity_retry_typeid_discovery();
 }
 
@@ -1068,9 +1055,9 @@ static int lua_entity_dump_world(lua_State *L) {
     if (size < 0) size = 0;
     if (size > 1024) size = 1024;
 
-    log_entity("=== EntityWorld Memory Dump ===");
-    log_entity("EntityWorld base: %p", g_EntityWorld);
-    log_entity("Dumping offset 0x%x, size %d bytes:", offset, size);
+    LOG_ENTITY_DEBUG("=== EntityWorld Memory Dump ===");
+    LOG_ENTITY_DEBUG("EntityWorld base: %p", g_EntityWorld);
+    LOG_ENTITY_DEBUG("Dumping offset 0x%x, size %d bytes:", offset, size);
 
     uint8_t *base = (uint8_t *)g_EntityWorld;
 
@@ -1123,17 +1110,17 @@ static int lua_entity_dump_world(lua_State *L) {
             snprintf(hex, sizeof(hex), " %02x", base[offset + i + j]);
             strncat(line, hex, sizeof(line) - strlen(line) - 1);
         }
-        log_entity("%s", line);
+        LOG_ENTITY_DEBUG("%s", line);
     }
 
     // Also log potential pointer values at 8-byte intervals
-    log_entity("Potential pointers:");
+    LOG_ENTITY_DEBUG("Potential pointers:");
     for (int i = 0; i < size && i + 8 <= size; i += 8) {
         void *ptr = *(void **)(base + offset + i);
         // Check if it looks like a valid pointer (in reasonable address range)
         uintptr_t val = (uintptr_t)ptr;
         if (val > 0x100000000ULL && val < 0x200000000ULL) {
-            log_entity("  +0x%03x: %p (valid pointer)", offset + i, ptr);
+            LOG_ENTITY_DEBUG("  +0x%03x: %p (valid pointer)", offset + i, ptr);
         }
     }
 
@@ -1143,15 +1130,15 @@ static int lua_entity_dump_world(lua_State *L) {
 
 // Ext.Entity.Test() - Test component accessors with known GUIDs
 static int lua_entity_test(lua_State *L) {
-    log_entity("=== Entity Component Test ===");
+    LOG_ENTITY_DEBUG("=== Entity Component Test ===");
 
     if (!entity_system_ready()) {
-        log_entity("Entity system not ready - enter combat first");
+        LOG_ENTITY_DEBUG("Entity system not ready - enter combat first");
         lua_pushboolean(L, 0);
         return 1;
     }
 
-    log_entity("EntityWorld: %p", g_EntityWorld);
+    LOG_ENTITY_DEBUG("EntityWorld: %p", g_EntityWorld);
 
     // Test GUIDs - use ones from HashMap dump plus template GUIDs
     const char *test_guids[] = {
@@ -1165,42 +1152,42 @@ static int lua_entity_test(lua_State *L) {
 
     for (int i = 0; test_guids[i] != NULL; i++) {
         const char *guid = test_guids[i];
-        log_entity("Testing GUID: %s", guid);
+        LOG_ENTITY_DEBUG("Testing GUID: %s", guid);
 
         EntityHandle handle = entity_get_by_guid(guid);
         if (!entity_is_valid(handle)) {
-            log_entity("  Entity not found");
+            LOG_ENTITY_DEBUG("  Entity not found");
             continue;
         }
 
-        log_entity("  Handle: 0x%llx", (unsigned long long)handle);
+        LOG_ENTITY_DEBUG("  Handle: 0x%llx", (unsigned long long)handle);
 
         // Test Transform (ls:: component)
         void *transform = entity_get_component(handle, COMPONENT_TRANSFORM);
-        log_entity("  Transform: %s", transform ? "FOUND" : "nil");
+        LOG_ENTITY_DEBUG("  Transform: %s", transform ? "FOUND" : "nil");
 
         // Test Stats (eoc:: component)
         void *stats = entity_get_component(handle, COMPONENT_STATS);
-        log_entity("  Stats: %s", stats ? "FOUND" : "nil");
+        LOG_ENTITY_DEBUG("  Stats: %s", stats ? "FOUND" : "nil");
 
         // Test Health (eoc:: component)
         void *health = entity_get_component(handle, COMPONENT_HEALTH);
-        log_entity("  Health: %s", health ? "FOUND" : "nil");
+        LOG_ENTITY_DEBUG("  Health: %s", health ? "FOUND" : "nil");
 
         // Test BaseHp (eoc:: component)
         void *basehp = entity_get_component(handle, COMPONENT_BASE_HP);
-        log_entity("  BaseHp: %s", basehp ? "FOUND" : "nil");
+        LOG_ENTITY_DEBUG("  BaseHp: %s", basehp ? "FOUND" : "nil");
 
         // Test Armor (eoc:: component)
         void *armor = entity_get_component(handle, COMPONENT_ARMOR);
-        log_entity("  Armor: %s", armor ? "FOUND" : "nil");
+        LOG_ENTITY_DEBUG("  Armor: %s", armor ? "FOUND" : "nil");
 
         if (transform || stats || health) {
             success_count++;
         }
     }
 
-    log_entity("=== Test Complete: %d entities with components ===", success_count);
+    LOG_ENTITY_DEBUG("=== Test Complete: %d entities with components ===", success_count);
 
     lua_pushboolean(L, success_count > 0);
     return 1;
@@ -1489,7 +1476,7 @@ static int lua_entity_set_get_raw_component_addr(lua_State *L) {
 
     component_set_get_raw_component_addr((void *)addr);
 
-    log_entity("GetRawComponent address set to 0x%llx via Lua", (unsigned long long)addr);
+    LOG_ENTITY_DEBUG("GetRawComponent address set to 0x%llx via Lua", (unsigned long long)addr);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -1552,7 +1539,7 @@ static int lua_entity_dump_storage(lua_State *L) {
         return 2;
     }
 
-    log_entity("=== DumpStorage for handle 0x%llx ===", (unsigned long long)handle);
+    LOG_ENTITY_DEBUG("=== DumpStorage for handle 0x%llx ===", (unsigned long long)handle);
 
     // Call TryGet to get EntityStorageData
     void *storageData = component_lookup_get_storage_data(handle);
@@ -1606,7 +1593,7 @@ static int lua_entity_dump_type_ids(lua_State *L) {
     (void)L;  // Unused
 
     if (!component_typeid_ready()) {
-        log_entity("TypeId system not ready for dump");
+        LOG_ENTITY_DEBUG("TypeId system not ready for dump");
         return 0;
     }
 
@@ -1620,7 +1607,7 @@ static int lua_entity_dump_uuid_map(lua_State *L) {
     int maxEntries = (int)luaL_optinteger(L, 1, 10);
 
     if (!g_EntityWorld) {
-        log_entity("DumpUuidMap: EntityWorld not available");
+        LOG_ENTITY_DEBUG("DumpUuidMap: EntityWorld not available");
         lua_pushinteger(L, 0);
         return 1;
     }
@@ -1632,7 +1619,7 @@ static int lua_entity_dump_uuid_map(lua_State *L) {
     }
 
     if (!mapping) {
-        log_entity("DumpUuidMap: Could not get UuidToHandleMappingComponent");
+        LOG_ENTITY_DEBUG("DumpUuidMap: Could not get UuidToHandleMappingComponent");
         lua_pushinteger(L, 0);
         return 1;
     }
@@ -1640,7 +1627,7 @@ static int lua_entity_dump_uuid_map(lua_State *L) {
     // The HashMap is at offset 0 in UuidToHandleMappingComponent
     HashMapGuidEntityHandle *hashmap = (HashMapGuidEntityHandle *)mapping;
 
-    log_entity("=== DumpUuidMap: First %d entries (total: %u) ===",
+    LOG_ENTITY_DEBUG("=== DumpUuidMap: First %d entries (total: %u) ===",
                maxEntries, hashmap->Keys.size);
 
     int count = maxEntries;
@@ -1654,13 +1641,13 @@ static int lua_entity_dump_uuid_map(lua_State *L) {
         char guidStr[40];
         guid_to_string(key, guidStr);
 
-        log_entity("  [%d] %s -> 0x%llx (raw: hi=0x%llx lo=0x%llx)",
+        LOG_ENTITY_DEBUG("  [%d] %s -> 0x%llx (raw: hi=0x%llx lo=0x%llx)",
                    i, guidStr, (unsigned long long)value,
                    (unsigned long long)key->hi, (unsigned long long)key->lo);
     }
 
     if ((int)hashmap->Keys.size > count) {
-        log_entity("  ... (%u more entries)", hashmap->Keys.size - count);
+        LOG_ENTITY_DEBUG("  ... (%u more entries)", hashmap->Keys.size - count);
     }
 
     lua_pushinteger(L, hashmap->Keys.size);
@@ -1741,5 +1728,5 @@ void entity_register_lua(lua_State *L) {
 
     lua_pop(L, 1);  // pop Ext
 
-    log_entity("Registered Ext.Entity API");
+    LOG_ENTITY_DEBUG("Registered Ext.Entity API");
 }

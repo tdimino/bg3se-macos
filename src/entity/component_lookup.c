@@ -9,23 +9,7 @@
 #include "arm64_call.h"
 #include "../core/logging.h"
 
-#include <stdio.h>
 #include <string.h>
-#include <stdarg.h>
-
-// ============================================================================
-// Logging
-// ============================================================================
-
-static void log_lookup(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void log_lookup(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    log_message("[ComponentLookup] %s", buf);
-}
 
 // ============================================================================
 // Global State
@@ -43,7 +27,7 @@ static bool g_Initialized = false;
 
 bool component_lookup_init(void *entityWorld, void *binaryBase) {
     if (!entityWorld || !binaryBase) {
-        log_lookup("ERROR: NULL entityWorld=%p or binaryBase=%p", entityWorld, binaryBase);
+        LOG_ENTITY_DEBUG("ERROR: NULL entityWorld=%p or binaryBase=%p", entityWorld, binaryBase);
         return false;
     }
 
@@ -53,7 +37,7 @@ bool component_lookup_init(void *entityWorld, void *binaryBase) {
     // Get StorageContainer from EntityWorld + 0x2d0
     g_StorageContainer = *(void **)((char *)entityWorld + ENTITYWORLD_STORAGE_OFFSET);
     if (!g_StorageContainer) {
-        log_lookup("ERROR: StorageContainer is NULL at EntityWorld+0x%x", ENTITYWORLD_STORAGE_OFFSET);
+        LOG_ENTITY_DEBUG("ERROR: StorageContainer is NULL at EntityWorld+0x%x", ENTITYWORLD_STORAGE_OFFSET);
         return false;
     }
 
@@ -61,10 +45,10 @@ bool component_lookup_init(void *entityWorld, void *binaryBase) {
     uintptr_t runtime_addr = ADDR_STORAGE_CONTAINER_TRYGET - GHIDRA_BASE_ADDRESS + (uintptr_t)binaryBase;
     g_TryGetFnAddr = (void *)runtime_addr;
 
-    log_lookup("Initialized:");
-    log_lookup("  EntityWorld: %p", g_EntityWorld);
-    log_lookup("  StorageContainer: %p", g_StorageContainer);
-    log_lookup("  TryGet: %p (Ghidra: 0x%llx)", g_TryGetFnAddr,
+    LOG_ENTITY_DEBUG("Initialized:");
+    LOG_ENTITY_DEBUG("  EntityWorld: %p", g_EntityWorld);
+    LOG_ENTITY_DEBUG("  StorageContainer: %p", g_StorageContainer);
+    LOG_ENTITY_DEBUG("  TryGet: %p (Ghidra: 0x%llx)", g_TryGetFnAddr,
                (unsigned long long)ADDR_STORAGE_CONTAINER_TRYGET);
 
     g_Initialized = true;
@@ -81,7 +65,7 @@ bool component_lookup_ready(void) {
 
 void *component_lookup_get_storage_data(uint64_t entityHandle) {
     if (!component_lookup_ready()) {
-        log_lookup("ERROR: Not initialized");
+        LOG_ENTITY_DEBUG("ERROR: Not initialized");
         return NULL;
     }
 
@@ -89,9 +73,9 @@ void *component_lookup_get_storage_data(uint64_t entityHandle) {
     void *result = call_try_get(g_TryGetFnAddr, g_StorageContainer, entityHandle);
 
     if (result) {
-        log_lookup("TryGet(0x%llx) -> %p", (unsigned long long)entityHandle, result);
+        LOG_ENTITY_DEBUG("TryGet(0x%llx) -> %p", (unsigned long long)entityHandle, result);
     } else {
-        log_lookup("TryGet(0x%llx) -> NULL", (unsigned long long)entityHandle);
+        LOG_ENTITY_DEBUG("TryGet(0x%llx) -> NULL", (unsigned long long)entityHandle);
     }
 
     return result;
@@ -122,7 +106,7 @@ bool storage_data_get_instance_index(void *storageData, uint64_t entityHandle,
     ArrayHeader *values = GET_VALUES(map);
 
     if (!hashKeys->buf || !keys->buf || !values->buf || hashKeys->size == 0) {
-        log_lookup("InstanceToPageMap: Empty or invalid (buckets=%llu)", hashKeys->size);
+        LOG_ENTITY_DEBUG("InstanceToPageMap: Empty or invalid (buckets=%llu)", hashKeys->size);
         return false;
     }
 
@@ -134,7 +118,7 @@ bool storage_data_get_instance_index(void *storageData, uint64_t entityHandle,
     int32_t *bucketArray = (int32_t *)hashKeys->buf;
     int32_t idx = bucketArray[bucket];
 
-    log_lookup("InstanceToPageMap lookup: handle=0x%llx, hash=0x%llx, bucket=%u, initial_idx=%d",
+    LOG_ENTITY_DEBUG("InstanceToPageMap lookup: handle=0x%llx, hash=0x%llx, bucket=%u, initial_idx=%d",
                (unsigned long long)entityHandle, (unsigned long long)hash, bucket, idx);
 
     // Traverse collision chain
@@ -145,7 +129,7 @@ bool storage_data_get_instance_index(void *storageData, uint64_t entityHandle,
     while (idx >= 0 && (uint64_t)idx < keys->size) {
         if (keyArray[idx] == entityHandle) {
             *outIndex = valueArray[idx];
-            log_lookup("  Found at idx=%d: PageIndex=%u, EntryIndex=%u",
+            LOG_ENTITY_DEBUG("  Found at idx=%d: PageIndex=%u, EntryIndex=%u",
                        idx, outIndex->PageIndex, outIndex->EntryIndex);
             return true;
         }
@@ -158,7 +142,7 @@ bool storage_data_get_instance_index(void *storageData, uint64_t entityHandle,
         }
     }
 
-    log_lookup("  Not found in chain");
+    LOG_ENTITY_DEBUG("  Not found in chain");
     return false;
 }
 
@@ -180,7 +164,7 @@ bool storage_data_get_component_slot(void *storageData, uint16_t typeIndex,
     ArrayHeader *values = GET_VALUES(map);
 
     if (!hashKeys->buf || !keys->buf || !values->buf || hashKeys->size == 0) {
-        log_lookup("ComponentTypeToIndex: Empty or invalid");
+        LOG_ENTITY_DEBUG("ComponentTypeToIndex: Empty or invalid");
         return false;
     }
 
@@ -191,7 +175,7 @@ bool storage_data_get_component_slot(void *storageData, uint16_t typeIndex,
     int32_t *bucketArray = (int32_t *)hashKeys->buf;
     int32_t idx = bucketArray[bucket];
 
-    log_lookup("ComponentTypeToIndex lookup: type=%u, bucket=%u, initial_idx=%d",
+    LOG_ENTITY_DEBUG("ComponentTypeToIndex lookup: type=%u, bucket=%u, initial_idx=%d",
                typeIndex, bucket, idx);
 
     // Traverse collision chain
@@ -202,7 +186,7 @@ bool storage_data_get_component_slot(void *storageData, uint16_t typeIndex,
     while (idx >= 0 && (uint64_t)idx < keys->size) {
         if (keyArray[idx] == typeIndex) {
             *outSlot = valueArray[idx];
-            log_lookup("  Found at idx=%d: slot=%u", idx, *outSlot);
+            LOG_ENTITY_DEBUG("  Found at idx=%d: slot=%u", idx, *outSlot);
             return true;
         }
 
@@ -214,7 +198,7 @@ bool storage_data_get_component_slot(void *storageData, uint16_t typeIndex,
         }
     }
 
-    log_lookup("  Type %u not found in this storage class", typeIndex);
+    LOG_ENTITY_DEBUG("  Type %u not found in this storage class", typeIndex);
     return false;
 }
 
@@ -233,7 +217,7 @@ void *storage_data_get_component(void *storageData, EntityStorageIndex storageIn
     ArrayHeader *componentsArray = GET_ARRAY_HEADER(storageData, STORAGE_DATA_COMPONENTS_OFFSET);
 
     if (!componentsArray->buf || storageIndex.PageIndex >= componentsArray->size) {
-        log_lookup("Components array: Invalid or PageIndex %u out of range (size=%llu)",
+        LOG_ENTITY_DEBUG("Components array: Invalid or PageIndex %u out of range (size=%llu)",
                    storageIndex.PageIndex, componentsArray->size);
         return NULL;
     }
@@ -243,7 +227,7 @@ void *storage_data_get_component(void *storageData, EntityStorageIndex storageIn
     EntityStorageComponentPage *page = pageArray[storageIndex.PageIndex];
 
     if (!page) {
-        log_lookup("Page %u is NULL", storageIndex.PageIndex);
+        LOG_ENTITY_DEBUG("Page %u is NULL", storageIndex.PageIndex);
         return NULL;
     }
 
@@ -256,7 +240,7 @@ void *storage_data_get_component(void *storageData, EntityStorageIndex storageIn
     void *buffer = compInfo->ComponentBuffer;
 
     if (!buffer) {
-        log_lookup("ComponentBuffer is NULL for slot %u", componentSlot);
+        LOG_ENTITY_DEBUG("ComponentBuffer is NULL for slot %u", componentSlot);
         return NULL;
     }
 
@@ -266,12 +250,12 @@ void *storage_data_get_component(void *storageData, EntityStorageIndex storageIn
         // Proxy: buffer contains array of pointers
         void **ptrArray = (void **)buffer;
         result = ptrArray[storageIndex.EntryIndex];
-        log_lookup("Proxy component: buffer=%p, entry=%u -> %p",
+        LOG_ENTITY_DEBUG("Proxy component: buffer=%p, entry=%u -> %p",
                    buffer, storageIndex.EntryIndex, result);
     } else {
         // Direct: buffer contains array of component data
         result = (char *)buffer + (componentSize * storageIndex.EntryIndex);
-        log_lookup("Direct component: buffer=%p + (%zu * %u) -> %p",
+        LOG_ENTITY_DEBUG("Direct component: buffer=%p + (%zu * %u) -> %p",
                    buffer, componentSize, storageIndex.EntryIndex, result);
     }
 
@@ -285,31 +269,31 @@ void *storage_data_get_component(void *storageData, EntityStorageIndex storageIn
 void *component_lookup_by_index(uint64_t entityHandle, uint16_t typeIndex,
                                  size_t componentSize, bool isProxy) {
     if (!component_lookup_ready()) {
-        log_lookup("ERROR: Not initialized");
+        LOG_ENTITY_DEBUG("ERROR: Not initialized");
         return NULL;
     }
 
-    log_lookup("Looking up component: handle=0x%llx, type=%u, size=%zu, proxy=%d",
+    LOG_ENTITY_DEBUG("Looking up component: handle=0x%llx, type=%u, size=%zu, proxy=%d",
                (unsigned long long)entityHandle, typeIndex, componentSize, isProxy);
 
     // Step 1: Get EntityStorageData
     void *storageData = component_lookup_get_storage_data(entityHandle);
     if (!storageData) {
-        log_lookup("  Failed: TryGet returned NULL");
+        LOG_ENTITY_DEBUG("  Failed: TryGet returned NULL");
         return NULL;
     }
 
     // Step 2: Look up storage index (entity location in pages)
     EntityStorageIndex storageIndex;
     if (!storage_data_get_instance_index(storageData, entityHandle, &storageIndex)) {
-        log_lookup("  Failed: Entity not in InstanceToPageMap");
+        LOG_ENTITY_DEBUG("  Failed: Entity not in InstanceToPageMap");
         return NULL;
     }
 
     // Step 3: Look up component slot
     uint8_t componentSlot;
     if (!storage_data_get_component_slot(storageData, typeIndex, &componentSlot)) {
-        log_lookup("  Failed: Component type not in this storage class");
+        LOG_ENTITY_DEBUG("  Failed: Component type not in this storage class");
         return NULL;
     }
 
@@ -318,9 +302,9 @@ void *component_lookup_by_index(uint64_t entityHandle, uint16_t typeIndex,
                                                   componentSlot, componentSize, isProxy);
 
     if (component) {
-        log_lookup("  SUCCESS: Component at %p", component);
+        LOG_ENTITY_DEBUG("  SUCCESS: Component at %p", component);
     } else {
-        log_lookup("  Failed: Could not access component buffer");
+        LOG_ENTITY_DEBUG("  Failed: Could not access component buffer");
     }
 
     return component;
@@ -332,20 +316,20 @@ void *component_lookup_by_index(uint64_t entityHandle, uint16_t typeIndex,
 
 void component_lookup_dump_storage_data(void *storageData, uint64_t entityHandle) {
     if (!storageData) {
-        log_lookup("StorageData is NULL");
+        LOG_ENTITY_DEBUG("StorageData is NULL");
         return;
     }
 
-    log_lookup("=== EntityStorageData Dump ===");
-    log_lookup("Address: %p", storageData);
-    log_lookup("For EntityHandle: 0x%llx", (unsigned long long)entityHandle);
+    LOG_ENTITY_DEBUG("=== EntityStorageData Dump ===");
+    LOG_ENTITY_DEBUG("Address: %p", storageData);
+    LOG_ENTITY_DEBUG("For EntityHandle: 0x%llx", (unsigned long long)entityHandle);
 
     // Hexdump first 512 bytes of storageData to understand layout
-    log_lookup("=== StorageData Hexdump (first 512 bytes) ===");
+    LOG_ENTITY_DEBUG("=== StorageData Hexdump (first 512 bytes) ===");
     unsigned char *bytes = (unsigned char *)storageData;
     for (int row = 0; row < 32; row++) {
         int offset = row * 16;
-        log_lookup("  +0x%03x: %02x %02x %02x %02x %02x %02x %02x %02x  %02x %02x %02x %02x %02x %02x %02x %02x",
+        LOG_ENTITY_DEBUG("  +0x%03x: %02x %02x %02x %02x %02x %02x %02x %02x  %02x %02x %02x %02x %02x %02x %02x %02x",
                    offset,
                    bytes[offset+0], bytes[offset+1], bytes[offset+2], bytes[offset+3],
                    bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7],
@@ -354,11 +338,11 @@ void component_lookup_dump_storage_data(void *storageData, uint64_t entityHandle
     }
 
     // Also dump the area around ComponentTypeToIndex (0x180)
-    log_lookup("=== ComponentTypeToIndex area (+0x180, 128 bytes) ===");
+    LOG_ENTITY_DEBUG("=== ComponentTypeToIndex area (+0x180, 128 bytes) ===");
     bytes = (unsigned char *)storageData + 0x180;
     for (int row = 0; row < 8; row++) {
         int offset = row * 16;
-        log_lookup("  +0x%03x: %02x %02x %02x %02x %02x %02x %02x %02x  %02x %02x %02x %02x %02x %02x %02x %02x",
+        LOG_ENTITY_DEBUG("  +0x%03x: %02x %02x %02x %02x %02x %02x %02x %02x  %02x %02x %02x %02x %02x %02x %02x %02x",
                    0x180 + offset,
                    bytes[offset+0], bytes[offset+1], bytes[offset+2], bytes[offset+3],
                    bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7],
@@ -368,43 +352,43 @@ void component_lookup_dump_storage_data(void *storageData, uint64_t entityHandle
 
     // Dump Components array info
     ArrayHeader *components = GET_ARRAY_HEADER(storageData, STORAGE_DATA_COMPONENTS_OFFSET);
-    log_lookup("Components (offset 0x%x):", STORAGE_DATA_COMPONENTS_OFFSET);
-    log_lookup("  buf: %p", components->buf);
-    log_lookup("  size: %llu", components->size);
+    LOG_ENTITY_DEBUG("Components (offset 0x%x):", STORAGE_DATA_COMPONENTS_OFFSET);
+    LOG_ENTITY_DEBUG("  buf: %p", components->buf);
+    LOG_ENTITY_DEBUG("  size: %llu", components->size);
 
     // Dump ComponentTypeToIndex HashMap info
     void *typeMap = (char *)storageData + STORAGE_DATA_COMPONENT_TYPE_TO_INDEX;
     ArrayHeader *typeHashKeys = GET_HASH_KEYS(typeMap);
     ArrayHeader *typeKeys = GET_KEYS(typeMap);
-    log_lookup("ComponentTypeToIndex (offset 0x%x):", STORAGE_DATA_COMPONENT_TYPE_TO_INDEX);
-    log_lookup("  hashKeys.buf: %p, size: %llu", typeHashKeys->buf, typeHashKeys->size);
-    log_lookup("  keys.buf: %p, size: %llu", typeKeys->buf, typeKeys->size);
+    LOG_ENTITY_DEBUG("ComponentTypeToIndex (offset 0x%x):", STORAGE_DATA_COMPONENT_TYPE_TO_INDEX);
+    LOG_ENTITY_DEBUG("  hashKeys.buf: %p, size: %llu", typeHashKeys->buf, typeHashKeys->size);
+    LOG_ENTITY_DEBUG("  keys.buf: %p, size: %llu", typeKeys->buf, typeKeys->size);
 
     // Dump InstanceToPageMap HashMap info
     void *instanceMap = (char *)storageData + STORAGE_DATA_INSTANCE_TO_PAGE_MAP;
     ArrayHeader *instanceHashKeys = GET_HASH_KEYS(instanceMap);
     ArrayHeader *instanceKeys = GET_KEYS(instanceMap);
-    log_lookup("InstanceToPageMap (offset 0x%x):", STORAGE_DATA_INSTANCE_TO_PAGE_MAP);
-    log_lookup("  hashKeys.buf: %p, size: %llu", instanceHashKeys->buf, instanceHashKeys->size);
-    log_lookup("  keys.buf: %p, size: %llu", instanceKeys->buf, instanceKeys->size);
+    LOG_ENTITY_DEBUG("InstanceToPageMap (offset 0x%x):", STORAGE_DATA_INSTANCE_TO_PAGE_MAP);
+    LOG_ENTITY_DEBUG("  hashKeys.buf: %p, size: %llu", instanceHashKeys->buf, instanceHashKeys->size);
+    LOG_ENTITY_DEBUG("  keys.buf: %p, size: %llu", instanceKeys->buf, instanceKeys->size);
 
     // Try to look up this entity
     EntityStorageIndex idx;
     if (storage_data_get_instance_index(storageData, entityHandle, &idx)) {
-        log_lookup("Entity location: PageIndex=%u, EntryIndex=%u", idx.PageIndex, idx.EntryIndex);
+        LOG_ENTITY_DEBUG("Entity location: PageIndex=%u, EntryIndex=%u", idx.PageIndex, idx.EntryIndex);
     } else {
-        log_lookup("Entity not found in InstanceToPageMap");
+        LOG_ENTITY_DEBUG("Entity not found in InstanceToPageMap");
     }
 
     // Enumerate and dump all component types in this storage class
-    log_lookup("Component types in this storage class:");
+    LOG_ENTITY_DEBUG("Component types in this storage class:");
     uint16_t indices[256];
     uint8_t slots[256];
     int count = storage_data_enumerate_component_types(storageData, indices, slots, 256);
     for (int i = 0; i < count; i++) {
-        log_lookup("  TypeIndex=%u -> Slot=%u", indices[i], slots[i]);
+        LOG_ENTITY_DEBUG("  TypeIndex=%u -> Slot=%u", indices[i], slots[i]);
     }
-    log_lookup("Total component types: %d", count);
+    LOG_ENTITY_DEBUG("Total component types: %d", count);
 }
 
 int storage_data_enumerate_component_types(void *storageData,
@@ -423,7 +407,7 @@ int storage_data_enumerate_component_types(void *storageData,
     ArrayHeader *values = GET_VALUES(map);
 
     if (!keys->buf || !values->buf || keys->size == 0) {
-        log_lookup("ComponentTypeToIndex: Empty or invalid");
+        LOG_ENTITY_DEBUG("ComponentTypeToIndex: Empty or invalid");
         return 0;
     }
 

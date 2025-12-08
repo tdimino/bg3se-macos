@@ -37,7 +37,7 @@ int lua_ext_print(lua_State *L) {
 
     luaL_pushresult(&b);
     const char *msg = lua_tostring(L, -1);
-    log_message("[Lua] %s", msg);
+    LOG_LUA_INFO("%s", msg);
 
     // Forward to connected console clients
     console_send_output(msg, false);
@@ -68,7 +68,7 @@ int lua_ext_isclient(lua_State *L) {
 
 int lua_ext_io_loadfile(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
-    log_message("[Lua] Ext.IO.LoadFile('%s')", path);
+    LOG_LUA_INFO("Ext.IO.LoadFile('%s')", path);
 
     FILE *f = fopen(path, "r");
     if (!f) {
@@ -101,7 +101,7 @@ int lua_ext_io_loadfile(lua_State *L) {
 int lua_ext_io_savefile(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     const char *content = luaL_checkstring(L, 2);
-    log_message("[Lua] Ext.IO.SaveFile('%s')", path);
+    LOG_LUA_INFO("Ext.IO.SaveFile('%s')", path);
 
     FILE *f = fopen(path, "w");
     if (!f) {
@@ -271,7 +271,7 @@ int lua_ext_memory_search(lua_State *L) {
         startAddr = (uintptr_t)_dyld_get_image_header(0);
     }
 
-    log_message("[Memory] Searching for %d-byte pattern from 0x%llx, size %lld",
+    LOG_MEMORY_DEBUG("Searching for %d-byte pattern from 0x%llx, size %lld",
                 patternLen, (unsigned long long)startAddr, (long long)searchSize);
 
     // Create result table
@@ -308,7 +308,7 @@ int lua_ext_memory_search(lua_State *L) {
         vm_deallocate(mach_task_self(), data, read_size);
     }
 
-    log_message("[Memory] Found %d matches", resultIdx - 1);
+    LOG_MEMORY_DEBUG("Found %d matches", resultIdx - 1);
     return 1;
 }
 
@@ -321,7 +321,7 @@ int lua_ext_memory_getmodulebase(lua_State *L) {
         if (imageName && strstr(imageName, name)) {
             const struct mach_header *header = _dyld_get_image_header(i);
             lua_pushinteger(L, (lua_Integer)(uintptr_t)header);
-            log_message("[Memory] Module '%s' base: 0x%llx", name, (unsigned long long)(uintptr_t)header);
+            LOG_MEMORY_DEBUG("Module '%s' base: 0x%llx", name, (unsigned long long)(uintptr_t)header);
             return 1;
         }
     }
@@ -389,7 +389,7 @@ void lua_ext_register_memory(lua_State *L, int ext_table_index) {
     lua_setfield(L, -2, "GetModuleBase");
     lua_setfield(L, ext_table_index, "Memory");
 
-    log_message("[Lua] Ext.Memory namespace registered");
+    LOG_LUA_INFO("Ext.Memory namespace registered");
 }
 
 // ============================================================================
@@ -568,7 +568,7 @@ void lua_ext_register_types(lua_State *L, int ext_table_index) {
 
     lua_setfield(L, ext_table_index, "Types");
 
-    log_message("[Lua] Ext.Types namespace registered");
+    LOG_LUA_INFO("Ext.Types namespace registered");
 }
 
 // ============================================================================
@@ -623,7 +623,7 @@ void lua_ext_register_global_helpers(lua_State *L) {
 
     if (luaL_dostring(L, dump_func) != LUA_OK) {
         const char *err = lua_tostring(L, -1);
-        log_message("[Lua] Warning: Failed to register dump helpers: %s", err ? err : "(unknown)");
+        LOG_LUA_WARN(" Failed to register dump helpers: %s", err ? err : "(unknown)");
         lua_pop(L, 1);
     }
 
@@ -728,11 +728,11 @@ void lua_ext_register_global_helpers(lua_State *L) {
     for (size_t i = 0; i < sizeof(console_cmds) / sizeof(console_cmds[0]); i++) {
         if (luaL_dostring(L, console_cmds[i]) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            log_message("[Lua] Warning: Failed to register console command: %s", err ? err : "(unknown)");
+            LOG_LUA_WARN(" Failed to register console command: %s", err ? err : "(unknown)");
             lua_pop(L, 1);
         }
     }
 
-    log_message("[Lua] Global helpers registered (_P, _D, _DS, _H, _PTR, _PE)");
-    log_message("[Lua] Built-in console commands registered (!probe, !dumpstat, !findstr, !hexdump, !types, !pv_dump, !pv_set, !pv_save, !pv_reload)");
+    LOG_LUA_INFO("Global helpers registered (_P, _D, _DS, _H, _PTR, _PE)");
+    LOG_LUA_INFO("Built-in console commands registered (!probe, !dumpstat, !findstr, !hexdump, !types, !pv_dump, !pv_set, !pv_save, !pv_reload)");
 }

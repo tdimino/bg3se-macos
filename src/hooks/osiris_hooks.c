@@ -27,7 +27,7 @@ static void hook_log(const char *format, ...) {
     va_end(args);
 
     // Use centralized logging
-    log_message("[HOOK] %s", buffer);
+    LOG_HOOKS_DEBUG("%s", buffer);
 }
 
 // Track hook state

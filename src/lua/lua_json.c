@@ -256,12 +256,12 @@ void json_stringify_value(lua_State *L, int index, luaL_Buffer *b) {
 
 int lua_ext_json_parse(lua_State *L) {
     const char *json = luaL_checkstring(L, 1);
-    log_message("[Lua] Ext.Json.Parse called (len: %zu)", strlen(json));
+    LOG_LUA_DEBUG("Ext.Json.Parse called (len: %zu)", strlen(json));
 
     const char *result = json_parse_value(L, json);
     if (!result) {
         lua_pushnil(L);
-        log_message("[Lua] Ext.Json.Parse failed");
+        LOG_LUA_DEBUG("Ext.Json.Parse failed");
     }
     return 1;
 }

@@ -40,7 +40,7 @@ SafeMemoryInfo safe_memory_check_address(mach_vm_address_t address) {
 
     if (kr != KERN_SUCCESS) {
         /* Address not in any mapped region */
-        log_message("[SafeMemory] mach_vm_region FAILED for 0x%llx: kr=%d",
+        LOG_MEMORY_DEBUG("mach_vm_region FAILED for 0x%llx: kr=%d",
                    (unsigned long long)address, kr);
         return info;
     }
@@ -50,7 +50,7 @@ SafeMemoryInfo safe_memory_check_address(mach_vm_address_t address) {
      * so we need to verify the address is actually inside it */
     if (address < region_addr || address >= region_addr + region_size) {
         /* Address is in a gap between regions - log for diagnostics */
-        log_message("[SafeMemory] VALIDATION FAILED: addr=0x%llx not in region 0x%llx-0x%llx (%s)",
+        LOG_MEMORY_DEBUG("VALIDATION FAILED: addr=0x%llx not in region 0x%llx-0x%llx (%s)",
                    (unsigned long long)address,
                    (unsigned long long)region_addr,
                    (unsigned long long)(region_addr + region_size),

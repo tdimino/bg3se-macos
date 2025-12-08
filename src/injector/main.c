@@ -279,7 +279,7 @@ static void *resolve_by_pattern(const char *image_name, const FunctionPattern *p
     if (found) {
         // Adjust back by pattern offset to get function start
         void *func_addr = (void *)((uintptr_t)found - pat->pattern_offset);
-        log_message("[PatternScan] %s found via pattern at %p", pat->name, func_addr);
+        LOG_HOOKS_DEBUG("%s found via pattern at %p", pat->name, func_addr);
         return func_addr;
     }
 
@@ -297,7 +297,7 @@ static void *resolve_osiris_symbol(void *handle, const FunctionPattern *pat) {
     }
 
     // Fallback to pattern scanning
-    log_message("[Resolve] dlsym failed for %s, trying pattern scan...", pat->name);
+    LOG_HOOKS_DEBUG("dlsym failed for %s, trying pattern scan...", pat->name);
     return resolve_by_pattern("libOsiris.dylib", pat);
 }
 
@@ -352,7 +352,7 @@ static void init_mods_base_path(void) {
     snprintf(mods_base_path, sizeof(mods_base_path),
              "%s/Documents/Larian Studios/Baldur's Gate 3/Mods", home);
 
-    log_message("Mods base path: %s", mods_base_path);
+    LOG_MOD_INFO("Mods base path: %s", mods_base_path);
 }
 
 /**
@@ -420,7 +420,7 @@ static char *get_mod_table_name(const char *mod_name) {
             }
             fclose(f);
             if (mod_table) {
-                log_message("[Lua] Found ModTable '%s' for mod %s", mod_table, mod_name);
+                LOG_LUA_INFO("Found ModTable '%s' for mod %s", mod_table, mod_name);
                 return mod_table;
             }
         }
@@ -448,14 +448,14 @@ static char *get_mod_table_name(const char *mod_name) {
         }
         fclose(f);
         if (mod_table) {
-            log_message("[Lua] Found ModTable '%s' for mod %s", mod_table, mod_name);
+            LOG_LUA_INFO("Found ModTable '%s' for mod %s", mod_table, mod_name);
             return mod_table;
         }
     }
 
     // Fallback: Use mod_name as ModTable
     mod_table = strdup(mod_name);
-    log_message("[Lua] Using mod name '%s' as ModTable (Config.json not found or no ModTable)", mod_name);
+    LOG_LUA_INFO("Using mod name '%s' as ModTable (Config.json not found or no ModTable)", mod_name);
     return mod_table;
 }
 
@@ -472,7 +472,7 @@ static void setup_mod_namespace(lua_State *L, const char *mod_table) {
         lua_newtable(L);
         lua_pushvalue(L, -1);  // Duplicate for setglobal
         lua_setglobal(L, "Mods");
-        log_message("[Lua] Created global 'Mods' table");
+        LOG_LUA_INFO("Created global 'Mods' table");
     }
 
     // Now Mods table is on stack
@@ -481,7 +481,7 @@ static void setup_mod_namespace(lua_State *L, const char *mod_table) {
     lua_setfield(L, -2, mod_table);
     lua_pop(L, 1);  // Pop Mods table
 
-    log_message("[Lua] Created namespace Mods.%s", mod_table);
+    LOG_LUA_INFO("Created namespace Mods.%s", mod_table);
 }
 
 /**
@@ -513,14 +513,14 @@ static int try_load_lua_file(lua_State *L, const char *full_path) {
     free(content);
 
     if (status != LUA_OK) {
-        log_message("[Lua] Error loading %s: %s", full_path, lua_tostring(L, -1));
+        LOG_LUA_INFO("Error loading %s: %s", full_path, lua_tostring(L, -1));
         lua_pop(L, 1);
         return 0;
     }
 
     // Execute the loaded chunk
     if (lua_pcall(L, 0, LUA_MULTRET, 0) != LUA_OK) {
-        log_message("[Lua] Error executing %s: %s", full_path, lua_tostring(L, -1));
+        LOG_LUA_INFO("Error executing %s: %s", full_path, lua_tostring(L, -1));
         lua_pop(L, 1);
         return 0;
     }
@@ -536,7 +536,7 @@ static int try_load_lua_file(lua_State *L, const char *full_path) {
  */
 static int lua_ext_require(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
-    log_message("[Lua] Ext.Require('%s')", path);
+    LOG_LUA_INFO("Ext.Require('%s')", path);
 
     const char *lua_base = mod_get_current_lua_base();
     const char *pak_path = mod_get_current_pak_path();
@@ -550,7 +550,7 @@ static int lua_ext_require(lua_State *L) {
 
         // Check if already loaded
         if (is_module_loaded(full_path)) {
-            log_message("[Lua] Module already loaded: %s", path);
+            LOG_LUA_INFO("Module already loaded: %s", path);
             lua_pushnil(L);
             return 1;
         }
@@ -558,7 +558,7 @@ static int lua_ext_require(lua_State *L) {
         // Try to load from the tracked base path
         if (try_load_lua_file(L, full_path)) {
             mark_module_loaded(full_path);
-            log_message("[Lua] Loaded module from: %s", full_path);
+            LOG_LUA_INFO("Loaded module from: %s", full_path);
             if (lua_gettop(L) == 0) {
                 lua_pushnil(L);
             }
@@ -577,14 +577,14 @@ static int lua_ext_require(lua_State *L) {
         snprintf(cache_key, sizeof(cache_key), "pak:%s:%s", pak_path, pak_lua_path);
 
         if (is_module_loaded(cache_key)) {
-            log_message("[Lua] Module already loaded from PAK: %s", path);
+            LOG_LUA_INFO("Module already loaded from PAK: %s", path);
             lua_pushnil(L);
             return 1;
         }
 
         if (mod_load_lua_from_pak(L, pak_path, pak_lua_path)) {
             mark_module_loaded(cache_key);
-            log_message("[Lua] Loaded module from PAK: %s", pak_lua_path);
+            LOG_LUA_INFO("Loaded module from PAK: %s", pak_lua_path);
             if (lua_gettop(L) == 0) {
                 lua_pushnil(L);
             }
@@ -593,12 +593,12 @@ static int lua_ext_require(lua_State *L) {
     }
 
     // Module not found
-    log_message("[Lua] Warning: Module not found: %s", path);
+    LOG_LUA_WARN(" Module not found: %s", path);
     if (lua_base && strlen(lua_base) > 0) {
-        log_message("[Lua]   Tried filesystem: %s/%s", lua_base, path);
+        LOG_LUA_INFO("  Tried filesystem: %s/%s", lua_base, path);
     }
     if (pak_path && strlen(pak_path) > 0) {
-        log_message("[Lua]   Tried PAK: %s (Mods/%s/ScriptExtender/Lua/%s)",
+        LOG_LUA_INFO("  Tried PAK: %s (Mods/%s/ScriptExtender/Lua/%s)",
                     pak_path, mod_name, path);
     }
 
@@ -663,7 +663,7 @@ static void register_ext_api(lua_State *L) {
     // Register global helper functions (must be after Ext is set as global)
     lua_ext_register_global_helpers(L);
 
-    log_message("Ext API registered in Lua");
+    LOG_LUA_INFO("Ext API registered in Lua");
 }
 
 // ============================================================================
@@ -695,10 +695,10 @@ static int lua_gethostcharacter(lua_State *L) {
     }
 
     if (hostGuid) {
-        log_message("[Lua] GetHostCharacter() -> '%s'", hostGuid);
+        LOG_LUA_INFO("GetHostCharacter() -> '%s'", hostGuid);
         lua_pushstring(L, hostGuid);
     } else {
-        log_message("[Lua] GetHostCharacter() -> nil (no players discovered yet)");
+        LOG_LUA_INFO("GetHostCharacter() -> nil (no players discovered yet)");
         lua_pushnil(L);
     }
     return 1;
@@ -719,7 +719,7 @@ static int lua_osi_istagged(lua_State *L) {
         int osi_result = osi_is_tagged(character, tag);
         if (osi_result >= 0) {
             // Real query succeeded
-            log_message("[Lua] Osi.IsTagged('%s', '%s') -> %d (via Osiris)", character, tag, osi_result);
+            LOG_LUA_INFO("Osi.IsTagged('%s', '%s') -> %d (via Osiris)", character, tag, osi_result);
             lua_pushboolean(L, osi_result);
             return 1;
         }
@@ -741,7 +741,7 @@ static int lua_osi_istagged(lua_State *L) {
         }
     }
 
-    log_message("[Lua] Osi.IsTagged('%s', '%s') -> %d (heuristic)", character, tag, result);
+    LOG_LUA_INFO("Osi.IsTagged('%s', '%s') -> %d (heuristic)", character, tag, result);
     lua_pushboolean(L, result);
     return 1;
 }
@@ -758,14 +758,14 @@ static int lua_osi_getdistanceto(lua_State *L) {
     if (pfn_InternalQuery) {
         float distance = osi_get_distance_to(char1, char2);
         if (distance >= 0.0f) {
-            log_message("[Lua] Osi.GetDistanceTo('%s', '%s') -> %.2f (via Osiris)", char1, char2, distance);
+            LOG_LUA_INFO("Osi.GetDistanceTo('%s', '%s') -> %.2f (via Osiris)", char1, char2, distance);
             lua_pushnumber(L, distance);
             return 1;
         }
         // Fall through if function not found
     }
 
-    log_message("[Lua] Osi.GetDistanceTo('%s', '%s') -> 0.0 (fallback)", char1, char2);
+    LOG_LUA_INFO("Osi.GetDistanceTo('%s', '%s') -> 0.0 (fallback)", char1, char2);
     lua_pushnumber(L, 0.0);
     return 1;
 }
@@ -783,7 +783,7 @@ static int lua_osi_dialoggetnumberofinvolvedplayers(lua_State *L) {
             instance_id = (int)lua_tonumber(L, 1);
         }
     }
-    log_message("[Lua] Osi.DialogGetNumberOfInvolvedPlayers(%d) -> %d",
+    LOG_LUA_INFO("Osi.DialogGetNumberOfInvolvedPlayers(%d) -> %d",
                 instance_id, g_currentDialogPlayerCount);
     lua_pushinteger(L, g_currentDialogPlayerCount);
     return 1;
@@ -806,7 +806,7 @@ static int lua_osi_speakergetdialog(lua_State *L) {
             index = (int)lua_tonumber(L, 2);
         }
     }
-    log_message("[Lua] Osi.SpeakerGetDialog('%s', %d) -> '%s'",
+    LOG_LUA_INFO("Osi.SpeakerGetDialog('%s', %d) -> '%s'",
                 character, index, g_currentDialogResource);
     lua_pushstring(L, g_currentDialogResource);
     return 1;
@@ -824,10 +824,10 @@ static int lua_osi_dialogrequeststop(lua_State *L) {
 
     // Try real Osiris call first
     if (pfn_InternalCall && dialog) {
-        log_message("[Lua] Osi.DialogRequestStop('%s') - calling Osiris", dialog);
+        LOG_LUA_INFO("Osi.DialogRequestStop('%s') - calling Osiris", dialog);
         osi_dialog_request_stop(dialog);
     } else {
-        log_message("[Lua] Osi.DialogRequestStop() called (no-op: %s)",
+        LOG_LUA_INFO("Osi.DialogRequestStop() called (no-op: %s)",
                     dialog ? "InternalCall not available" : "no dialog specified");
     }
 
@@ -851,7 +851,7 @@ static int lua_osi_qry_startdialog_fixed(lua_State *L) {
                 set_arg_string(&args[0], resource, 0);   // String (resource)
                 set_arg_string(&args[1], character, 1);  // GUID
                 int result = osiris_query_by_id(funcId, args);
-                log_message("[Lua] Osi.QRY_StartDialog_Fixed('%s', '%s') -> %d (via Osiris)",
+                LOG_LUA_INFO("Osi.QRY_StartDialog_Fixed('%s', '%s') -> %d (via Osiris)",
                            resource, character, result);
                 lua_pushboolean(L, result);
                 return 1;
@@ -859,7 +859,7 @@ static int lua_osi_qry_startdialog_fixed(lua_State *L) {
         }
     }
 
-    log_message("[Lua] Osi.QRY_StartDialog_Fixed('%s', '%s') -> false (fallback)",
+    LOG_LUA_INFO("Osi.QRY_StartDialog_Fixed('%s', '%s') -> false (fallback)",
                 resource ? resource : "nil", character ? character : "nil");
     lua_pushboolean(L, 0);
     return 1;
@@ -931,7 +931,7 @@ static void track_player_guid(const char *guid) {
             sizeof(g_knownPlayerGuids[0]) - 1);
     g_knownPlayerGuids[g_knownPlayerCount][sizeof(g_knownPlayerGuids[0]) - 1] = '\0';
     g_knownPlayerCount++;
-    log_message("[Players] Discovered player UUID: %s (from %s, total: %d)", uuid, guid, g_knownPlayerCount);
+    LOG_ENTITY_DEBUG("Discovered player UUID: %s (from %s, total: %d)", uuid, guid, g_knownPlayerCount);
 }
 
 /**
@@ -939,7 +939,7 @@ static void track_player_guid(const char *guid) {
  * Creates a table with a :Get() method that returns player list
  */
 static int lua_osi_db_players_get(lua_State *L) {
-    log_message("[Lua] Osi.DB_Players:Get() called, known players: %d", g_knownPlayerCount);
+    LOG_LUA_INFO("Osi.DB_Players:Get() called, known players: %d", g_knownPlayerCount);
 
     // Return table of known players: { {guid1}, {guid2}, ... }
     lua_newtable(L);
@@ -967,7 +967,7 @@ static int lua_entity_get_discovered_players(lua_State *L) {
         lua_rawseti(L, -2, i + 1);  // result[i+1] = guid
     }
 
-    log_message("[Entity] GetDiscoveredPlayers() returning %d players", g_knownPlayerCount);
+    LOG_ENTITY_DEBUG("GetDiscoveredPlayers() returning %d players", g_knownPlayerCount);
     return 1;
 }
 
@@ -1002,7 +1002,7 @@ static int osi_value_to_lua(lua_State *L, OsiArgumentValue *val) {
             }
             return 1;
         default:
-            log_message("[OsiValue] Unknown type %d", val->typeId);
+            LOG_OSIRIS_DEBUG("Unknown type %d", val->typeId);
             lua_pushnil(L);
             return 1;
     }
@@ -1024,7 +1024,7 @@ static int osi_dynamic_call(lua_State *L) {
     uint32_t funcId = osi_func_lookup_id(funcName);
     if (funcId == INVALID_FUNCTION_ID) {
         // Function not yet discovered - return nil gracefully
-        log_message("[Osi.%s] Function not found in cache (not yet discovered)", funcName);
+        LOG_OSIRIS_DEBUG("Osi.%s: Function not found in cache (not yet discovered)", funcName);
         lua_pushnil(L);
         return 1;
     }
@@ -1035,12 +1035,12 @@ static int osi_dynamic_call(lua_State *L) {
     osi_func_get_info(funcName, &arity, &funcType);
 
     int numArgs = lua_gettop(L);
-    log_message("[Osi.%s] Called with %d args (funcId=0x%x, type=%s[%d])",
+    LOG_OSIRIS_DEBUG("Osi.%s: Called with %d args (funcId=0x%x, type=%s[%d])",
                 funcName, numArgs, funcId, osi_func_type_str(funcType), funcType);
 
     // Check if we have the required function pointers
     if (!pfn_InternalQuery && !pfn_InternalCall) {
-        log_message("[Osi.%s] ERROR: No Osiris function pointers available", funcName);
+        LOG_OSIRIS_DEBUG("Osi.%s: ERROR: No Osiris function pointers available", funcName);
         lua_pushnil(L);
         return 1;
     }
@@ -1085,7 +1085,7 @@ static int osi_dynamic_call(lua_State *L) {
                     break;
                 }
                 default: {
-                    log_message("[Osi.%s] Warning: Unsupported arg type %d at position %d",
+                    LOG_OSIRIS_DEBUG("Osi.%s: Warning: Unsupported arg type %d at position %d",
                                 funcName, luaType, argIdx);
                     set_arg_string(&args[i], "", 0);
                     break;
@@ -1109,7 +1109,7 @@ static int osi_dynamic_call(lua_State *L) {
             // Query types - use InternalQuery
             if (pfn_InternalQuery) {
                 result = pfn_InternalQuery(funcId, args);
-                log_message("[Osi.%s] InternalQuery returned %d", funcName, result);
+                LOG_OSIRIS_DEBUG("Osi.%s: InternalQuery returned %d", funcName, result);
 
                 if (result && numArgs > 0) {
                     // Query succeeded - return all argument values (OUT params filled)
@@ -1118,7 +1118,7 @@ static int osi_dynamic_call(lua_State *L) {
                         osi_value_to_lua(L, &args[i].value);
                         returnCount++;
                     }
-                    log_message("[Osi.%s] Returning %d values from query", funcName, returnCount);
+                    LOG_OSIRIS_DEBUG("Osi.%s: Returning %d values from query", funcName, returnCount);
                     return returnCount;
                 } else if (result) {
                     // Query succeeded but no args - return true
@@ -1137,7 +1137,7 @@ static int osi_dynamic_call(lua_State *L) {
             // Call types - use InternalCall
             if (pfn_InternalCall) {
                 result = pfn_InternalCall(funcId, (void *)args);
-                log_message("[Osi.%s] InternalCall returned %d", funcName, result);
+                LOG_OSIRIS_DEBUG("Osi.%s: InternalCall returned %d", funcName, result);
                 // Calls don't return values
                 return 0;
             }
@@ -1148,7 +1148,7 @@ static int osi_dynamic_call(lua_State *L) {
             // Event/Proc types - these trigger events, use InternalCall
             if (pfn_InternalCall) {
                 result = pfn_InternalCall(funcId, (void *)args);
-                log_message("[Osi.%s] Event/Proc dispatch returned %d", funcName, result);
+                LOG_OSIRIS_DEBUG("Osi.%s: Event/Proc dispatch returned %d", funcName, result);
                 return 0;
             }
             break;
@@ -1159,7 +1159,7 @@ static int osi_dynamic_call(lua_State *L) {
             if (pfn_InternalQuery) {
                 result = pfn_InternalQuery(funcId, args);
                 if (result) {
-                    log_message("[Osi.%s] Database query returned %d", funcName, result);
+                    LOG_OSIRIS_DEBUG("Osi.%s: Database query returned %d", funcName, result);
                     if (numArgs > 0) {
                         int returnCount = 0;
                         for (int i = 0; i < numArgs; i++) {
@@ -1175,7 +1175,7 @@ static int osi_dynamic_call(lua_State *L) {
             // Fall through to try as insert
             if (pfn_InternalCall) {
                 result = pfn_InternalCall(funcId, (void *)args);
-                log_message("[Osi.%s] Database insert returned %d", funcName, result);
+                LOG_OSIRIS_DEBUG("Osi.%s: Database insert returned %d", funcName, result);
                 return 0;
             }
             break;
@@ -1183,11 +1183,11 @@ static int osi_dynamic_call(lua_State *L) {
         case OSI_FUNC_UNKNOWN:
         default:
             // Unknown type - try query first, then call (fallback heuristic)
-            log_message("[Osi.%s] Unknown type %d, trying query then call", funcName, funcType);
+            LOG_OSIRIS_DEBUG("Osi.%s: Unknown type %d, trying query then call", funcName, funcType);
             if (pfn_InternalQuery) {
                 result = pfn_InternalQuery(funcId, args);
                 if (result) {
-                    log_message("[Osi.%s] Query (fallback) succeeded", funcName);
+                    LOG_OSIRIS_DEBUG("Osi.%s: Query (fallback) succeeded", funcName);
                     if (numArgs > 0) {
                         int returnCount = 0;
                         for (int i = 0; i < numArgs; i++) {
@@ -1204,7 +1204,7 @@ static int osi_dynamic_call(lua_State *L) {
             if (pfn_InternalCall) {
                 result = pfn_InternalCall(funcId, (void *)args);
                 if (result) {
-                    log_message("[Osi.%s] Call (fallback) succeeded", funcName);
+                    LOG_OSIRIS_DEBUG("Osi.%s: Call (fallback) succeeded", funcName);
                     return 0;
                 }
             }
@@ -1228,7 +1228,7 @@ static int osi_index_handler(lua_State *L) {
         return 1;
     }
 
-    log_message("[Osi.__index] Looking up '%s'", key);
+    LOG_OSIRIS_DEBUG("Looking up '%s'", key);
 
     // Special case: DB_Players returns a table with :Get() method
     if (strcmp(key, "DB_Players") == 0) {
@@ -1246,9 +1246,9 @@ static int osi_index_handler(lua_State *L) {
     if (funcId == INVALID_FUNCTION_ID) {
         // Function not discovered yet - return a closure anyway
         // It will return nil when called if still not found
-        log_message("[Osi.__index] '%s' not yet discovered, returning lazy closure", key);
+        LOG_OSIRIS_DEBUG("'%s' not yet discovered, returning lazy closure", key);
     } else {
-        log_message("[Osi.__index] '%s' found (funcId=0x%x)", key, funcId);
+        LOG_OSIRIS_DEBUG("'%s' found (funcId=0x%x)", key, funcId);
     }
 
     // Create a closure with the function name as upvalue
@@ -1309,7 +1309,7 @@ static void register_osi_namespace(lua_State *L) {
     lua_pushcfunction(L, lua_gethostcharacter);
     lua_setglobal(L, "GetHostCharacter");
 
-    log_message("Osi namespace registered with dynamic metatable");
+    LOG_OSIRIS_INFO("Osi namespace registered with dynamic metatable");
 }
 
 /**
@@ -1330,16 +1330,16 @@ static int lua_global_dump(lua_State *L) {
 
     switch (t) {
         case LUA_TNIL:
-            log_message("[Lua] _D: nil");
+            LOG_LUA_INFO("_D: nil");
             break;
         case LUA_TBOOLEAN:
-            log_message("[Lua] _D: %s", lua_toboolean(L, 1) ? "true" : "false");
+            LOG_LUA_INFO("_D: %s", lua_toboolean(L, 1) ? "true" : "false");
             break;
         case LUA_TNUMBER:
-            log_message("[Lua] _D: %g", lua_tonumber(L, 1));
+            LOG_LUA_INFO("_D: %g", lua_tonumber(L, 1));
             break;
         case LUA_TSTRING:
-            log_message("[Lua] _D: \"%s\"", lua_tostring(L, 1));
+            LOG_LUA_INFO("_D: \"%s\"", lua_tostring(L, 1));
             break;
         case LUA_TTABLE: {
             // Use JSON stringify for tables
@@ -1347,12 +1347,12 @@ static int lua_global_dump(lua_State *L) {
             luaL_buffinit(L, &b);
             json_stringify_value(L, 1, &b);
             luaL_pushresult(&b);
-            log_message("[Lua] _D: %s", lua_tostring(L, -1));
+            LOG_LUA_INFO("_D: %s", lua_tostring(L, -1));
             lua_pop(L, 1);
             break;
         }
         default:
-            log_message("[Lua] _D: <%s: %p>", tname, lua_topointer(L, 1));
+            LOG_LUA_INFO("_D: <%s: %p>", tname, lua_topointer(L, 1));
             break;
     }
 
@@ -1369,7 +1369,7 @@ static void register_global_functions(lua_State *L) {
     lua_pushcfunction(L, lua_global_dump);
     lua_setglobal(L, "_D");
 
-    log_message("Global debug functions registered (_P, _D)");
+    LOG_LUA_INFO("Global debug functions registered (_P, _D)");
 }
 
 /**
@@ -1391,7 +1391,7 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
              mod_name, mod_name);
     snprintf(full_path, sizeof(full_path), "%s/%s", lua_base, bootstrap_file);
 
-    log_message("[Lua] Looking for %s bootstrap: %s", mod_name, full_path);
+    LOG_LUA_INFO("Looking for %s bootstrap: %s", mod_name, full_path);
 
     // Check if file exists before trying to load (so we can set base path first)
     FILE *test_f = fopen(full_path, "r");
@@ -1399,9 +1399,9 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
         fclose(test_f);
         // Set mod context BEFORE loading so Ext.Require works during bootstrap
         mod_set_current(mod_name, lua_base, NULL);
-        log_message("[Lua] Set mod Lua base: %s", lua_base);
+        LOG_LUA_INFO("Set mod Lua base: %s", lua_base);
         if (try_load_lua_file(L, full_path)) {
-            log_message("[Lua] Loaded %s %s", mod_name, bootstrap_file);
+            LOG_LUA_INFO("Loaded %s %s", mod_name, bootstrap_file);
             return 1;
         }
     }
@@ -1416,9 +1416,9 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
     if (test_f) {
         fclose(test_f);
         mod_set_current(mod_name, lua_base, NULL);
-        log_message("[Lua] Set mod Lua base: %s", lua_base);
+        LOG_LUA_INFO("Set mod Lua base: %s", lua_base);
         if (try_load_lua_file(L, full_path)) {
-            log_message("[Lua] Loaded %s %s from mrc_extracted", mod_name, bootstrap_file);
+            LOG_LUA_INFO("Loaded %s %s from mrc_extracted", mod_name, bootstrap_file);
             return 1;
         }
     }
@@ -1433,9 +1433,9 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
     if (test_f) {
         fclose(test_f);
         mod_set_current(mod_name, lua_base, NULL);
-        log_message("[Lua] Set mod Lua base: %s", lua_base);
+        LOG_LUA_INFO("Set mod Lua base: %s", lua_base);
         if (try_load_lua_file(L, full_path)) {
-            log_message("[Lua] Loaded %s %s", mod_name, bootstrap_file);
+            LOG_LUA_INFO("Loaded %s %s", mod_name, bootstrap_file);
             return 1;
         }
     }
@@ -1447,13 +1447,13 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
         snprintf(pak_lua_path, sizeof(pak_lua_path),
                  "Mods/%s/ScriptExtender/Lua/%s", mod_name, bootstrap_file);
 
-        log_message("[Lua] Trying to load %s from PAK: %s", bootstrap_file, pak_path);
+        LOG_LUA_INFO("Trying to load %s from PAK: %s", bootstrap_file, pak_path);
 
         // Set mod context for PAK loading (clear lua_base since we're using PAK)
         mod_set_current(mod_name, NULL, pak_path);
 
         if (mod_load_lua_from_pak(L, pak_path, pak_lua_path)) {
-            log_message("[Lua] Loaded %s %s from PAK", mod_name, bootstrap_file);
+            LOG_LUA_INFO("Loaded %s %s from PAK", mod_name, bootstrap_file);
             return 1;
         }
 
@@ -1464,7 +1464,7 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
     // Clear mod context if not found
     mod_set_current(NULL, NULL, NULL);
 
-    log_message("[Lua] Bootstrap not found for mod: %s (%s)", mod_name, bootstrap_file);
+    LOG_LUA_INFO("Bootstrap not found for mod: %s (%s)", mod_name, bootstrap_file);
     return 0;
 }
 
@@ -1473,7 +1473,7 @@ static int load_mod_bootstrap(lua_State *L, const char *mod_name, const char *bo
  * Uses the dynamically detected SE mods populated by mod_detect_enabled()
  */
 static void load_mod_scripts(lua_State *L) {
-    log_message("=== Loading Mod Scripts ===");
+    LOG_MOD_INFO("=== Loading Mod Scripts ===");
 
     // Initialize the mods base path
     init_mods_base_path();
@@ -1481,16 +1481,16 @@ static void load_mod_scripts(lua_State *L) {
     // Check if we have any SE mods detected
     int se_count = mod_get_se_count();
     if (se_count == 0) {
-        log_message("[Lua] No SE mods detected to load");
-        log_message("=== Mod Script Loading Complete ===");
+        LOG_LUA_INFO("No SE mods detected to load");
+        LOG_MOD_INFO("=== Mod Script Loading Complete ===");
         return;
     }
 
-    log_message("[Lua] Loading %d detected SE mod(s)...", se_count);
+    LOG_LUA_INFO("Loading %d detected SE mod(s)...", se_count);
 
     for (int i = 0; i < se_count; i++) {
         const char *mod_name = mod_get_se_name(i);
-        log_message("[Lua] Attempting to load SE mod: %s", mod_name);
+        LOG_LUA_INFO("Attempting to load SE mod: %s", mod_name);
 
         // Get ModTable name from Config.json (or fallback to mod_name)
         char *mod_table = get_mod_table_name(mod_name);
@@ -1502,16 +1502,16 @@ static void load_mod_scripts(lua_State *L) {
 
         // Try to load server bootstrap (runs on both client and server in BG3)
         if (load_mod_bootstrap(L, mod_name, "Server") > 0) {
-            log_message("[Lua] Successfully loaded server scripts for: %s", mod_name);
+            LOG_LUA_INFO("Successfully loaded server scripts for: %s", mod_name);
         }
 
         // Also try client bootstrap if it exists
         if (load_mod_bootstrap(L, mod_name, "Client") > 0) {
-            log_message("[Lua] Successfully loaded client scripts for: %s", mod_name);
+            LOG_LUA_INFO("Successfully loaded client scripts for: %s", mod_name);
         }
     }
 
-    log_message("=== Mod Script Loading Complete ===");
+    LOG_MOD_INFO("=== Mod Script Loading Complete ===");
 }
 
 // ============================================================================
@@ -1546,11 +1546,11 @@ static void overlay_toggle_hotkey(void *userData) {
  * Initialize Lua runtime
  */
 static void init_lua(void) {
-    log_message("Initializing Lua runtime...");
+    LOG_LUA_INFO("Initializing Lua runtime...");
 
     L = luaL_newstate();
     if (!L) {
-        log_message("ERROR: Failed to create Lua state");
+        LOG_LUA_ERROR("Failed to create Lua state");
         return;
     }
 
@@ -1601,7 +1601,7 @@ static void init_lua(void) {
         // Register Ctrl+` hotkey to toggle overlay console
         // macOS keyCode 50 = backtick/grave accent key
         input_register_hotkey(50, INPUT_MOD_CTRL, overlay_toggle_hotkey, NULL, "ToggleConsole");
-        log_message("[Overlay] Registered Ctrl+` hotkey for console toggle");
+        LOG_CONSOLE_DEBUG("Registered Ctrl+` hotkey for console toggle");
     }
 
     // Register Ext.Math namespace
@@ -1641,11 +1641,11 @@ static void init_lua(void) {
 
     if (luaL_dostring(L, test_script) != LUA_OK) {
         const char *error = lua_tostring(L, -1);
-        log_message("Lua error: %s", error);
+        LOG_LUA_ERROR(" %s", error);
         lua_pop(L, 1);
     }
 
-    log_message("Lua %s initialized", LUA_VERSION);
+    LOG_LUA_INFO("Lua %s initialized", LUA_VERSION);
 }
 
 /**
@@ -1653,7 +1653,7 @@ static void init_lua(void) {
  */
 static void shutdown_lua(void) {
     if (L) {
-        log_message("Shutting down Lua runtime...");
+        LOG_LUA_INFO("Shutting down Lua runtime...");
 
         // Shutdown input system before closing Lua
         input_shutdown();
@@ -1677,18 +1677,18 @@ static int mod_scripts_loaded = 0;
  */
 static void fake_InitGame(void *thisPtr) {
     initGame_call_count++;
-    log_message(">>> COsiris::InitGame called! (count: %d, this: %p)", initGame_call_count, thisPtr);
+    LOG_OSIRIS_DEBUG(">>> COsiris::InitGame called! (count: %d, this: %p)", initGame_call_count, thisPtr);
 
     // Capture COsiris pointer for function lookups
     if (!g_COsiris) {
         g_COsiris = thisPtr;
-        log_message("  Captured COsiris instance: %p", g_COsiris);
+        LOG_OSIRIS_DEBUG("  Captured COsiris instance: %p", g_COsiris);
 
         // Try to find function manager - it may be at a fixed offset in COsiris
         // or it may be the same object (COsiris might inherit from COsiFunctionMan)
         if (!g_OsiFunctionMan) {
             g_OsiFunctionMan = thisPtr;  // Try using COsiris directly first
-            log_message("  Using COsiris as function manager: %p", g_OsiFunctionMan);
+            LOG_OSIRIS_DEBUG("  Using COsiris as function manager: %p", g_OsiFunctionMan);
         }
     }
 
@@ -1697,7 +1697,7 @@ static void fake_InitGame(void *thisPtr) {
         ((void (*)(void*))orig_InitGame)(thisPtr);
     }
 
-    log_message(">>> COsiris::InitGame returned");
+    LOG_OSIRIS_DEBUG(">>> COsiris::InitGame returned");
 
     // Enumerate Osiris functions after initialization (only once)
     static int functions_enumerated = 0;
@@ -1731,7 +1731,7 @@ static void fake_InitGame(void *thisPtr) {
  */
 static int fake_Load(void *thisPtr, void *smartBuf) {
     load_call_count++;
-    log_message(">>> COsiris::Load called! (count: %d, this: %p, buf: %p)", load_call_count, thisPtr, smartBuf);
+    LOG_OSIRIS_DEBUG(">>> COsiris::Load called! (count: %d, this: %p, buf: %p)", load_call_count, thisPtr, smartBuf);
 
     // Notify game state tracker that we're loading (fires GameStateChanged: Running -> LoadSession)
     if (L) {
@@ -1744,7 +1744,7 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
         result = ((int (*)(void*, void*))orig_Load)(thisPtr, smartBuf);
     }
 
-    log_message(">>> COsiris::Load returned: %d", result);
+    LOG_OSIRIS_DEBUG(">>> COsiris::Load returned: %d", result);
 
     // Notify Lua that a save was loaded
     if (L && result) {
@@ -1753,11 +1753,11 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
         // Try to discover EntityWorld now that the game is fully loaded
         // This is the best time - EocServer should be initialized
         if (!entity_system_ready()) {
-            log_message("[Entity] Attempting EntityWorld discovery after save load...");
+            LOG_ENTITY_DEBUG("Attempting EntityWorld discovery after save load...");
             if (entity_discover_world()) {
-                log_message("[Entity] EntityWorld discovered successfully!");
+                LOG_ENTITY_DEBUG("EntityWorld discovered successfully!");
             } else {
-                log_message("[Entity] EntityWorld discovery failed - try Ext.Entity.Discover() later");
+                LOG_ENTITY_DEBUG("EntityWorld discovery failed - try Ext.Entity.Discover() later");
             }
         }
 
@@ -1865,7 +1865,7 @@ static void set_arg_real(OsiArgumentDesc *arg, float value) {
  */
 static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args) {
     if (!pfn_InternalQuery) {
-        log_message("[OsiQuery] ERROR: InternalQuery not resolved");
+        LOG_OSIRIS_DEBUG("ERROR: InternalQuery not resolved");
         return 0;
     }
 
@@ -1881,11 +1881,11 @@ __attribute__((unused))
 static int osiris_query(const char *funcName, OsiArgumentDesc *args) {
     uint32_t funcId = osi_func_lookup_id(funcName);
     if (funcId == INVALID_FUNCTION_ID) {
-        log_message("[OsiQuery] Function '%s' not found in cache", funcName);
+        LOG_OSIRIS_DEBUG("Function '%s' not found in cache", funcName);
         return 0;
     }
 
-    log_message("[OsiQuery] Calling %s (id=0x%x)", funcName, funcId);
+    LOG_OSIRIS_DEBUG("Calling %s (id=0x%x)", funcName, funcId);
     return osiris_query_by_id(funcId, args);
 }
 
@@ -1895,7 +1895,7 @@ static int osiris_query(const char *funcName, OsiArgumentDesc *args) {
  */
 static int osiris_call_by_id(uint32_t funcId, OsiArgumentDesc *args) {
     if (!pfn_InternalCall) {
-        log_message("[OsiCall] ERROR: InternalCall not resolved");
+        LOG_OSIRIS_DEBUG("ERROR: InternalCall not resolved");
         return 0;
     }
 
@@ -1913,11 +1913,11 @@ __attribute__((unused))
 static int osiris_call(const char *funcName, OsiArgumentDesc *args) {
     uint32_t funcId = osi_func_lookup_id(funcName);
     if (funcId == INVALID_FUNCTION_ID) {
-        log_message("[OsiCall] Function '%s' not found in cache", funcName);
+        LOG_OSIRIS_DEBUG("Function '%s' not found in cache", funcName);
         return 0;
     }
 
-    log_message("[OsiCall] Calling %s (id=0x%x)", funcName, funcId);
+    LOG_OSIRIS_DEBUG("Calling %s (id=0x%x)", funcName, funcId);
     return osiris_call_by_id(funcId, args);
 }
 
@@ -1986,7 +1986,7 @@ static void osi_dialog_request_stop(const char *dialog) {
         funcId = osi_func_lookup_id("Proc_DialogRequestStop");
     }
     if (funcId == INVALID_FUNCTION_ID) {
-        log_message("[OsiCall] DialogRequestStop not found");
+        LOG_OSIRIS_DEBUG("DialogRequestStop not found");
         return;
     }
 
@@ -2035,7 +2035,7 @@ static void dispatch_event_to_lua(const char *eventName, int arity,
             }
 
             // Log callback dispatch
-            log_message("[Osiris] Dispatching %s callback (%s, arity=%d)",
+            LOG_OSIRIS_INFO("Dispatching %s callback (%s, arity=%d)",
                        eventName, timing, listener->arity);
 
             // Push arguments (up to listener's requested arity)
@@ -2071,7 +2071,7 @@ static void dispatch_event_to_lua(const char *eventName, int arity,
 
             // Call the callback
             if (lua_pcall(L, pushed, 0, 0) != LUA_OK) {
-                log_message("[Osiris] Callback error for %s: %s",
+                LOG_OSIRIS_INFO("Callback error for %s: %s",
                            eventName, lua_tostring(L, -1));
                 lua_pop(L, 1);
             }
@@ -2107,7 +2107,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     if (!g_COsiris && thisPtr) {
         g_COsiris = thisPtr;
         g_OsiFunctionMan = thisPtr;  // Try using COsiris as function manager
-        log_message(">>> Captured COsiris from Event: %p", g_COsiris);
+        LOG_OSIRIS_DEBUG(">>> Captured COsiris from Event: %p", g_COsiris);
     }
 
     // Get function name if available (may trigger cache lookup)
@@ -2137,17 +2137,17 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     // Log event (limit frequency to avoid log spam)
     if (event_call_count <= 50 || (event_call_count % 100 == 0) || funcName != NULL) {
         if (funcName) {
-            log_message(">>> Event[%d]: %s (id=%u, arity=%d, args=%p)",
+            LOG_OSIRIS_DEBUG(">>> Event[%d]: %s (id=%u, arity=%d, args=%p)",
                        event_call_count, funcName, funcId, arity, (void*)args);
         } else {
-            log_message(">>> Event[%d]: id=%u (arity=%d, args=%p)",
+            LOG_OSIRIS_DEBUG(">>> Event[%d]: id=%u (arity=%d, args=%p)",
                        event_call_count, funcId, arity, (void*)args);
         }
 
         // Dump first few bytes of args for structure analysis (first 10 events only)
         if (args && event_call_count <= 10) {
             uint8_t *p = (uint8_t *)args;
-            log_message("    args bytes[0-31]: %02x%02x%02x%02x %02x%02x%02x%02x "
+            LOG_OSIRIS_DEBUG("    args bytes[0-31]: %02x%02x%02x%02x %02x%02x%02x%02x "
                        "%02x%02x%02x%02x %02x%02x%02x%02x "
                        "%02x%02x%02x%02x %02x%02x%02x%02x "
                        "%02x%02x%02x%02x %02x%02x%02x%02x",
@@ -2157,7 +2157,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
                        p[24],p[25],p[26],p[27],p[28],p[29],p[30],p[31]);
 
             // Try to read as our assumed structure
-            log_message("    Assumed: nextParam=%p, typeId=%u, stringVal=%p",
+            LOG_OSIRIS_DEBUG("    Assumed: nextParam=%p, typeId=%u, stringVal=%p",
                        (void*)args->nextParam, args->value.typeId,
                        (void*)args->value.stringVal);
 
@@ -2166,7 +2166,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
                 args->value.typeId <= OSI_TYPE_GUIDSTRING &&
                 args->value.stringVal) {
                 // Safety check - verify it's a readable address
-                log_message("    String arg: %.80s", args->value.stringVal);
+                LOG_OSIRIS_DEBUG("    String arg: %.80s", args->value.stringVal);
             }
         }
     }
@@ -2184,7 +2184,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
                 if ((arg->value.typeId == OSI_TYPE_STRING ||
                      arg->value.typeId == OSI_TYPE_GUIDSTRING) &&
                     arg->value.stringVal) {
-                    log_message("[Dialog] Arg[%d]: %s", argIdx, arg->value.stringVal);
+                    LOG_OSIRIS_DEBUG("Arg[%d]: %s", argIdx, arg->value.stringVal);
 
                     // Store first arg as dialog resource
                     if (argIdx == 0) {
@@ -2202,19 +2202,19 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
                         g_dialogParticipantCount++;
                     }
                 } else if (arg->value.typeId == OSI_TYPE_INTEGER) {
-                    log_message("[Dialog] Arg[%d]: (int) %d", argIdx, arg->value.int32Val);
+                    LOG_OSIRIS_DEBUG("Arg[%d]: (int) %d", argIdx, arg->value.int32Val);
                 } else if (arg->value.typeId == OSI_TYPE_INTEGER64) {
-                    log_message("[Dialog] Arg[%d]: (int64) %lld", argIdx, arg->value.int64Val);
+                    LOG_OSIRIS_DEBUG("Arg[%d]: (int64) %lld", argIdx, arg->value.int64Val);
                 }
                 arg = arg->nextParam;
                 argIdx++;
             }
 
             g_currentDialogPlayerCount = 1;  // Single-player default
-            log_message("[Dialog] Started with %d participants", g_dialogParticipantCount);
+            LOG_OSIRIS_DEBUG("Started with %d participants", g_dialogParticipantCount);
         } else if (strcmp(funcName, "AutomatedDialogEnded") == 0) {
             // Clear dialog state when dialog ends
-            log_message("[Dialog] Ended: %s", g_currentDialogResource);
+            LOG_OSIRIS_DEBUG("Ended: %s", g_currentDialogResource);
             g_currentDialogResource[0] = '\0';
             g_currentDialogInstance = -1;
             g_dialogParticipantCount = 0;
@@ -2243,7 +2243,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
  */
 static void enumerate_loaded_images(void) {
     uint32_t count = _dyld_image_count();
-    log_message("Loaded images: %u", count);
+    LOG_CORE_DEBUG("Loaded images: %u", count);
 
     int interesting_count = 0;
     for (uint32_t i = 0; i < count && interesting_count < 15; i++) {
@@ -2256,7 +2256,7 @@ static void enumerate_loaded_images(void) {
                 strstr(name, "Larian") || strstr(name, "discord") ||
                 strstr(name, "Bink") || strstr(name, "PlayFab") ||
                 strstr(name, "Http")) {
-                log_message("  [%u] %s", i, name);
+                LOG_CORE_DEBUG("  [%u] %s", i, name);
                 interesting_count++;
             }
         }
@@ -2271,7 +2271,7 @@ static void enumerate_loaded_images(void) {
 static void resolve_osiris_function_pointers(void *osiris) {
     if (!osiris) return;
 
-    log_message("Resolving Osiris function pointers...");
+    LOG_OSIRIS_INFO("Resolving Osiris function pointers...");
 
     // pFunctionData - try both symbol name variants
     pfn_pFunctionData = (pFunctionDataFn)dlsym(osiris, "_ZN15COsiFunctionMan13pFunctionDataEj");
@@ -2287,7 +2287,7 @@ static void resolve_osiris_function_pointers(void *osiris) {
         uintptr_t pFuncDataAddr = (uintptr_t)pfn_pFunctionData;
         uintptr_t libBase = pFuncDataAddr - 0x2a04c;
         g_pOsiFunctionMan = (void **)(libBase + 0x9f348);
-        log_message("  OsiFunctionMan calculated from base: %p (base=0x%lx)",
+        LOG_OSIRIS_DEBUG("  OsiFunctionMan calculated from base: %p (base=0x%lx)",
                    (void*)g_pOsiFunctionMan, (unsigned long)libBase);
     }
 
@@ -2295,12 +2295,12 @@ static void resolve_osiris_function_pointers(void *osiris) {
     osi_func_cache_set_runtime(pfn_pFunctionData, g_pOsiFunctionMan);
     osi_func_cache_set_known_events(g_knownEvents);
 
-    log_message("Osiris function pointers resolved:");
-    log_message("  pFunctionData: %p%s", (void*)pfn_pFunctionData,
+    LOG_OSIRIS_INFO("Osiris function pointers resolved:");
+    LOG_OSIRIS_DEBUG("  pFunctionData: %p%s", (void*)pfn_pFunctionData,
                 pfn_pFunctionData ? "" : " (NOT FOUND)");
-    log_message("  OsiFunctionMan global: %p", (void*)g_pOsiFunctionMan);
+    LOG_OSIRIS_DEBUG("  OsiFunctionMan global: %p", (void*)g_pOsiFunctionMan);
     if (g_pOsiFunctionMan) {
-        log_message("  OsiFunctionMan instance: %p", *g_pOsiFunctionMan);
+        LOG_OSIRIS_DEBUG("  OsiFunctionMan instance: %p", *g_pOsiFunctionMan);
     }
 }
 
@@ -2317,7 +2317,7 @@ static void install_hooks(void) {
     }
 
     if (!osiris) {
-        log_message("ERROR: Could not get libOsiris handle for hooking");
+        LOG_HOOKS_ERROR("Could not get libOsiris handle for hooking");
         return;
     }
 
@@ -2326,21 +2326,21 @@ static void install_hooks(void) {
 
     // Only install actual hooks once
     if (hooks_installed) {
-        log_message("Hooks already installed, skipping hook installation");
+        LOG_HOOKS_DEBUG("Hooks already installed, skipping hook installation");
         return;
     }
 
-    log_message("Installing Dobby hooks...");
+    LOG_HOOKS_INFO("Installing Dobby hooks...");
 
     // Test pattern scanner infrastructure
-    log_message("=== Pattern Scanner Test ===");
+    LOG_HOOKS_DEBUG("=== Pattern Scanner Test ===");
     void *text_start = NULL;
     size_t text_size = 0;
     if (get_macho_text_section("libOsiris.dylib", &text_start, &text_size)) {
-        log_message("  libOsiris __TEXT,__text: %p (size: 0x%zx / %zu MB)",
+        LOG_HOOKS_DEBUG("  libOsiris __TEXT,__text: %p (size: 0x%zx / %zu MB)",
                     text_start, text_size, text_size / (1024 * 1024));
     } else {
-        log_message("  WARNING: Could not get libOsiris __TEXT section");
+        LOG_HOOKS_WARN(" Could not get libOsiris __TEXT section");
     }
 
     // Get function addresses (C++ mangled names)
@@ -2358,36 +2358,36 @@ static void install_hooks(void) {
                  event_bytes[0], event_bytes[1], event_bytes[2], event_bytes[3],
                  event_bytes[4], event_bytes[5], event_bytes[6], event_bytes[7]);
 
-        log_message("  COsiris::Event first 8 bytes: %s", test_pattern);
+        LOG_HOOKS_DEBUG("  COsiris::Event first 8 bytes: %s", test_pattern);
 
         // Try to find this pattern
         void *found = find_pattern_str(text_start, text_size, test_pattern);
         if (found == eventAddr) {
-            log_message("  Pattern scanner VERIFIED: found COsiris::Event at correct address");
+            LOG_HOOKS_DEBUG("  Pattern scanner VERIFIED: found COsiris::Event at correct address");
         } else if (found) {
-            log_message("  Pattern found at %p (expected %p) - multiple matches?", found, eventAddr);
+            LOG_HOOKS_DEBUG("  Pattern found at %p (expected %p) - multiple matches?", found, eventAddr);
         } else {
-            log_message("  WARNING: Pattern scanner failed to find COsiris::Event");
+            LOG_HOOKS_WARN(" Pattern scanner failed to find COsiris::Event");
         }
     }
-    log_message("=== End Pattern Scanner Test ===");
+    LOG_HOOKS_DEBUG("=== End Pattern Scanner Test ===");
 
     // Resolve function pointers for Osiris calls (not hooked, just called)
     // Resolve InternalQuery/InternalCall (only needed for hooks, not for function cache)
     // Use pattern-based fallback if dlsym fails
     pfn_InternalQuery = (InternalQueryFn)resolve_osiris_symbol(osiris, &g_osirisPatterns[0]);
     if (!pfn_InternalQuery) {
-        log_message("  WARNING: InternalQuery not found");
+        LOG_HOOKS_WARN(" InternalQuery not found");
     }
 
     pfn_InternalCall = (InternalCallFn)resolve_osiris_symbol(osiris, &g_osirisPatterns[1]);
     if (!pfn_InternalCall) {
-        log_message("  WARNING: InternalCall not found");
+        LOG_HOOKS_WARN(" InternalCall not found");
     }
 
-    log_message("  InternalQuery: %p%s", (void*)pfn_InternalQuery,
+    LOG_OSIRIS_DEBUG("  InternalQuery: %p%s", (void*)pfn_InternalQuery,
                 pfn_InternalQuery ? "" : " (NOT FOUND)");
-    log_message("  InternalCall: %p%s", (void*)pfn_InternalCall,
+    LOG_OSIRIS_DEBUG("  InternalCall: %p%s", (void*)pfn_InternalCall,
                 pfn_InternalCall ? "" : " (NOT FOUND)");
 
     int hook_count = 0;
@@ -2396,42 +2396,42 @@ static void install_hooks(void) {
     if (initGameAddr) {
         int result = DobbyHook(initGameAddr, (void *)fake_InitGame, &orig_InitGame);
         if (result == 0) {
-            log_message("  COsiris::InitGame hooked successfully (orig: %p)", orig_InitGame);
+            LOG_HOOKS_INFO("  COsiris::InitGame hooked successfully (orig: %p)", orig_InitGame);
             hook_count++;
         } else {
-            log_message("  ERROR: Failed to hook COsiris::InitGame (error: %d)", result);
+            LOG_HOOKS_ERROR(" Failed to hook COsiris::InitGame (error: %d)", result);
         }
     } else {
-        log_message("  COsiris::InitGame not found, skipping");
+        LOG_HOOKS_DEBUG("  COsiris::InitGame not found, skipping");
     }
 
     // Hook COsiris::Load
     if (loadAddr) {
         int result = DobbyHook(loadAddr, (void *)fake_Load, &orig_Load);
         if (result == 0) {
-            log_message("  COsiris::Load hooked successfully (orig: %p)", orig_Load);
+            LOG_HOOKS_INFO("  COsiris::Load hooked successfully (orig: %p)", orig_Load);
             hook_count++;
         } else {
-            log_message("  ERROR: Failed to hook COsiris::Load (error: %d)", result);
+            LOG_HOOKS_ERROR(" Failed to hook COsiris::Load (error: %d)", result);
         }
     } else {
-        log_message("  COsiris::Load not found, skipping");
+        LOG_HOOKS_DEBUG("  COsiris::Load not found, skipping");
     }
 
     // Hook COsiris::Event - this is the key hook for event interception!
     if (eventAddr) {
         int result = DobbyHook(eventAddr, (void *)fake_Event, &orig_Event);
         if (result == 0) {
-            log_message("  COsiris::Event hooked successfully (orig: %p)", orig_Event);
+            LOG_HOOKS_INFO("  COsiris::Event hooked successfully (orig: %p)", orig_Event);
             hook_count++;
         } else {
-            log_message("  ERROR: Failed to hook COsiris::Event (error: %d)", result);
+            LOG_HOOKS_ERROR(" Failed to hook COsiris::Event (error: %d)", result);
         }
     } else {
-        log_message("  COsiris::Event not found, skipping");
+        LOG_HOOKS_DEBUG("  COsiris::Event not found, skipping");
     }
 
-    log_message("Hooks installed: %d/3", hook_count);
+    LOG_HOOKS_INFO("Hooks installed: %d/3", hook_count);
     hooks_installed = 1;
 
     // Initialize Entity System
@@ -2455,33 +2455,33 @@ static void install_hooks(void) {
                 intptr_t slide = _dyld_get_image_vmaddr_slide(i);
                 void *binary_base = (void *)((uintptr_t)header);
 
-                log_message("Found BG3 executable (index %u): %s", i, name);
-                log_message("  Base: %p, Slide: 0x%lx", binary_base, (long)slide);
+                LOG_CORE_INFO("Found BG3 executable (index %u): %s", i, name);
+                LOG_CORE_DEBUG("  Base: %p, Slide: 0x%lx", binary_base, (long)slide);
 
                 int result = entity_system_init(binary_base);
                 if (result == 0) {
-                    log_message("Entity system initialized (function pointers ready)");
+                    LOG_ENTITY_INFO("Entity system initialized (function pointers ready)");
                 } else {
-                    log_message("WARNING: Entity system initialization failed: %d", result);
+                    LOG_ENTITY_WARN("Entity system initialization failed: %d", result);
                 }
 
                 // Initialize stats manager
                 stats_manager_init(binary_base);
                 if (stats_manager_ready()) {
-                    log_message("Stats system initialized and ready");
+                    LOG_STATS_INFO("Stats system initialized and ready");
                 } else {
-                    log_message("Stats system initialized (will be ready after game loads)");
+                    LOG_STATS_INFO("Stats system initialized (will be ready after game loads)");
                 }
                 found = true;
             }
         }
 
         if (!found) {
-            log_message("WARNING: Could not find BG3 main executable for entity system");
+            LOG_CORE_WARN("Could not find BG3 main executable for entity system");
         }
     }
 #else
-    log_message("Hooks DISABLED (ENABLE_HOOKS=0)");
+    LOG_HOOKS_INFO("Hooks DISABLED (ENABLE_HOOKS=0)");
 #endif
 }
 
@@ -2498,7 +2498,7 @@ static void check_osiris_library(void) {
     }
 
     if (osiris) {
-        log_message("libOsiris.dylib handle obtained!");
+        LOG_OSIRIS_INFO("libOsiris.dylib handle obtained!");
 
         // Look up key exported C symbols
         void *debugHook = dlsym(osiris, "DebugHook");
@@ -2510,13 +2510,13 @@ static void check_osiris_library(void) {
         void *initGame = dlsym(osiris, "_ZN7COsiris8InitGameEv");
         void *load = dlsym(osiris, "_ZN7COsiris4LoadER12COsiSmartBuf");
 
-        log_message("Osiris symbol addresses:");
-        log_message("  DebugHook: %p", debugHook);
-        log_message("  CreateRule: %p", createRule);
-        log_message("  DefineFunction: %p", defineFunction);
-        log_message("  SetInitSection: %p", setInitSection);
-        log_message("  COsiris::InitGame: %p", initGame);
-        log_message("  COsiris::Load: %p", load);
+        LOG_OSIRIS_DEBUG("Osiris symbol addresses:");
+        LOG_OSIRIS_DEBUG("  DebugHook: %p", debugHook);
+        LOG_OSIRIS_DEBUG("  CreateRule: %p", createRule);
+        LOG_OSIRIS_DEBUG("  DefineFunction: %p", defineFunction);
+        LOG_OSIRIS_DEBUG("  SetInitSection: %p", setInitSection);
+        LOG_OSIRIS_DEBUG("  COsiris::InitGame: %p", initGame);
+        LOG_OSIRIS_DEBUG("  COsiris::Load: %p", load);
 
         // Count how many we found
         int found = 0;
@@ -2527,13 +2527,13 @@ static void check_osiris_library(void) {
         if (initGame) found++;
         if (load) found++;
 
-        log_message("Found %d/6 key Osiris symbols", found);
+        LOG_OSIRIS_INFO("Found %d/6 key Osiris symbols", found);
 
         // Don't close - we need this handle for hooks
         // dlclose(osiris);
     } else {
-        log_message("libOsiris.dylib not yet loaded");
-        log_message("  dlerror: %s", dlerror());
+        LOG_OSIRIS_DEBUG("libOsiris.dylib not yet loaded");
+        LOG_OSIRIS_DEBUG("  dlerror: %s", dlerror());
     }
 }
 
@@ -2548,7 +2548,7 @@ static void image_added_callback(const struct mach_header *mh, intptr_t slide) {
         if (_dyld_get_image_header(i) == mh) {
             const char *name = _dyld_get_image_name(i);
             if (name && strstr(name, "libOsiris")) {
-                log_message(">>> libOsiris.dylib loaded dynamically! Slide: 0x%lx", (long)slide);
+                LOG_OSIRIS_INFO(">>> libOsiris.dylib loaded dynamically! Slide: 0x%lx", (long)slide);
                 check_osiris_library();
                 // Install hooks when Osiris loads
                 install_hooks();
@@ -2569,20 +2569,20 @@ static void bg3se_init(void) {
     // Initialize function cache module
     osi_func_cache_init();
 
-    log_message("=== %s v%s initialized ===", BG3SE_NAME, BG3SE_VERSION);
-    log_message("Running in process: %s (PID: %d)", getprogname(), getpid());
+    LOG_CORE_INFO("=== %s v%s initialized ===", BG3SE_NAME, BG3SE_VERSION);
+    LOG_CORE_INFO("Running in process: %s (PID: %d)", getprogname(), getpid());
 
     // Get architecture
 #if defined(__arm64__)
-    log_message("Architecture: ARM64 (Apple Silicon)");
+    LOG_CORE_INFO("Architecture: ARM64 (Apple Silicon)");
 #elif defined(__x86_64__)
-    log_message("Architecture: x86_64 (Rosetta/Intel)");
+    LOG_CORE_INFO("Architecture: x86_64 (Rosetta/Intel)");
 #else
-    log_message("Architecture: Unknown");
+    LOG_CORE_INFO("Architecture: Unknown");
 #endif
 
     // Log Dobby availability
-    log_message("Dobby inline hooking: enabled");
+    LOG_HOOKS_INFO("Dobby inline hooking: enabled");
 
     // Detect and log enabled mods
     mod_detect_enabled();
@@ -2602,8 +2602,8 @@ static void bg3se_init(void) {
     // Register callback for when new images load
     _dyld_register_func_for_add_image(image_added_callback);
 
-    log_message("Image load callback registered");
-    log_message("=== Initialization complete ===");
+    LOG_HOOKS_INFO("Image load callback registered");
+    LOG_CORE_INFO("=== Initialization complete ===");
 }
 
 /**
@@ -2611,14 +2611,14 @@ static void bg3se_init(void) {
  */
 __attribute__((destructor))
 static void bg3se_cleanup(void) {
-    log_message("=== %s shutting down ===", BG3SE_NAME);
-    log_message("Final hook call counts:");
-    log_message("  COsiris::InitGame: %d calls", initGame_call_count);
-    log_message("  COsiris::Load: %d calls", load_call_count);
-    log_message("  COsiris::Event: %d calls", event_call_count);
+    LOG_CORE_INFO("=== %s shutting down ===", BG3SE_NAME);
+    LOG_HOOKS_INFO("Final hook call counts:");
+    LOG_OSIRIS_DEBUG("  COsiris::InitGame: %d calls", initGame_call_count);
+    LOG_OSIRIS_DEBUG("  COsiris::Load: %d calls", load_call_count);
+    LOG_HOOKS_DEBUG("  COsiris::Event: %d calls", event_call_count);
 
     // Log function cache summary
-    log_message("Osiris functions: %d cached, %d unique IDs observed",
+    LOG_OSIRIS_INFO("Osiris functions: %d cached, %d unique IDs observed",
                 osi_func_get_cache_count(), osi_func_get_seen_count());
 
     // Shutdown Lua

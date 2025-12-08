@@ -169,5 +169,5 @@ void lua_timer_register(lua_State *L, int ext_table_idx) {
     // Set as Ext.Timer
     lua_setfield(L, ext_table_idx, "Timer");
 
-    log_message("[Lua] Registered Ext.Timer namespace");
+    LOG_TIMER_INFO("Registered Ext.Timer namespace");
 }

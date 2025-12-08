@@ -199,8 +199,8 @@ int get_macho_text_section(const char *image_name, void **start, size_t *size) {
 
 void log_pattern_scan(const char *name, const char *pattern, void *result) {
     if (result) {
-        log_message("[PatternScan] %s found at %p (pattern: %s)", name, result, pattern);
+        LOG_HOOKS_DEBUG("%s found at %p (pattern: %s)", name, result, pattern);
     } else {
-        log_message("[PatternScan] %s NOT FOUND (pattern: %s)", name, pattern);
+        LOG_HOOKS_DEBUG("%s NOT FOUND (pattern: %s)", name, pattern);
     }
 }

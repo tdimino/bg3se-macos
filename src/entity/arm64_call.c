@@ -8,19 +8,6 @@
 #include "../core/logging.h"
 
 #include <string.h>
-#include <stdarg.h>
-#include <stdio.h>
-
-// Logging helper for ARM64 module
-static void log_arm64(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void log_arm64(const char *fmt, ...) {
-    char buf[512];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    log_message("[ARM64] %s", buf);
-}
 
 // ============================================================================
 // ARM64 Function Call Wrappers
@@ -49,10 +36,10 @@ void* call_try_get_singleton_with_x8(TryGetSingletonFn fn, void *entityWorld) {
 
     // Check result
     if (result.has_error == 0 && result.value != NULL) {
-        log_arm64("TryGetSingleton succeeded: value=%p", result.value);
+        LOG_ENTITY_DEBUG("TryGetSingleton succeeded: value=%p", result.value);
         return result.value;
     } else {
-        log_arm64("TryGetSingleton failed: has_error=%d, value=%p",
+        LOG_ENTITY_DEBUG("TryGetSingleton failed: has_error=%d, value=%p",
                   result.has_error, result.value);
         return NULL;
     }
@@ -86,7 +73,7 @@ void* call_get_raw_component(void *fn, void *entityWorld, uint64_t entityHandle,
                         (uint64_t)componentSize, isProxy ? 1 : 0);
 
     if (result) {
-        log_arm64("GetRawComponent returned: %p (typeIndex=%u)", result, typeIndex);
+        LOG_ENTITY_DEBUG("GetRawComponent returned: %p (typeIndex=%u)", result, typeIndex);
     }
 
     return result;
@@ -94,11 +81,11 @@ void* call_get_raw_component(void *fn, void *entityWorld, uint64_t entityHandle,
 
 void* call_get_component_template(void *fn_addr, void *entityWorld, uint64_t entityHandle) {
     if (!fn_addr || !entityWorld) {
-        log_arm64("call_get_component_template: NULL fn_addr=%p or entityWorld=%p", fn_addr, entityWorld);
+        LOG_ENTITY_DEBUG("call_get_component_template: NULL fn_addr=%p or entityWorld=%p", fn_addr, entityWorld);
         return NULL;
     }
 
-    log_arm64("call_get_component_template: fn=%p, world=%p, handle=0x%llx",
+    LOG_ENTITY_DEBUG("call_get_component_template: fn=%p, world=%p, handle=0x%llx",
               fn_addr, entityWorld, (unsigned long long)entityHandle);
 
     // GetComponent<T> signature: T* (EntityWorld* this, EntityHandle handle)
@@ -125,7 +112,7 @@ void* call_get_component_template(void *fn_addr, void *entityWorld, uint64_t ent
     );
 
     if (result) {
-        log_arm64("GetComponent<T> returned: %p", result);
+        LOG_ENTITY_DEBUG("GetComponent<T> returned: %p", result);
     }
 
     return result;
@@ -157,7 +144,7 @@ void* call_try_get(void *fn_addr, void *storageContainer, uint64_t entityHandle)
     );
 
     if (result) {
-        log_arm64("TryGet returned: %p", result);
+        LOG_ENTITY_DEBUG("TryGet returned: %p", result);
     }
 
     return result;
@@ -169,7 +156,7 @@ void* call_try_get(void *fn_addr, void *storageContainer, uint64_t entityHandle)
 void* call_try_get_singleton_with_x8(TryGetSingletonFn fn, void *entityWorld) {
     (void)fn;
     (void)entityWorld;
-    log_arm64("TryGetSingleton not implemented for x86_64");
+    LOG_ENTITY_DEBUG("TryGetSingleton not implemented for x86_64");
     return NULL;
 }
 
@@ -185,7 +172,7 @@ void* call_get_raw_component(void *fn, void *entityWorld, uint64_t entityHandle,
     (void)typeIndex;
     (void)componentSize;
     (void)isProxy;
-    log_arm64("call_get_raw_component not implemented for x86_64");
+    LOG_ENTITY_DEBUG("call_get_raw_component not implemented for x86_64");
     return NULL;
 }
 
@@ -193,7 +180,7 @@ void* call_get_component_template(void *fn_addr, void *entityWorld, uint64_t ent
     (void)fn_addr;
     (void)entityWorld;
     (void)entityHandle;
-    log_arm64("call_get_component_template not implemented for x86_64");
+    LOG_ENTITY_DEBUG("call_get_component_template not implemented for x86_64");
     return NULL;
 }
 
@@ -201,7 +188,7 @@ void* call_try_get(void *fn_addr, void *storageContainer, uint64_t entityHandle)
     (void)fn_addr;
     (void)storageContainer;
     (void)entityHandle;
-    log_arm64("call_try_get not implemented for x86_64");
+    LOG_ENTITY_DEBUG("call_try_get not implemented for x86_64");
     return NULL;
 }
 

@@ -6,820 +6,107 @@
 
 **Baldur's Gate 3 Script Extender for macOS**
 
-A native macOS implementation of the BG3 Script Extender, working toward full feature parity with Norbyte's Windows BG3SE. Enables mods that require scripting capabilities to work on Mac—including companion mods, gameplay tweaks, UI enhancements, and more. Development is powered by headless Ghidra analysis, a live Lua console, and comprehensive offset documentation.
+A native macOS implementation of the BG3 Script Extender, working toward full feature parity with Norbyte's Windows BG3SE. Enables mods that require scripting capabilities to work on Mac—including companion mods, gameplay tweaks, UI enhancements, and more.
 
 > **Note:** This is a ground-up rebuild, not a port—the Windows BG3SE uses x86_64 assembly and Windows APIs that don't exist on macOS ARM64. We use the Windows codebase as architectural reference while reverse-engineering the macOS binary via Ghidra.
 
-## Status
-
-Script Extender mods now load and execute on macOS with real game data. Lua scripts, Osiris event listeners, entity queries, and stat lookups are functional—enabling most mods that don't rely on Windows-specific APIs.
-
-| Phase | Status | Notes |
-|-------|--------|-------|
-| DYLD Injection | ✅ Complete | Working via `open --env` launch method |
-| Symbol Resolution | ✅ Complete | All 6/6 libOsiris symbols resolved |
-| Function Hooking | ✅ Complete | Dobby inline hooking verified working |
-| Lua Runtime | ✅ Complete | Lua 5.4 with Ext API |
-| Mod Detection | ✅ Complete | Reads modsettings.lsx at startup |
-| SE Mod Auto-Detection | ✅ Complete | Scans Config.json for "Lua" feature flag |
-| PAK File Reading | ✅ Complete | Load scripts directly from .pak files |
-| Ext.Require | ✅ Complete | Module loading from filesystem or PAK |
-| Ext.Osiris | ✅ Complete | Event listener registration |
-| Osiris Event Hook | ✅ Complete | COsiris::Event() hooked, 2000+ events captured |
-| Osi.* Functions | ✅ Partial | Key functions return real data (see below) |
-| Ghidra RE Analysis | ✅ Complete | Headless analysis for offset discovery |
-| Function Enumeration | ✅ Complete | OsiFunctionMan offset-based lookup, function name caching |
-| EntityWorld Capture | ✅ Complete | Direct memory read from `esv::EocServer::m_ptr` |
-| GUID → Entity Lookup | ✅ Complete | ARM64 ABI fix for TryGetSingleton (see below) |
-| TypeId Discovery | ✅ Complete | 11 component indices discovered at SessionLoaded |
-| Component Access | 🔄 In Progress | Data structure traversal implemented, testing with discovered indices |
-| Stats API | ✅ Complete | 15,774 stats accessible, property read/write working (`stat.Damage = "2d6"`) |
-| Timer API | ✅ Complete | WaitFor, Cancel, Pause, Resume, IsPaused, MonotonicTime |
-| Debug Console | ✅ Complete | Socket console + file-based, multi-line, commands, introspection |
-| In-Game Overlay | ✅ Complete | NSWindow overlay with Tanit symbol, Ctrl+` toggle, command history |
-| Events API | ✅ Complete | 8 events with priority, Once, handler IDs, GameStateChanged, KeyInput |
-| PersistentVars | ✅ Complete | File-based persistence for mod data |
-| Input API | ✅ Complete | CGEventTap capture, hotkeys, key injection, KeyInput event |
-| Math API | ✅ Complete | Vector/matrix operations (vec3, vec4, mat3, mat4), scalars |
-
-### Verified Working (Dec 5, 2025)
-
-- ✅ Steam launch with injection via wrapper script
-- ✅ Universal binary (ARM64 native + x86_64 Rosetta)
-- ✅ Game runs natively on Apple Silicon with injection
-- ✅ Game loads to main menu with injection active
-- ✅ **Successfully loaded saved games with hooks active**
-- ✅ 533 loaded images enumerated
-- ✅ libOsiris.dylib symbol addresses resolved (6/6)
-- ✅ **Dobby inline hooks intercepting `COsiris::Load` and `COsiris::Event` calls**
-- ✅ **Hook return values properly preserved (game loads correctly)**
-- ✅ **Lua 5.4 runtime initialized and executing scripts**
-- ✅ **Ext API functions working (Print, GetVersion, IsClient, IsServer)**
-- ✅ **Mod list detection from modsettings.lsx**
-- ✅ **Auto-detection of SE mods via Config.json scanning**
-- ✅ **PAK file reading - no extraction needed!**
-- ✅ **Hooks triggering Lua callbacks on game events**
-- ✅ **Ext.Require() loading mod modules (filesystem or PAK)**
-- ✅ **Ext.Osiris.RegisterListener() registering event callbacks**
-- ✅ **More Reactive Companions mod successfully loads!**
-- ✅ **COsiris::Event() hook capturing 2000+ Osiris events per session**
-- ✅ **Real player GUIDs discovered from events (6 party members)**
-- ✅ **Dialog tracking from AutomatedDialogStarted/Ended events**
-- ✅ **MRC mod receiving real game data and identifying dialog participants**
-- ✅ **EntityWorld capture via direct memory read** (macOS Hardened Runtime workaround)
-- ✅ **EoCServer singleton discovered at `esv::EocServer::m_ptr`** via Ghidra analysis
-- ✅ **TryGetSingleton ARM64 ABI fix** - 64-byte ls::Result requires x8 register for indirect return
-- ✅ **GUID → EntityHandle lookup working** - HashMap with 1873 entity GUIDs successfully queried
-- ✅ **Ext.Entity Lua API registered and functional**
-- ✅ **TypeId discovery with deferred retry** - 11 component indices discovered at SessionLoaded
-- ✅ **Safe memory APIs** - Crash-safe memory reading via mach_vm_read
-- ✅ **Function name caching** - Osiris function names extracted via Signature->Name indirection
-- ✅ **GlobalStringTable discovered (Dec 5, 2025)** - GST pointer at offset `0x8aeccd8`
-- ✅ **FixedString resolution working** - 47,326+ strings resolved successfully
-- ✅ **Ext.Stats.GetAll() returns 15,774 stat names** - Full string names, not indices
-- ✅ **Ext.Stats.Get(name) retrieves stats by name** - Property access via `__index`
-- ✅ **Stats property read/write working** - `stat.Damage = "2d6"` modifies stats at runtime
-- ✅ **Timer API complete** - Ext.Timer.WaitFor(), Cancel(), Pause(), Resume()
-- ✅ **Socket console (v0.15.0)** - Real-time bidirectional I/O via Unix socket, readline client
-- ✅ **Enhanced debug console** - Multi-line blocks, console commands (!probe, !dumpstat, etc.)
-- ✅ **Memory introspection APIs** - Ext.Debug.ReadPtr/U32/Float, ProbeStruct, HexDump
-- ✅ **Ext.Events expansion (v0.14.0)** - 7 events including GameStateChanged, priority ordering, Once flag
-- ✅ **PersistentVars (v0.14.0)** - File-based mod data persistence across sessions
-- ✅ **Ext.Input (v0.16.0)** - CGEventTap keyboard capture, hotkey registration, key injection
-- ✅ **Ext.Math (v0.17.0)** - Full vector/matrix library (vec3, vec4, mat3, mat4), transforms, decomposition
-- ✅ **In-Game Console Overlay (v0.19.0)** - NSWindow overlay with Tanit symbol, Ctrl+` toggle, command history
-
-## Compatibility
-
-| Item | Version/Info |
-|------|--------------|
-| **BG3 Version** | 4.1.1.6995620 (tested Dec 2025) |
-| **macOS** | 12+ (tested on macOS 15.6.1) |
-| **Architecture** | ARM64 (Apple Silicon) - primary target |
-| **Rosetta/Intel** | Builds but Ghidra offsets are ARM64-only |
-
-**Note:** The Ghidra-derived memory offsets (for EntityWorld, component access, etc.) are specific to the ARM64 binary. Running under Rosetta (x86_64) will have limited functionality - only basic Osiris hooks and Lua runtime will work.
-
-## Requirements
-
-- macOS 12+ (tested on macOS 15.6.1)
-- Apple Silicon Mac (for full functionality) or Intel Mac (limited)
-- Baldur's Gate 3 (Steam version 4.1.1.6995620)
-- Xcode Command Line Tools (`xcode-select --install`)
-- CMake (`brew install cmake`) - for building Dobby
-
-**For maintenance/RE work (optional):**
-- Ghidra 11.x (`brew install ghidra` or download from ghidra-sre.org)
-- Java 21 (`brew install openjdk@21`)
-
 ## Quick Start
 
-### Build
+### Requirements
+
+- macOS 12+ (tested on macOS 15.6.1)
+- Apple Silicon Mac (recommended) or Intel Mac (limited functionality)
+- Baldur's Gate 3 (Steam)
+- Xcode Command Line Tools: `xcode-select --install`
+- CMake: `brew install cmake`
+
+### Build & Install
 
 ```bash
+# Build
 cd bg3se-macos
 ./scripts/build.sh
-```
 
-This builds a universal binary supporting both ARM64 (native) and x86_64 (Rosetta). Dobby will be built automatically if not present.
-
-### Install (Steam Launch)
-
-The repo includes launcher scripts in `scripts/`:
-
-| Script | Architecture | Use When |
-|--------|--------------|----------|
-| `bg3w.sh` | ARM64 (Apple Silicon) | **Recommended** - Full functionality |
-| `bg3w-intel.sh` | x86_64 (Rosetta) | Intel Macs or troubleshooting |
-| `launch_bg3.sh` | ARM64 | Direct terminal launch (no Steam) |
-
-**Steam Setup (Apple Silicon - Recommended):**
-
-1. Set Steam launch options for BG3:
-```
+# Set Steam launch options for BG3:
 /path/to/bg3se-macos/scripts/bg3w.sh %command%
 ```
 
-4. Launch BG3 via Steam normally
-
-See `scripts/*.example` files for reference wrapper scripts.
-
 ### Using SE Mods
 
-SE mods work automatically - just install them like any other mod:
+SE mods work automatically—just install them like any other mod:
 
 1. Download the mod's `.pak` file from Nexus Mods
 2. Place it in `~/Documents/Larian Studios/Baldur's Gate 3/Mods/`
-3. Enable the mod in the game's mod manager (or add to modsettings.lsx)
-4. Launch the game and load a save
+3. Enable the mod in the game's mod manager
+4. Launch via Steam
 
-BG3SE-macOS reads scripts directly from PAK files - no extraction needed!
+**BG3SE-macOS reads scripts directly from PAK files—no extraction needed!**
 
-### Live Lua Console (Development)
+## Status
 
-BG3SE-macOS includes three ways to interact with the Lua runtime:
+**Version:** v0.19.0 | **Feature Parity:** ~55%
 
-1. **In-Game Overlay** - Toggle with Ctrl+` for direct in-game interaction
-2. **Socket Console** - External terminal with readline support
-3. **File-Based Console** - Automation-friendly file polling
+| Feature | Status |
+|---------|--------|
+| DYLD Injection | ✅ Complete |
+| Lua Runtime | ✅ Lua 5.4 with Ext API |
+| Mod Loading | ✅ PAK file reading, auto-detection |
+| Ext.Osiris | ✅ Event listeners |
+| Ext.Entity | ✅ GUID lookup, components |
+| Ext.Stats | ✅ 15,774 stats, property read/write |
+| Ext.Events | ✅ 8 events with GameStateChanged |
+| Ext.Timer | ✅ WaitFor, Cancel, Pause, Resume |
+| Ext.Vars | ✅ PersistentVars |
+| Ext.Input | ✅ Hotkeys, key injection |
+| Ext.Math | ✅ Vector/matrix operations |
+| Debug Console | ✅ Socket + file + in-game overlay |
 
-#### In-Game Overlay (New in v0.19.0)
+See [ROADMAP.md](ROADMAP.md) for detailed progress.
 
-Press **Ctrl+`** to toggle the console overlay directly in-game:
+## Documentation
 
-- Floating NSWindow above fullscreen game
-- Tanit symbol with warm amber/gold glow (Aldea palette)
-- Scrollable output area for Lua results
-- Input field with command history (up/down arrows)
-- Commands execute via existing console backend
-- Output from `Ext.Print()` appears automatically
+| Document | Description |
+|----------|-------------|
+| **[docs/getting-started.md](docs/getting-started.md)** | Installation, building, first launch |
+| **[docs/api-reference.md](docs/api-reference.md)** | Complete Ext.* and Osi.* API docs |
+| **[docs/architecture.md](docs/architecture.md)** | Technical deep-dive: injection, hooks, ARM64 |
+| **[docs/development.md](docs/development.md)** | Contributing, building features, debugging |
+| **[docs/troubleshooting.md](docs/troubleshooting.md)** | Common issues and solutions |
+| **[docs/reverse-engineering.md](docs/reverse-engineering.md)** | Ghidra workflows, offset discovery |
 
-#### Socket Console (Recommended for Development)
+## Live Console
 
-Real-time bidirectional communication with the running game:
+Three ways to interact with the Lua runtime:
+
+1. **In-Game Overlay** - Press **Ctrl+`** to toggle
+2. **Socket Console** - `./build/bin/bg3se-console`
+3. **File-Based** - Write to `~/Library/Application Support/BG3SE/commands.txt`
 
 ```bash
-# Launch the game with BG3SE
-./scripts/launch_bg3.sh
-
-# In another terminal, connect with the console client
+# Socket console (recommended for development)
 ./build/bin/bg3se-console
 
-# Or use socat/nc directly
+# Or via socat
 socat - UNIX-CONNECT:/tmp/bg3se.sock
-nc -U /tmp/bg3se.sock
 ```
-
-**Socket Console Features:**
-
-- Real-time output (Ext.Print goes directly to console)
-- Command history with arrow keys (readline)
-- Multi-line input with `--[[` and `]]--` delimiters
-- ANSI color output (errors in red)
-- Automatic reconnection on disconnect
-- Up to 4 concurrent clients
-
-#### File-Based Console (Fallback)
-
-For simpler use cases or automation:
-
-```bash
-# Terminal 1: Watch log output
-tail -f ~/Library/Application\ Support/BG3SE/bg3se.log
-
-# Terminal 2: Send Lua commands
-echo 'Ext.Print("Hello from console")' > ~/Library/Application\ Support/BG3SE/commands.txt
-
-# Memory inspection example
-echo 'local base = Ext.Memory.GetModuleBase("Baldur"); Ext.Print("Game: " .. string.format("0x%x", base))' > ~/Library/Application\ Support/BG3SE/commands.txt
-```
-
-**Console Features (both modes):**
-
-- **Single-line mode:** Each line executed as Lua
-- **Multi-line mode:** Use `--[[` to start, `]]--` to end and execute
-- **Console commands:** Lines starting with `!` dispatch to registered handlers
-- Lines starting with `#` are comments (skipped outside multi-line blocks)
-- File is deleted after processing (file-based mode)
-- Output appears in the log with `[Console]` and `[Lua]` prefixes
-
-**Multi-line Example:**
-```bash
-cat > ~/Library/Application\ Support/BG3SE/commands.txt << 'EOF'
---[[
-local stat = Ext.Stats.Get("WPN_Longsword")
-for k,v in pairs(stat) do
-    Ext.Print(k .. " = " .. tostring(v))
-end
-]]--
-EOF
-```
-
-**Built-in Console Commands:**
-```bash
-echo '!help' > ~/Library/Application\ Support/BG3SE/commands.txt     # List commands
-echo '!probe 0x12345678 256' > ...                                    # Probe memory
-echo '!dumpstat WPN_Longsword' > ...                                  # Dump stat object
-echo '!hexdump 0x12345678 64' > ...                                   # Hex dump memory
-echo '!types' > ...                                                   # List registered types
-```
-
-### Verify
-
-Check `/tmp/bg3se_macos.log` for injection and mod loading logs:
-```
-=== BG3SE-macOS v0.14.0 ===
-[timestamp] === BG3SE-macOS v0.14.0 initialized ===
-[timestamp] Running in process: Baldur's Gate 3 (PID: XXXXX)
-[timestamp] Architecture: ARM64 (Apple Silicon)
-[timestamp] Dobby inline hooking: enabled
-[timestamp] === Enabled Mods ===
-[timestamp]   [1] GustavX (base game)
-[timestamp]   [2] MoreReactiveCompanions_Configurable
-[timestamp] Total mods: 2 (1 user mods)
-[timestamp] ====================
-[timestamp] === Scanning for SE Mods ===
-[timestamp] [SE] Found SE mod MoreReactiveCompanions_Configurable in PAK: .../Mods/MoreReactiveCompanions_Configurable.pak
-[timestamp]   [SE] MoreReactiveCompanions_Configurable
-[timestamp] Total SE mods: 1
-[timestamp] ============================
-...
-[timestamp] === Loading Mod Scripts ===
-[timestamp] [Lua] Trying to load BootstrapServer.lua from PAK: .../MoreReactiveCompanions_Configurable.pak
-[timestamp] [Lua] Loaded from PAK: Mods/.../BootstrapServer.lua
-[timestamp] [Lua] HERE IN THE MOD
-[timestamp] [Lua] Registered Osiris listener: AutomatedDialogStarted (arity=2, timing=before)
-[timestamp] === Mod Script Loading Complete ===
-```
-
-## How It Works
-
-BG3SE-macOS uses `DYLD_INSERT_LIBRARIES` to inject a dynamic library into the BG3 process at launch. This works because:
-
-1. BG3 macOS has **no hardened runtime** (`flags=0x0`)
-2. DYLD injection is allowed for non-hardened apps
-3. libOsiris.dylib exports clean C/C++ symbols we can hook
-
-### Key Discoveries
-
-#### 1. Launch Method Matters
-
-macOS apps must be launched as `.app` bundles via the `open` command:
-
-| Method | Result |
-|--------|--------|
-| `exec "$APP/Contents/MacOS/Baldur's Gate 3"` | ❌ Crashes |
-| `open -W "$APP"` | ✅ Works (but env not inherited) |
-| `open -W --env "DYLD_INSERT_LIBRARIES=..." "$APP"` | ✅ Works perfectly |
-
-#### 2. Environment Variable Inheritance
-
-The `open` command does **not** inherit environment variables from the parent shell. You must use `open --env VAR=value` to pass environment variables to the launched application.
-
-#### 3. Universal Binary Required
-
-BG3 can run either natively (ARM64) or under Rosetta (x86_64). The `open --env` method launches natively on Apple Silicon, so our dylib must be a universal binary containing both architectures.
-
-#### 4. Return Values Must Be Preserved
-
-When hooking C++ member functions, the return value must be captured and returned from the hook. Failing to do so causes the game to fail silently (e.g., returning to main menu after load).
-
-#### 5. ARM64 ABI for Large Struct Returns
-
-Functions returning structs larger than 16 bytes on ARM64 use **indirect return** via the x8 register. The caller must:
-1. Allocate a buffer for the return value
-2. Pass the buffer address in x8 before calling
-3. Read the result from the buffer after the call
-
-BG3's `TryGetSingleton<T>` returns `ls::Result<ComponentPtr, ls::Error>` which is a 64-byte struct:
-
-```c
-typedef struct __attribute__((aligned(16))) {
-    void* value;           // 0x00: Component pointer on success
-    uint64_t reserved1;    // 0x08: Reserved
-    uint64_t reserved2[4]; // 0x10-0x2F: Additional data
-    uint8_t has_error;     // 0x30: Error flag (0=success, 1=error)
-    uint8_t _pad[15];      // 0x31-0x3F: Padding
-} LsResult;
-
-// Correct ARM64 calling convention
-void* call_with_x8_buffer(void* fn, void* arg) {
-    LsResult result = {0};
-    result.has_error = 1;
-    __asm__ volatile (
-        "mov x8, %[buf]\n"   // x8 = return buffer address
-        "mov x0, %[arg]\n"   // x0 = function argument
-        "blr %[fn]\n"        // call function
-        : "+m"(result)
-        : [buf] "r"(&result), [arg] "r"(arg), [fn] "r"(fn)
-        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
-          "x14", "x15", "x16", "x17", "x19", "x20", "x21", "x22",
-          "x23", "x24", "x25", "x26", "x30", "memory"
-    );
-    return (result.has_error == 0) ? result.value : NULL;
-}
-```
-
-This was discovered through Ghidra analysis of `TryGetSingleton` which saves x8 to x19 at entry (`mov x19, x8`) and writes the result via `stp x10, xzr, [x19]` and error flag via `strb w8, [x19, #0x30]`.
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│                  BG3 Process                    │
-├─────────────────────────────────────────────────┤
-│  ┌──────────────┐    ┌───────────────────────┐  │
-│  │ libOsiris    │◄───│ BG3SE Hooks (Dobby)   │  │
-│  │ (Scripting)  │    │ - COsiris::InitGame   │  │
-│  └──────────────┘    │ - COsiris::Load       │  │
-│                      └───────────────────────┘  │
-│  ┌──────────────┐              ▲               │
-│  │ Main Game    │              │               │
-│  │ Executable   │    ┌─────────┴─────────┐    │
-│  └──────────────┘    │  Lua Runtime       │    │
-│                      │  (Mod Scripts)     │    │
-│                      └───────────────────┘    │
-└─────────────────────────────────────────────────┘
-```
-
-## Implemented APIs
-
-### Ext Namespace
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Ext.Print(...)` | ✅ Working | Print to BG3SE log |
-| `Ext.GetVersion()` | ✅ Working | Returns version string |
-| `Ext.IsClient()` | ✅ Working | Returns true |
-| `Ext.IsServer()` | ✅ Working | Returns false |
-| `Ext.Require(path)` | ✅ Working | Load Lua module relative to mod |
-| `Ext.IO.LoadFile(path)` | ✅ Working | Read file contents |
-| `Ext.IO.SaveFile(path, content)` | ✅ Working | Write file contents |
-| `Ext.Json.Parse(json)` | ✅ Working | Parse JSON to Lua table |
-| `Ext.Json.Stringify(table)` | ✅ Working | Convert Lua table to JSON |
-| `Ext.Osiris.RegisterListener(event, arity, timing, callback)` | ✅ Working | Register Osiris event callback |
-| `Ext.Entity.Get(guid)` | ✅ Working | Look up entity by GUID string |
-| `Ext.Entity.IsReady()` | ✅ Working | Check if entity system ready |
-| `entity.Transform` | ✅ Working | Get transform component (Position, Rotation, Scale) |
-| `entity:GetComponent(name)` | ✅ Working | Get component by name (short or full) |
-| `entity:IsAlive()` | ✅ Working | Check if entity is valid |
-| `entity:GetHandle()` | ✅ Working | Get raw EntityHandle value |
-| `Ext.Entity.DumpComponentRegistry()` | ✅ Working | Dump all registered components |
-| `Ext.Entity.DumpStorage(handle)` | ✅ Working | Test TryGet and dump EntityStorageData |
-| `Ext.Entity.DiscoverTypeIds()` | ✅ Working | Discover indices from TypeId globals |
-| `Ext.Entity.DumpTypeIds()` | ✅ Working | Dump all known TypeId addresses |
-| `Ext.Entity.RegisterComponent(name, idx, size)` | ✅ Working | Register discovered component |
-| `Ext.Entity.LookupComponent(name)` | ✅ Working | Look up component info by name |
-| `Ext.Entity.SetGetRawComponentAddr(addr)` | ✅ Working | Set GetRawComponent address from Frida |
-
-### Ext.Memory Namespace (v0.12.0 - Development Tools)
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Ext.Memory.Read(addr, size)` | ✅ Working | Read bytes as hex string (safe via vm_read) |
-| `Ext.Memory.ReadString(addr, maxLen)` | ✅ Working | Read null-terminated string |
-| `Ext.Memory.Search(pattern, start, size)` | ✅ Working | Search for byte pattern (hex string) |
-| `Ext.Memory.GetModuleBase(name)` | ✅ Working | Get base address of loaded module |
-
-### Ext.Stats Namespace (v0.11.0)
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Ext.Stats.Get(name)` | ✅ Working | Get StatsObject by name |
-| `Ext.Stats.GetAll(type?)` | ✅ Working | Get all stat names, optionally by type |
-| `Ext.Stats.Create(name, type, template?)` | ✅ Working | Create new stat object |
-| `Ext.Stats.Sync(name)` | ⚠️ Framework | Sync stat changes (framework exists) |
-| `Ext.Stats.IsReady()` | ✅ Working | Check if stats system ready |
-| `Ext.Stats.DumpTypes()` | ✅ Working | Print all stat types to log |
-| `stat.Name` | ✅ Working | Read-only stat name |
-| `stat.Type` | ✅ Working | Read-only stat type |
-| `stat.Level` | ✅ Working | Read-only stat level |
-| `stat.Using` | ✅ Working | Read-only parent stat |
-| `stat:GetProperty(name)` | ✅ Working | Get property value |
-| `stat:SetProperty(name, value)` | ✅ Working | Set property value |
-| `stat:Dump()` | ✅ Working | Print stat contents to log |
-
-### Ext.Events Namespace (v0.14.0)
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Ext.Events.SessionLoading:Subscribe(cb, opts)` | ✅ Working | Before save loads |
-| `Ext.Events.SessionLoaded:Subscribe(cb, opts)` | ✅ Working | After save loads |
-| `Ext.Events.ResetCompleted:Subscribe(cb, opts)` | ✅ Working | After reset command |
-| `Ext.Events.Tick:Subscribe(cb, opts)` | ✅ Working | Every game loop (~30hz), e.DeltaTime |
-| `Ext.Events.StatsLoaded:Subscribe(cb, opts)` | ✅ Working | After stats loaded |
-| `Ext.Events.ModuleLoadStarted:Subscribe(cb, opts)` | ✅ Working | Before mod scripts load |
-| `Ext.Events.GameStateChanged:Subscribe(cb, opts)` | ✅ Working | State transitions (e.FromState, e.ToState) |
-| `Ext.OnNextTick(cb)` | ✅ Working | Run callback on next tick (once) |
-| `event:Unsubscribe(handlerId)` | ✅ Working | Remove handler by ID |
-
-**Subscribe Options:** `{Priority = 100, Once = false}` - Lower priority runs first, Once auto-unsubscribes.
-
-### Ext.Vars Namespace (v0.14.0)
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Mods[ModTable].PersistentVars` | ✅ Working | Per-mod persistent storage table |
-| `Ext.Vars.SyncPersistentVars()` | ✅ Working | Force save all PersistentVars |
-| `Ext.Vars.IsPersistentVarsLoaded()` | ✅ Working | Check if vars loaded |
-| `Ext.Vars.ReloadPersistentVars()` | ✅ Working | Force reload from disk |
-| `Ext.Vars.MarkDirty()` | ✅ Working | Mark for auto-save |
-
-### Ext.Timer Namespace (v0.11.0)
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Ext.Timer.WaitFor(delay, callback, [repeat])` | ✅ Working | Create timer (delay in ms) |
-| `Ext.Timer.Cancel(handle)` | ✅ Working | Cancel a timer |
-| `Ext.Timer.Pause(handle)` | ✅ Working | Pause a timer |
-| `Ext.Timer.Resume(handle)` | ✅ Working | Resume a paused timer |
-| `Ext.Timer.IsPaused(handle)` | ✅ Working | Check if timer is paused |
-| `Ext.Timer.MonotonicTime()` | ✅ Working | Get monotonic clock (ms) |
-
-### Ext.Debug Namespace (v0.11.0)
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Ext.Debug.ReadPtr(addr)` | ✅ Working | Read pointer (safe) |
-| `Ext.Debug.ReadU32(addr)` | ✅ Working | Read uint32 |
-| `Ext.Debug.ReadI32(addr)` | ✅ Working | Read int32 |
-| `Ext.Debug.ReadU64(addr)` | ✅ Working | Read uint64 |
-| `Ext.Debug.ReadFloat(addr)` | ✅ Working | Read float |
-| `Ext.Debug.ReadString(addr, max)` | ✅ Working | Read C string |
-| `Ext.Debug.ProbeStruct(base, start, end, stride)` | ✅ Working | Bulk offset discovery |
-| `Ext.Debug.HexDump(addr, size)` | ✅ Working | Hex dump memory |
-| `Ext.Debug.FindArrayPattern(base, range)` | ✅ Working | Find array patterns |
-
-### Global Functions
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `_P(...)` | ✅ Working | Debug print (alias for Ext.Print) |
-| `_D(value)` | ✅ Working | Debug dump (JSON for tables) |
-| `GetHostCharacter()` | ✅ Working | Returns main player GUID (non-origin character) |
-
-### Osi Namespace
-
-Key Osiris functions now return real game data. Player GUIDs and dialog state are discovered by observing Osiris events.
-
-| API | Status | Description |
-|-----|--------|-------------|
-| `Osi.DB_Players:Get(nil)` | ✅ Working | Returns real player GUIDs (discovered from events) |
-| `Osi.IsTagged(char, tag)` | ✅ Working | Returns true for players in active dialog |
-| `Osi.DialogGetNumberOfInvolvedPlayers(id)` | ✅ Working | Returns 1 (single-player) |
-| `Osi.SpeakerGetDialog(char, idx)` | ✅ Working | Returns current dialog resource |
-| `Osi.GetDistanceTo(char1, char2)` | ⏳ Stub | Always returns 0 |
-| `Osi.DialogRequestStop(char)` | ⏳ Stub | No-op |
-| `Osi.QRY_StartDialog_Fixed(res, char)` | ⏳ Stub | Returns false |
 
 ## File Structure
 
 ```
 bg3se-macos/
-├── src/
-│   ├── console/                # Live Lua console
-│   │   └── console.c/h         # Socket server, command polling, Lua execution
-│   ├── overlay/                # In-game console overlay (v0.19.0)
-│   │   └── overlay.m/h         # NSWindow overlay with Tanit symbol
-│   ├── core/                   # Core utilities
-│   │   ├── logging.c/h         # Log output to ~/Library/Application Support/BG3SE/
-│   │   ├── safe_memory.c/h     # Crash-safe memory reading (mach_vm_read)
-│   │   └── version.h           # Version constants
-│   ├── entity/                 # Entity Component System (modular)
-│   │   ├── entity_system.c/h   # Core ECS, EntityWorld capture, Lua bindings
-│   │   ├── guid_lookup.c/h     # GUID parsing, HashMap operations
-│   │   ├── arm64_call.c/h      # ARM64 ABI wrappers (x8 indirect return)
-│   │   ├── component_registry.c/h  # Index-based component discovery & access
-│   │   ├── component_lookup.c/h    # TryGet + HashMap traversal (macOS-specific)
-│   │   ├── component_typeid.c/h    # TypeId<T>::m_TypeIndex discovery
-│   │   └── entity_storage.h    # ECS structure definitions and offsets
-│   ├── injector/               # Main injection logic (main.c)
-│   ├── lua/                    # Lua API modules
-│   │   ├── lua_ext.c/h         # Core Ext.* API (Print, Require, IO)
-│   │   ├── lua_json.c/h        # Ext.Json.Parse/Stringify
-│   │   ├── lua_osiris.c/h      # Ext.Osiris.RegisterListener
-│   │   └── lua_stats.c/h       # Ext.Stats.* API (v0.11.0)
-│   ├── mod/                    # Mod detection and loading
-│   ├── osiris/                 # Osiris scripting engine
-│   │   ├── osiris_functions.c/h # Function enumeration and caching
-│   │   ├── osiris_types.h      # Osiris type definitions
-│   │   └── pattern_scan.c/h    # Pattern-based symbol resolution
-│   ├── pak/                    # PAK file reading (LSPK v18)
-│   ├── stats/                  # RPGStats system (v0.11.0)
-│   │   └── stats_manager.c/h   # RPGStats discovery and access
-│   └── strings/                # String handling
-│       └── fixed_string.c/h    # FixedString resolution
-├── lib/
-│   ├── fishhook/               # Symbol rebinding (for imported symbols)
-│   ├── Dobby/                  # Inline hooking (for internal functions)
-│   ├── lz4/                    # LZ4 decompression (for PAK file reading)
-│   └── lua/                    # Lua 5.4 source and build scripts
-├── ghidra/                     # Reverse engineering analysis
-│   ├── scripts/                # 12+ Ghidra Python scripts for offset discovery
-│   └── offsets/                # Modular offset documentation
-│       ├── OSIRIS.md           # Osiris function offsets
-│       ├── ENTITY_SYSTEM.md    # ECS architecture, EntityWorld
-│       ├── COMPONENTS.md       # GetComponent addresses
-│       ├── STATS.md            # RPGStats system offsets
-│       ├── STATS_SYSTEM.md     # RPGStats global pointers
-│       ├── GLOBAL_STRING_TABLE.md  # FixedString resolution
-│       └── STRUCTURES.md       # C structure definitions
-├── plans/                      # Implementation plans and analysis
-│   └── bg3se-docs-gap-analysis.md  # Feature parity roadmap
-├── scripts/
-│   ├── build.sh                # Build script (universal binary)
-│   ├── bg3w.sh                 # Steam launcher wrapper (ARM64)
-│   └── *.example               # Example wrapper scripts
-├── tools/
-│   ├── automation/             # Claude Code MCP configs & skills
-│   ├── bg3se-console.c         # Socket console client (readline-based)
-│   ├── skills/                 # Claude Code skills for development
-│   │   └── bg3se-macos-ghidra/ # Ghidra + BG3SE development skill
-│   ├── frida/                  # Frida scripts for runtime analysis
-│   └── extract_pak.py          # BG3 PAK file extractor (Python)
-├── build/
-│   └── lib/
-│       └── libbg3se.dylib      # Built dylib (universal: arm64 + x86_64)
-├── CLAUDE.md                   # Development guide for Claude Code
-├── ROADMAP.md                  # Feature parity tracking (~47%)
-└── README.md
+├── src/                    # Source code
+│   ├── injector/main.c     # Core injection, hooks, Lua state
+│   ├── lua/                # Ext.* API implementations
+│   ├── entity/             # Entity Component System
+│   ├── stats/              # RPGStats system
+│   └── ...
+├── docs/                   # Documentation
+├── ghidra/                 # Reverse engineering
+│   ├── scripts/            # Ghidra Python scripts
+│   └── offsets/            # Offset documentation
+├── tools/                  # PAK extractor, Frida, test mods
+└── scripts/                # Build and launch scripts
 ```
-
-## Technical Details
-
-### Why This Works
-
-| Factor | Value |
-|--------|-------|
-| Hardened Runtime | `flags=0x0` (none) |
-| Code Signing | Developer ID signed, but not hardened |
-| DYLD Injection | Allowed |
-| libOsiris Exports | 1,013 symbols |
-
-### Hooking Strategy
-
-- **Dobby**: Inline hooking for internal library functions (C++ methods)
-- **fishhook**: Available for imported symbols (PLT/GOT rebinding) if needed
-
-Osiris functions like `COsiris::Load`, `COsiris::InitGame`, etc. are internal to `libOsiris.dylib`, requiring inline hooking via Dobby.
-
-### Pattern Scanning (Cross-Version Support)
-
-BG3SE-macOS includes a pattern scanning infrastructure for resilience across game updates:
-
-- **Pattern Database**: Unique ARM64 byte sequences for key Osiris functions
-- **Fallback Resolution**: If `dlsym` fails, pattern scanning locates functions by signature
-- **Mach-O Support**: Scans `__TEXT,__text` section of loaded dylibs
-
-Example patterns (BG3 Patch 7):
-```
-InternalQuery: FD 43 04 91 F3 03 01 AA 15 90 01 51 ...
-InternalCall:  F3 03 00 AA 28 20 00 91 09 04 00 51 ...
-```
-
-When Larian updates the game, if symbol names change but function code remains similar, pattern scanning can still locate the functions.
-
-### Key libOsiris Symbols
-
-```
-_DebugHook                      - Debug interface
-_CreateRule                     - Script rule creation
-_DefineFunction                 - Function registration
-_SetInitSection                 - Initialization hook
-_ZN7COsiris8InitGameEv          - COsiris::InitGame()
-_ZN7COsiris4LoadER12COsiSmartBuf - COsiris::Load(COsiSmartBuf&)
-```
-
-## Test Mod
-
-We maintain a custom test mod for validating BG3SE-macOS functionality. See [tools/test-mods/README.md](tools/test-mods/README.md) for details.
-
-**Quick Start:**
-```bash
-# Copy test mod to auto-detection path
-cp -r tools/test-mods/EntityTest /tmp/EntityTest_extracted
-
-# Launch game - mod loads automatically
-./scripts/bg3w.sh  # or via Steam
-
-# Watch for test output
-tail -f /tmp/bg3se_macos.log | grep EntityTest
-```
-
-The EntityTest mod validates:
-- Entity system initialization (`Ext.Entity.IsReady()`)
-- GUID → Entity lookup (`Ext.Entity.Get()`)
-- Component access (`entity.Transform`, `entity:GetComponent()`)
-- Session lifecycle events (`SessionLoaded`)
-
-## Tools
-
-### BG3SE Development Skill (Claude Code)
-
-A comprehensive Claude Code skill for BG3SE-macOS development is available at `tools/skills/bg3se-macos-ghidra/`. Install it to get:
-
-- Quick reference for building, testing, and Ghidra workflows
-- Windows BG3SE architecture patterns for porting features
-- Ghidra Python scripting templates and examples
-- ARM64 ABI patterns (x8 register, ADRP+LDR, inline assembly)
-- Offset discovery and documentation guides
-
-```bash
-# Install the skill
-cp -r tools/skills/bg3se-macos-ghidra ~/.claude/skills/
-
-# Or invoke directly
-skill: "bg3se-macos-ghidra"
-```
-
-### Automated Testing (Claude Code)
-
-The `tools/automation/` folder contains MCP server configs and a Claude Code skill for automated BG3 testing:
-
-```bash
-# Install MCP servers
-claude mcp add macos-automator -- npx -y @steipete/macos-automator-mcp@latest
-claude mcp add peekaboo -- npx -y @steipete/peekaboo-mcp@beta
-
-# Copy skill
-cp -r tools/automation/skills/bg3-steam-launcher ~/.claude/skills/
-```
-
-Then use `skill: "bg3-steam-launcher"` in Claude Code to automate launching BG3, loading saves, and checking SE logs.
-
-### PAK Extractor
-
-A Python tool to extract BG3 mod `.pak` files (LSPK v18 format):
-
-```bash
-# Install dependency
-pip3 install lz4
-
-# Extract a mod
-python3 tools/extract_pak.py path/to/mod.pak [output_dir]
-```
-
-This is useful for examining mod structure and Lua scripts. Note: BG3SE-macOS now reads PAK files directly, so extraction is only needed for debugging.
-
-## Roadmap
-
-See [GitHub Issues](https://github.com/tdimino/bg3se-macos/issues) for detailed task tracking.
-
-### Critical Priority (Most Mods Need These)
-
-1. **[#11 - Ext.Events API](https://github.com/tdimino/bg3se-macos/issues/11)** - ✅ Complete (v0.14.0) - 7 events with GameStateChanged
-2. **[#12 - PersistentVars](https://github.com/tdimino/bg3se-macos/issues/12)** - ✅ Complete (v0.14.0) - File-based persistence
-3. **[#13 - Ext.Vars](https://github.com/tdimino/bg3se-macos/issues/13)** - Entity-attached custom data with sync
-
-### High Priority
-
-- **[#15 - Client Lua State](https://github.com/tdimino/bg3se-macos/issues/15)** - Dual client/server Lua states
-
-### Future Phases
-
-- **[#4 - Custom Osiris Functions](https://github.com/tdimino/bg3se-macos/issues/4)** - Register functions callable from story scripts
-- **[#6 - Networking API](https://github.com/tdimino/bg3se-macos/issues/6)** - Multiplayer mod state sync (NetChannel)
-- **[#16 - Ext.Math Library](https://github.com/tdimino/bg3se-macos/issues/16)** - Vector/matrix operations
-- **[#7 - Type System](https://github.com/tdimino/bg3se-macos/issues/7)** - IDE integration and autocomplete
-- **[#8 - Technical Debt](https://github.com/tdimino/bg3se-macos/issues/8)** - Stability, testing, documentation
-
-### Completed
-
-- ✅ **[#11 - Ext.Events API](https://github.com/tdimino/bg3se-macos/issues/11)** - 7 events with GameStateChanged, priority/Once/handler IDs (v0.14.0)
-- ✅ **[#12 - PersistentVars](https://github.com/tdimino/bg3se-macos/issues/12)** - File-based mod data persistence (v0.14.0)
-- ✅ **[#14 - Timer API](https://github.com/tdimino/bg3se-macos/issues/14)** - WaitFor, Cancel, Pause, Resume, IsPaused, MonotonicTime (v0.11.0)
-- ✅ **[#18 - Enhanced Debug Console](https://github.com/tdimino/bg3se-macos/issues/18)** - Multi-line support, console commands, Ext.Debug APIs (v0.11.0)
-- ✅ **[#3 - Ext.Stats API](https://github.com/tdimino/bg3se-macos/issues/3)** - Property read complete, `stat.Damage` returns "1d8" (v0.11.0)
-- ✅ **[#10 - Osiris Function Name Caching](https://github.com/tdimino/bg3se-macos/issues/10)** - Fixed funcDef->Signature->Name indirection (v0.10.6)
-- ✅ **[#2 - Component Discovery](https://github.com/tdimino/bg3se-macos/issues/2)** - TypeId discovery with deferred retry (v0.10.5)
-- ✅ **[#1 - TryGetSingleton ARM64 ABI fix](https://github.com/tdimino/bg3se-macos/issues/1)** - GUID → EntityHandle lookup working (v0.10.3)
-- ✅ EntityWorld capture via direct memory read - bypasses Hardened Runtime (v0.10.2)
-- ✅ Entity/Component System - Ext.Entity API, component accessors (v0.10.0)
-- ✅ Ghidra headless RE analysis - discovered OsiFunctionMan offset (v0.9.8)
-- ✅ Offset-based symbol resolution for unexported symbols (v0.9.8)
-- ✅ Function enumeration via pFunctionData (v0.9.8)
-- ✅ Direct Osiris query/call wrappers - real Osi.* function calls (v0.9.4)
-- ✅ ARM64 pattern database with fallback symbol resolution (v0.9.3)
-- ✅ Pattern scanning infrastructure for cross-version compatibility (v0.9.3)
-- ✅ Real Osiris bindings via event observation (v0.9.2)
-- ✅ COsiris::Event() hook with callback dispatch (v0.9.1)
-- ✅ PAK file reading - load scripts directly from .pak files (v0.9.0)
-- ✅ Auto-detection of SE mods via Config.json scanning (v0.8.0)
-
-## Troubleshooting
-
-### Injection Not Working
-
-1. Check `/tmp/bg3se_macos.log` for errors
-2. Verify the dylib is built: `file build/lib/libbg3se.dylib`
-3. Ensure it's universal: should show both `x86_64` and `arm64`
-4. Ensure wrapper uses `open --env` (not just `export`)
-
-### Game Crashes at Launch
-
-1. Make sure wrapper script uses `open -W --env "DYLD_INSERT_LIBRARIES=..." "$1"`
-2. Verify dylib is universal binary (check with `file` command)
-3. Try running without injection: clear Steam launch options
-4. Check Console.app for crash reports
-
-### Game Returns to Menu After Loading
-
-If the game loads but immediately returns to the main menu:
-1. This usually means a hook isn't preserving the return value
-2. Check that hooked functions return the original function's return value
-3. Review `/tmp/bg3se_macos.log` for hook call/return messages
-
-### Mod Not Loading
-
-1. Ensure the mod is enabled in modsettings.lsx (use in-game mod manager or BG3 Mod Manager)
-2. Ensure the mod's `.pak` file is in `~/Documents/Larian Studios/Baldur's Gate 3/Mods/`
-3. Check that the mod has `ScriptExtender/Config.json` with `"Lua"` in FeatureFlags
-4. Check that the path structure inside PAK is: `Mods/<ModName>/ScriptExtender/Lua/BootstrapServer.lua`
-5. Review the log for "Scanning for SE Mods" and "Loading Mod Scripts" sections
-6. For debugging, extract with `tools/extract_pak.py` to inspect mod structure
-
-### Architecture Mismatch Error
-
-If you see "incompatible architecture" in crash reports:
-1. Rebuild with `./scripts/build.sh` (creates universal binary)
-2. Verify with: `file build/lib/libbg3se.dylib`
-3. Should show: `Mach-O universal binary with 2 architectures: [x86_64] [arm64]`
-
-## Maintenance
-
-When BG3 updates:
-
-1. Run `nm -gU` on the new libOsiris.dylib to check exported symbols
-2. If offsets have changed, re-run Ghidra headless analysis:
-
-```bash
-# For the 1GB+ BG3 binary, use the optimized workflow with prescript
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-~/ghidra/support/analyzeHeadless ~/ghidra_projects BG3Analysis \
-  -process BG3_arm64_thin \
-  -scriptPath /path/to/bg3se-macos/ghidra/scripts \
-  -preScript optimize_analysis.py \
-  -postScript quick_component_search.py
-
-# The prescript disables slow analyzers (Stack, Decompiler Parameter ID, etc.)
-# that would cause analysis to hang on large binaries.
-# The postscript finds XREFs to component strings for GetComponent discovery.
-```
-
-For libOsiris.dylib (smaller binary), the standard workflow works:
-
-```bash
-# Extract ARM64 slice from universal binary
-lipo -thin arm64 \
-  "/Users/$USER/Library/Application Support/Steam/steamapps/common/Baldurs Gate 3/Baldur's Gate 3.app/Contents/Frameworks/libOsiris.dylib" \
-  -output ~/ghidra_projects/libOsiris_arm64_thin.dylib
-
-# Run Ghidra headless analysis
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-~/ghidra/support/analyzeHeadless \
-  ~/ghidra_projects BG3Analysis \
-  -import ~/ghidra_projects/libOsiris_arm64_thin.dylib \
-  -processor "AARCH64:LE:64:v8A" \
-  -postScript ghidra/scripts/find_osiris_offsets.py \
-  -analysisTimeoutPerFile 300
-```
-
-3. Update offsets in `src/injector/main.c`:
-   - `OSIFUNCMAN_OFFSET` - `_OsiFunctionMan` global variable
-   - `PFUNCTIONDATA_OFFSET` - `COsiFunctionMan::pFunctionData()` method
-   - `COSIRIS_EVENT_OFFSET` - `COsiris::Event()` method
-   - `COSIRIS_INITGAME_OFFSET` - `COsiris::InitGame()` method
-
-4. Rebuild and test
-
-## License
-
-MIT License
-
-## Authors
-
-- Tom di Mino (the artist formerly known as [Pnutmaster](https://wiki.twcenter.net/index.php?title=Blood_Broads_%26_Bastards) / [Nexus](https://next.nexusmods.com/profile/Pnutmaster/mods?gameId=130))
-- [Claude Code](https://claude.ai/claude-code) (Anthropic)
 
 ## Acknowledgments
 
@@ -834,6 +121,15 @@ This project would not be possible without **[Norbyte](https://github.com/Norbyt
 - [fishhook](https://github.com/facebook/fishhook) - Symbol rebinding library
 - [LZ4](https://github.com/lz4/lz4) - Fast compression for PAK file reading
 - Test mod: [More Reactive Companions](https://www.nexusmods.com/baldursgate3/mods/5447) by LightningLarryL
+
+## License
+
+MIT License
+
+## Authors
+
+- Tom di Mino (the artist formerly known as [Pnutmaster](https://wiki.twcenter.net/index.php?title=Blood_Broads_%26_Bastards) / [Nexus](https://next.nexusmods.com/profile/Pnutmaster/mods?gameId=130))
+- [Claude Code](https://claude.ai/claude-code) (Anthropic)
 
 ## Support This Project
 

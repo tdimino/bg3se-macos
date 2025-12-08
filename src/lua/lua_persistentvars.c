@@ -89,7 +89,7 @@ static int atomic_write_file(const char *path, const char *content, size_t len) 
 
     FILE *f = fopen(temp_path, "w");
     if (!f) {
-        log_message("[PersistentVars] Failed to create temp file: %s (%s)",
+        LOG_PERSIST_ERROR("Failed to create temp file: %s (%s)",
                     temp_path, strerror(errno));
         return -1;
     }
@@ -98,14 +98,14 @@ static int atomic_write_file(const char *path, const char *content, size_t len) 
     fclose(f);
 
     if (written != len) {
-        log_message("[PersistentVars] Write incomplete: %zu/%zu bytes", written, len);
+        LOG_PERSIST_INFO("Write incomplete: %zu/%zu bytes", written, len);
         unlink(temp_path);
         return -1;
     }
 
     // Atomic rename
     if (rename(temp_path, path) != 0) {
-        log_message("[PersistentVars] Rename failed: %s -> %s (%s)",
+        LOG_PERSIST_INFO("Rename failed: %s -> %s (%s)",
                     temp_path, path, strerror(errno));
         unlink(temp_path);
         return -1;
@@ -192,26 +192,26 @@ void persist_init(void) {
 
     const char *support = get_support_dir();
     if (!support || support[0] == '\0') {
-        log_message("[PersistentVars] Failed to get support directory");
+        LOG_PERSIST_ERROR("Failed to get support directory");
         return;
     }
 
     // Ensure support directory exists
     if (ensure_directory(support) != 0) {
-        log_message("[PersistentVars] Failed to create support dir: %s", support);
+        LOG_PERSIST_ERROR("Failed to create support dir: %s", support);
         return;
     }
 
     // Create persistentvars subdirectory
     snprintf(s_persistDir, sizeof(s_persistDir), "%s/%s", support, PERSIST_DIR_NAME);
     if (ensure_directory(s_persistDir) != 0) {
-        log_message("[PersistentVars] Failed to create persist dir: %s", s_persistDir);
+        LOG_PERSIST_ERROR("Failed to create persist dir: %s", s_persistDir);
         return;
     }
 
     s_initialized = 1;
     s_lastSaveTime = get_monotonic_ms();
-    log_message("[PersistentVars] Initialized: %s", s_persistDir);
+    LOG_PERSIST_INFO("Initialized: %s", s_persistDir);
 }
 
 // ============================================================================
@@ -227,7 +227,7 @@ void persist_restore_all(lua_State *L) {
     // Get global Mods table
     lua_getglobal(L, "Mods");
     if (!lua_istable(L, -1)) {
-        log_message("[PersistentVars] Mods table not found - creating empty table");
+        LOG_PERSIST_INFO("Mods table not found - creating empty table");
         lua_pop(L, 1);
         lua_newtable(L);
         lua_setglobal(L, "Mods");
@@ -238,7 +238,7 @@ void persist_restore_all(lua_State *L) {
     // Iterate over JSON files in persist directory
     DIR *dir = opendir(s_persistDir);
     if (!dir) {
-        log_message("[PersistentVars] No persist directory - nothing to restore");
+        LOG_PERSIST_INFO("No persist directory - nothing to restore");
         lua_pop(L, 1);
         s_loaded = 1;
         return;
@@ -266,14 +266,14 @@ void persist_restore_all(lua_State *L) {
         size_t json_len;
         char *json = read_file(filepath, &json_len);
         if (!json) {
-            log_message("[PersistentVars] Failed to read: %s", filepath);
+            LOG_PERSIST_ERROR("Failed to read: %s", filepath);
             continue;
         }
 
         // Parse JSON
         const char *result = json_parse_value(L, json);
         if (!result || !lua_istable(L, -1)) {
-            log_message("[PersistentVars] Failed to parse JSON for mod: %s", modtable);
+            LOG_PERSIST_ERROR("Failed to parse JSON for mod: %s", modtable);
             if (lua_gettop(L) > mods_idx) {
                 lua_pop(L, 1);  // Pop the failed parse result
             }
@@ -297,7 +297,7 @@ void persist_restore_all(lua_State *L) {
         lua_pop(L, 2);  // Pop mod table and parsed table
         free(json);
 
-        log_message("[PersistentVars] Restored: %s (%zu bytes)", modtable, json_len);
+        LOG_PERSIST_INFO("Restored: %s (%zu bytes)", modtable, json_len);
         restored_count++;
     }
 
@@ -306,7 +306,7 @@ void persist_restore_all(lua_State *L) {
 
     s_loaded = 1;
     s_dirty = 0;  // Just loaded, not dirty yet
-    log_message("[PersistentVars] Restore complete: %d mods", restored_count);
+    LOG_PERSIST_INFO("Restore complete: %d mods", restored_count);
 }
 
 // ============================================================================
@@ -363,7 +363,7 @@ void persist_save_all(lua_State *L) {
         sanitize_filename(modtable, safe_name, sizeof(safe_name));
 
         if (safe_name[0] == '\0') {
-            log_message("[PersistentVars] Invalid ModTable name, skipping: %s", modtable);
+            LOG_PERSIST_INFO("Invalid ModTable name, skipping: %s", modtable);
             lua_pop(L, 3);  // Pop json string, PersistentVars, mod table
             continue;
         }
@@ -374,10 +374,10 @@ void persist_save_all(lua_State *L) {
 
         // Write atomically
         if (atomic_write_file(filepath, json, json_len) == 0) {
-            log_message("[PersistentVars] Saved: %s (%zu bytes)", safe_name, json_len);
+            LOG_PERSIST_INFO("Saved: %s (%zu bytes)", safe_name, json_len);
             saved_count++;
         } else {
-            log_message("[PersistentVars] Failed to save: %s", safe_name);
+            LOG_PERSIST_ERROR("Failed to save: %s", safe_name);
         }
 
         lua_pop(L, 3);  // Pop json string, PersistentVars, mod table
@@ -389,7 +389,7 @@ void persist_save_all(lua_State *L) {
     s_lastSaveTime = get_monotonic_ms();
 
     if (saved_count > 0) {
-        log_message("[PersistentVars] Save complete: %d mods", saved_count);
+        LOG_PERSIST_INFO("Save complete: %d mods", saved_count);
     }
 }
 
@@ -423,7 +423,7 @@ void persist_mark_dirty(void) {
 // ============================================================================
 
 static int lua_vars_sync(lua_State *L) {
-    log_message("[PersistentVars] SyncPersistentVars() called");
+    LOG_PERSIST_INFO("SyncPersistentVars() called");
     persist_save_all(L);
     lua_pushboolean(L, 1);
     return 1;
@@ -443,7 +443,7 @@ static int lua_vars_is_loaded(lua_State *L) {
 // ============================================================================
 
 static int lua_vars_reload(lua_State *L) {
-    log_message("[PersistentVars] ReloadPersistentVars() called");
+    LOG_PERSIST_INFO("ReloadPersistentVars() called");
     s_loaded = 0;
     persist_restore_all(L);
     lua_pushboolean(L, s_loaded);
@@ -490,5 +490,5 @@ void lua_persistentvars_register(lua_State *L, int ext_table_index) {
     // Initialize the module
     persist_init();
 
-    log_message("[PersistentVars] Ext.Vars namespace registered");
+    LOG_PERSIST_INFO("Ext.Vars namespace registered");
 }

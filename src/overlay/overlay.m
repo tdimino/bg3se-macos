@@ -421,7 +421,7 @@ void overlay_init(void) {
             // Start hidden
             [s_overlay_window orderOut:nil];
 
-            log_message("[Overlay] Console overlay initialized");
+            LOG_CONSOLE_INFO("Console overlay initialized");
             s_initialized = true;
         }
     });
@@ -437,7 +437,7 @@ void overlay_shutdown(void) {
             s_console_view = nil;
             s_initialized = false;
 
-            log_message("[Overlay] Console overlay shutdown");
+            LOG_CONSOLE_INFO("Console overlay shutdown");
         }
     });
 }
@@ -449,11 +449,11 @@ void overlay_toggle(void) {
         @autoreleasepool {
             if ([s_overlay_window isVisible]) {
                 [s_overlay_window orderOut:nil];
-                log_message("[Overlay] Hidden");
+                LOG_CONSOLE_INFO("Hidden");
             } else {
                 [s_overlay_window makeKeyAndOrderFront:nil];
                 [s_console_view focusInput];
-                log_message("[Overlay] Shown");
+                LOG_CONSOLE_INFO("Shown");
             }
         }
     });

@@ -95,9 +95,17 @@ typedef enum {
 
 /**
  * Callback function type for log message forwarding.
- * @param level   Log level of the message
- * @param module  Module that generated the message
- * @param message Formatted message (already formatted)
+ *
+ * PERFORMANCE REQUIREMENTS:
+ * - Callbacks execute synchronously on the logging thread
+ * - Must complete within ~100µs to avoid blocking hot paths
+ * - For slow operations (network, disk): buffer messages and process async
+ * - Heavy callbacks should use module_mask to filter to only needed modules
+ * - Avoid allocations in callbacks when possible
+ *
+ * @param level    Log level of the message
+ * @param module   Module that generated the message
+ * @param message  Formatted message (already formatted, valid only during call)
  * @param userdata User-provided context pointer
  */
 typedef void (*LogCallback)(LogLevel level, LogModule module,

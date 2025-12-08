@@ -493,5 +493,5 @@ void lua_ext_register_debug(lua_State *L, int ext_table_index) {
     // Set Ext.Debug = table
     lua_setfield(L, ext_table_index, "Debug");
 
-    log_message("[Lua] Registered Ext.Debug namespace");
+    LOG_LUA_INFO("Registered Ext.Debug namespace");
 }

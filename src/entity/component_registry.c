@@ -12,24 +12,8 @@
 #include "entity_system.h"
 #include "../core/logging.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
-
-// ============================================================================
-// Logging
-// ============================================================================
-
-static void log_registry(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void log_registry(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    log_message("[ComponentRegistry] %s", buf);
-}
 
 // ============================================================================
 // Global State
@@ -82,16 +66,16 @@ static void component_registry_register_known_components(void);
 
 bool component_registry_init(void *entityWorld) {
     if (g_Initialized) {
-        log_registry("Already initialized");
+        LOG_ENTITY_DEBUG("Already initialized");
         return true;
     }
 
     if (!entityWorld) {
-        log_registry("ERROR: entityWorld is NULL");
+        LOG_ENTITY_DEBUG("ERROR: entityWorld is NULL");
         return false;
     }
 
-    log_registry("Initializing component registry...");
+    LOG_ENTITY_DEBUG("Initializing component registry...");
 
     g_EntityWorld = entityWorld;
 
@@ -112,7 +96,7 @@ bool component_registry_init(void *entityWorld) {
     component_registry_register_known_components();
 
     g_Initialized = true;
-    log_registry("Initialized with %d pre-registered components", g_ComponentCount);
+    LOG_ENTITY_DEBUG("Initialized with %d pre-registered components", g_ComponentCount);
 
     return true;
 }
@@ -145,14 +129,14 @@ bool component_registry_register(const char *name, ComponentTypeIndex index,
             g_IndexLookup[index] = idx;
         }
 
-        log_registry("Updated component: %s -> index=%u, size=%u",
+        LOG_ENTITY_DEBUG("Updated component: %s -> index=%u, size=%u",
                      name, (unsigned)index, (unsigned)size);
         return true;
     }
 
     // Add new entry
     if (g_ComponentCount >= COMPONENT_REGISTRY_MAX_COMPONENTS) {
-        log_registry("ERROR: Registry full, cannot add %s", name);
+        LOG_ENTITY_DEBUG("ERROR: Registry full, cannot add %s", name);
         return false;
     }
 
@@ -190,7 +174,7 @@ bool component_registry_register(const char *name, ComponentTypeIndex index,
         g_IndexLookup[index] = idx;
     }
 
-    log_registry("Registered component: %s -> index=%u, size=%u, proxy=%d",
+    LOG_ENTITY_DEBUG("Registered component: %s -> index=%u, size=%u, proxy=%d",
                  name, (unsigned)index, (unsigned)size, is_proxy);
     return true;
 }
@@ -259,7 +243,7 @@ static void component_registry_register_known_components(void) {
     component_registry_register("ecl::CharacterComponent", COMPONENT_INDEX_UNDEFINED, 0, false);
     component_registry_register("ecl::ItemComponent", COMPONENT_INDEX_UNDEFINED, 0, false);
 
-    log_registry("Pre-registered %d known component names", g_ComponentCount);
+    LOG_ENTITY_DEBUG("Pre-registered %d known component names", g_ComponentCount);
 }
 
 // ============================================================================
@@ -326,7 +310,7 @@ void *component_get_raw(void *entityWorld, uint64_t entityHandle,
     }
 
     if (!g_GetRawComponentAddr) {
-        log_registry("GetRawComponent not discovered - cannot access components");
+        LOG_ENTITY_DEBUG("GetRawComponent not discovered - cannot access components");
         return NULL;
     }
 
@@ -347,19 +331,19 @@ void *component_get_by_name(void *entityWorld, uint64_t entityHandle,
     if (component_lookup_ready()) {
         const ComponentInfo *info = component_registry_lookup(componentName);
         if (info && info->discovered && info->index != COMPONENT_INDEX_UNDEFINED) {
-            log_registry("Using data structure traversal for %s (index=%u, size=%u)",
+            LOG_ENTITY_DEBUG("Using data structure traversal for %s (index=%u, size=%u)",
                          componentName, (unsigned)info->index, (unsigned)info->size);
 
             void *result = component_lookup_by_index(entityHandle, info->index,
                                                       info->size, info->is_proxy);
             if (result) {
-                log_registry("Data structure lookup succeeded: %s -> %p", componentName, result);
+                LOG_ENTITY_DEBUG("Data structure lookup succeeded: %s -> %p", componentName, result);
                 return result;
             }
             // Fall through to try other methods if this fails
-            log_registry("Data structure lookup returned NULL for %s", componentName);
+            LOG_ENTITY_DEBUG("Data structure lookup returned NULL for %s", componentName);
         } else {
-            log_registry("Component %s not in registry (discovered=%d, index=%u)",
+            LOG_ENTITY_DEBUG("Component %s not in registry (discovered=%d, index=%u)",
                          componentName, info ? info->discovered : 0,
                          info ? (unsigned)info->index : 0xFFFF);
         }
@@ -375,13 +359,13 @@ void *component_get_by_name(void *entityWorld, uint64_t entityHandle,
             // Calculate runtime address: ghidra_addr - GHIDRA_BASE + actual_base
             uintptr_t runtime_addr = ghidra_addr - GHIDRA_BASE_ADDRESS + (uintptr_t)binary_base;
 
-            log_registry("Trying template call (likely to fail on macOS) GetComponent<%s> at %p",
+            LOG_ENTITY_DEBUG("Trying template call (likely to fail on macOS) GetComponent<%s> at %p",
                          componentName, (void*)runtime_addr);
 
             void *result = call_get_component_template((void*)runtime_addr,
                                                         entityWorld, entityHandle);
             if (result) {
-                log_registry("Template call succeeded (unexpected!): %s -> %p", componentName, result);
+                LOG_ENTITY_DEBUG("Template call succeeded (unexpected!): %s -> %p", componentName, result);
                 return result;
             }
         }
@@ -394,13 +378,13 @@ void *component_get_by_name(void *entityWorld, uint64_t entityHandle,
         void *result = component_get_raw(entityWorld, entityHandle,
                                          info->index, info->size, info->is_proxy);
         if (result) {
-            log_registry("GetRawComponent succeeded: %s -> %p", componentName, result);
+            LOG_ENTITY_DEBUG("GetRawComponent succeeded: %s -> %p", componentName, result);
             return result;
         }
     }
 
     // Component not found via any method
-    log_registry("Component not accessible: %s", componentName);
+    LOG_ENTITY_DEBUG("Component not accessible: %s", componentName);
     return NULL;
 }
 
@@ -411,7 +395,7 @@ void *component_get_by_name(void *entityWorld, uint64_t entityHandle,
 bool component_discover_get_raw_component(void *binaryBase) {
     if (!binaryBase) return false;
 
-    log_registry("Attempting to discover GetRawComponent...");
+    LOG_ENTITY_DEBUG("Attempting to discover GetRawComponent...");
 
     // TODO: Implement pattern scanning for GetRawComponent
     //
@@ -427,20 +411,20 @@ bool component_discover_get_raw_component(void *binaryBase) {
     // Strategy 3: Use Frida (see tools/frida/discover_components.js)
 
     if (g_GetRawComponentAddr) {
-        log_registry("GetRawComponent set to Frida-discovered address: %p",
+        LOG_ENTITY_DEBUG("GetRawComponent set to Frida-discovered address: %p",
                      g_GetRawComponentAddr);
         return true;
     }
 
-    log_registry("GetRawComponent discovery not yet implemented");
-    log_registry("Use Frida script to discover at runtime");
+    LOG_ENTITY_DEBUG("GetRawComponent discovery not yet implemented");
+    LOG_ENTITY_DEBUG("Use Frida script to discover at runtime");
     return false;
 }
 
 bool component_discover_registry(void *entityWorld) {
     if (!entityWorld) return false;
 
-    log_registry("Attempting to discover ComponentRegistry in EntityWorld...");
+    LOG_ENTITY_DEBUG("Attempting to discover ComponentRegistry in EntityWorld...");
 
     // TODO: Implement registry discovery
     //
@@ -454,32 +438,32 @@ bool component_discover_registry(void *entityWorld) {
     // 2. Look for array patterns with uint16_t TypeIds
     // 3. Validate by checking known component indices match names
 
-    log_registry("ComponentRegistry discovery not yet implemented");
-    log_registry("Use Ext.Entity.DumpWorld() to explore EntityWorld structure");
+    LOG_ENTITY_DEBUG("ComponentRegistry discovery not yet implemented");
+    LOG_ENTITY_DEBUG("Use Ext.Entity.DumpWorld() to explore EntityWorld structure");
     return false;
 }
 
 void component_registry_dump(void) {
-    log_registry("=== Component Registry Dump ===");
-    log_registry("Total components: %d", g_ComponentCount);
-    log_registry("GetRawComponent: %p", g_GetRawComponentAddr);
+    LOG_ENTITY_DEBUG("=== Component Registry Dump ===");
+    LOG_ENTITY_DEBUG("Total components: %d", g_ComponentCount);
+    LOG_ENTITY_DEBUG("GetRawComponent: %p", g_GetRawComponentAddr);
 
     int discovered = 0;
     for (int i = 0; i < g_ComponentCount; i++) {
         const ComponentInfo *info = &g_Components[i];
         if (info->discovered) {
             discovered++;
-            log_registry("  [%d] %s: index=%u, size=%u, proxy=%d, oneframe=%d",
+            LOG_ENTITY_DEBUG("  [%d] %s: index=%u, size=%u, proxy=%d, oneframe=%d",
                          i, info->name, (unsigned)info->index, (unsigned)info->size,
                          info->is_proxy, info->is_one_frame);
         }
     }
 
-    log_registry("Discovered: %d / %d components", discovered, g_ComponentCount);
+    LOG_ENTITY_DEBUG("Discovered: %d / %d components", discovered, g_ComponentCount);
 
     if (discovered == 0) {
-        log_registry("No components discovered yet!");
-        log_registry("Use Frida script or manual discovery to populate indices");
+        LOG_ENTITY_DEBUG("No components discovered yet!");
+        LOG_ENTITY_DEBUG("Use Frida script or manual discovery to populate indices");
     }
 }
 
@@ -490,13 +474,13 @@ void component_registry_dump(void) {
 void component_set_get_raw_component_addr(void *addr) {
     g_GetRawComponentAddr = addr;
     if (addr) {
-        log_registry("GetRawComponent address set via Frida: %p", addr);
+        LOG_ENTITY_DEBUG("GetRawComponent address set via Frida: %p", addr);
     }
 }
 
 void component_add_frida_discovery(const char *name, ComponentTypeIndex index,
                                     uint16_t size) {
-    log_registry("Frida discovery: %s -> index=%u, size=%u",
+    LOG_ENTITY_DEBUG("Frida discovery: %s -> index=%u, size=%u",
                  name, (unsigned)index, (unsigned)size);
 
     // Update or register the component

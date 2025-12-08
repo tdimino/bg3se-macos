@@ -79,7 +79,7 @@ static int check_mod_has_script_extender(const char *mod_name) {
              "/tmp/%s_extracted/Mods/%s/ScriptExtender/Config.json",
              mod_name, mod_name);
     if (file_contains_string(config_path, "\"Lua\"")) {
-        log_message("[SE] Found Config.json with Lua for %s at: %s", mod_name, config_path);
+        LOG_MOD_INFO("Found Config.json with Lua for %s at: %s", mod_name, config_path);
         return 1;
     }
 
@@ -90,7 +90,7 @@ static int check_mod_has_script_extender(const char *mod_name) {
                  "/tmp/%s_extracted/Mods/%s/ScriptExtender/Config.json",
                  short_names[i], mod_name);
         if (file_contains_string(config_path, "\"Lua\"")) {
-            log_message("[SE] Found Config.json with Lua for %s at: %s", mod_name, config_path);
+            LOG_MOD_INFO("Found Config.json with Lua for %s at: %s", mod_name, config_path);
             return 1;
         }
     }
@@ -102,7 +102,7 @@ static int check_mod_has_script_extender(const char *mod_name) {
                  "%s/Documents/Larian Studios/Baldur's Gate 3/Mods/%s/ScriptExtender/Config.json",
                  home, mod_name);
         if (file_contains_string(config_path, "\"Lua\"")) {
-            log_message("[SE] Found Config.json with Lua for %s at: %s", mod_name, config_path);
+            LOG_MOD_INFO("Found Config.json with Lua for %s at: %s", mod_name, config_path);
             return 1;
         }
     }
@@ -123,7 +123,7 @@ static int check_mod_has_script_extender(const char *mod_name) {
                     snprintf(pak_path, sizeof(pak_path), "%s/%s", mods_dir, entry->d_name);
 
                     if (mod_pak_has_script_extender(pak_path, mod_name)) {
-                        log_message("[SE] Found SE mod %s in PAK: %s", mod_name, pak_path);
+                        LOG_MOD_INFO("Found SE mod %s in PAK: %s", mod_name, pak_path);
                         closedir(dir);
                         return 1;
                     }
@@ -230,14 +230,14 @@ int mod_load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua_pa
     // Execute the Lua code
     if (luaL_dostring(L, content) != LUA_OK) {
         const char *error = lua_tostring(L, -1);
-        log_message("[Lua] PAK load error (%s): %s", lua_path, error);
+        LOG_LUA_ERROR("PAK load error (%s): %s", lua_path, error);
         lua_pop(L, 1);
         free(content);
         return 0;
     }
 
     free(content);
-    log_message("[Lua] Loaded from PAK: %s", lua_path);
+    LOG_LUA_INFO("Loaded from PAK: %s", lua_path);
     return 1;
 }
 
@@ -253,7 +253,7 @@ void mod_detect_enabled(void) {
     // Build path to modsettings.lsx
     const char *home = getenv("HOME");
     if (!home) {
-        log_message("Could not get HOME environment variable");
+        LOG_MOD_ERROR("Could not get HOME environment variable");
         return;
     }
 
@@ -264,7 +264,7 @@ void mod_detect_enabled(void) {
 
     FILE *f = fopen(path, "r");
     if (!f) {
-        log_message("Could not open modsettings.lsx at: %s", path);
+        LOG_MOD_ERROR("Could not open modsettings.lsx at: %s", path);
         return;
     }
 
@@ -276,7 +276,7 @@ void mod_detect_enabled(void) {
     char *content = (char *)malloc(size + 1);
     if (!content) {
         fclose(f);
-        log_message("Out of memory reading modsettings.lsx");
+        LOG_MOD_ERROR("Out of memory reading modsettings.lsx");
         return;
     }
 
@@ -285,7 +285,7 @@ void mod_detect_enabled(void) {
     fclose(f);
 
     // Count and extract mod names
-    log_message("=== Enabled Mods ===");
+    LOG_MOD_INFO("=== Enabled Mods ===");
 
     int mod_count = 0;
     char *ptr = content;
@@ -311,22 +311,22 @@ void mod_detect_enabled(void) {
 
                 mod_count++;
                 if (strcmp(mod_name, "GustavX") == 0) {
-                    log_message("  [%d] %s (base game)", mod_count, mod_name);
+                    LOG_MOD_INFO("  [%d] %s (base game)", mod_count, mod_name);
                 } else {
-                    log_message("  [%d] %s", mod_count, mod_name);
+                    LOG_MOD_INFO("  [%d] %s", mod_count, mod_name);
                 }
             }
             ptr = end;
         }
     }
 
-    log_message("Total mods: %d (%d user mods)", mod_count, mod_count > 0 ? mod_count - 1 : 0);
-    log_message("====================");
+    LOG_MOD_INFO("Total mods: %d (%d user mods)", mod_count, mod_count > 0 ? mod_count - 1 : 0);
+    LOG_MOD_INFO("====================");
 
     free(content);
 
     // Now check which mods have Script Extender support
-    log_message("=== Scanning for SE Mods ===");
+    LOG_MOD_INFO("=== Scanning for SE Mods ===");
     for (int i = 0; i < detected_mod_count; i++) {
         // Skip base game
         if (strcmp(detected_mods[i], "GustavX") == 0) continue;
@@ -336,20 +336,20 @@ void mod_detect_enabled(void) {
                 strncpy(se_mods[se_mod_count], detected_mods[i], MAX_MOD_NAME_LEN - 1);
                 se_mods[se_mod_count][MAX_MOD_NAME_LEN - 1] = '\0';
                 se_mod_count++;
-                log_message("  [SE] %s", detected_mods[i]);
+                LOG_MOD_INFO("  [SE] %s", detected_mods[i]);
             }
         }
     }
 
     if (se_mod_count == 0) {
-        log_message("  No SE mods in modsettings.lsx");
+        LOG_MOD_INFO("  No SE mods in modsettings.lsx");
     } else {
-        log_message("Total SE mods from modsettings: %d", se_mod_count);
+        LOG_MOD_INFO("Total SE mods from modsettings: %d", se_mod_count);
     }
-    log_message("============================");
+    LOG_MOD_INFO("============================");
 
     // Scan ~/Documents/Larian Studios/Baldur's Gate 3/Mods/ for SE mods not in modsettings.lsx
-    log_message("=== Scanning Mods Folder for SE Mods ===");
+    LOG_MOD_INFO("=== Scanning Mods Folder for SE Mods ===");
     if (home) {
         char mods_dir[MAX_PATH_LEN];
         snprintf(mods_dir, sizeof(mods_dir),
@@ -383,16 +383,16 @@ void mod_detect_enabled(void) {
                         strncpy(se_mods[se_mod_count], entry->d_name, MAX_MOD_NAME_LEN - 1);
                         se_mods[se_mod_count][MAX_MOD_NAME_LEN - 1] = '\0';
                         se_mod_count++;
-                        log_message("  [SE] %s (from Mods folder)", entry->d_name);
+                        LOG_MOD_INFO("  [SE] %s (from Mods folder)", entry->d_name);
                     }
                 }
             }
             closedir(dir);
         } else {
-            log_message("  Could not open Mods folder: %s", mods_dir);
+            LOG_MOD_INFO("  Could not open Mods folder: %s", mods_dir);
         }
     }
-    log_message("=========================================");
+    LOG_MOD_INFO("=========================================");
 }
 
 int mod_get_detected_count(void) {

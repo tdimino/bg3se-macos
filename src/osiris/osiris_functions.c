@@ -121,7 +121,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     /* Skip GPU carveout region - these cause SIGBUS even if mapped */
     if (safe_memory_is_gpu_region(funcDefAddr)) {
         if (shouldLog) {
-            log_message("[ExtractName] funcDef 0x%llx: GPU region", (unsigned long long)funcDefAddr);
+            LOG_OSIRIS_DEBUG("funcDef 0x%llx: GPU region", (unsigned long long)funcDefAddr);
             s_extractDiagCount++;
         }
         return NULL;
@@ -142,7 +142,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     void *signaturePtr = NULL;
     if (!safe_memory_read_pointer(funcDefAddr + OSIFUNCDEF_SIGNATURE_OFFSET, &signaturePtr)) {
         if (shouldLog) {
-            log_message("[ExtractName] funcDef 0x%llx: failed to read Signature at +0x%x",
+            LOG_OSIRIS_DEBUG("funcDef 0x%llx: failed to read Signature at +0x%x",
                        (unsigned long long)funcDefAddr, OSIFUNCDEF_SIGNATURE_OFFSET);
             s_extractDiagCount++;
         }
@@ -153,7 +153,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     mach_vm_address_t sigAddr = (mach_vm_address_t)signaturePtr;
     if (!is_valid_string_ptr(signaturePtr)) {  /* Reuse pointer validation */
         if (shouldLog) {
-            log_message("[ExtractName] funcDef 0x%llx: Signature 0x%llx invalid",
+            LOG_OSIRIS_DEBUG("funcDef 0x%llx: Signature 0x%llx invalid",
                        (unsigned long long)funcDefAddr, (unsigned long long)sigAddr);
             s_extractDiagCount++;
         }
@@ -163,7 +163,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     /* Skip GPU region for Signature pointer */
     if (safe_memory_is_gpu_region(sigAddr)) {
         if (shouldLog) {
-            log_message("[ExtractName] funcDef 0x%llx: Signature 0x%llx in GPU region",
+            LOG_OSIRIS_DEBUG("funcDef 0x%llx: Signature 0x%llx in GPU region",
                        (unsigned long long)funcDefAddr, (unsigned long long)sigAddr);
             s_extractDiagCount++;
         }
@@ -174,7 +174,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     void *namePtr = NULL;
     if (!safe_memory_read_pointer(sigAddr + FUNCSIG_NAME_OFFSET, &namePtr)) {
         if (shouldLog) {
-            log_message("[ExtractName] Signature 0x%llx: failed to read Name at +0x%x",
+            LOG_OSIRIS_DEBUG("Signature 0x%llx: failed to read Name at +0x%x",
                        (unsigned long long)sigAddr, FUNCSIG_NAME_OFFSET);
             s_extractDiagCount++;
         }
@@ -185,7 +185,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     mach_vm_address_t nameAddr = (mach_vm_address_t)namePtr;
     if (!is_valid_string_ptr(namePtr)) {
         if (shouldLog) {
-            log_message("[ExtractName] Signature 0x%llx: Name 0x%llx not valid",
+            LOG_OSIRIS_DEBUG("Signature 0x%llx: Name 0x%llx not valid",
                        (unsigned long long)sigAddr, (unsigned long long)nameAddr);
             s_extractDiagCount++;
         }
@@ -195,7 +195,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     /* Skip GPU region for Name pointer too */
     if (safe_memory_is_gpu_region(nameAddr)) {
         if (shouldLog) {
-            log_message("[ExtractName] Signature 0x%llx: Name 0x%llx in GPU region",
+            LOG_OSIRIS_DEBUG("Signature 0x%llx: Name 0x%llx in GPU region",
                        (unsigned long long)sigAddr, (unsigned long long)nameAddr);
             s_extractDiagCount++;
         }
@@ -205,7 +205,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     /* Step 3: Safely read the name string */
     if (!safe_memory_read_string(nameAddr, s_extractedName, sizeof(s_extractedName))) {
         if (shouldLog) {
-            log_message("[ExtractName] Name 0x%llx: failed to read string",
+            LOG_OSIRIS_DEBUG("Name 0x%llx: failed to read string",
                        (unsigned long long)nameAddr);
             s_extractDiagCount++;
         }
@@ -215,7 +215,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
     /* Validate the extracted name format */
     if (!is_valid_name_start(s_extractedName[0])) {
         if (shouldLog) {
-            log_message("[ExtractName] Name 0x%llx: invalid start char 0x%02x",
+            LOG_OSIRIS_DEBUG("Name 0x%llx: invalid start char 0x%02x",
                        (unsigned long long)nameAddr, (unsigned char)s_extractedName[0]);
             s_extractDiagCount++;
         }
@@ -228,7 +228,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
         if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
               (c >= '0' && c <= '9') || c == '_')) {
             if (shouldLog) {
-                log_message("[ExtractName] Name '%.*s': invalid char 0x%02x at pos %d",
+                LOG_OSIRIS_DEBUG("Name '%.*s': invalid char 0x%02x at pos %d",
                            j, s_extractedName, (unsigned char)c, j);
                 s_extractDiagCount++;
             }
@@ -238,7 +238,7 @@ static const char *extract_func_name_from_def(void *funcDef) {
 
     /* Success! Log first few successful extractions for verification */
     if (shouldLog) {
-        log_message("[ExtractName] SUCCESS: funcDef 0x%llx -> Sig 0x%llx -> Name '%s'",
+        LOG_OSIRIS_DEBUG("SUCCESS: funcDef 0x%llx -> Sig 0x%llx -> Name '%s'",
                    (unsigned long long)funcDefAddr, (unsigned long long)sigAddr, s_extractedName);
         s_extractDiagCount++;
     }
@@ -317,7 +317,7 @@ int osi_func_cache_by_id(uint32_t funcId) {
     void *funcMan = NULL;
     if (!safe_memory_read_pointer((mach_vm_address_t)s_ppOsiFunctionMan, &funcMan)) {
         if (s_diagLogCount < MAX_DIAG_LOGS) {
-            log_message("[FuncCache] Failed to read OsiFunctionMan pointer");
+            LOG_OSIRIS_DEBUG("Failed to read OsiFunctionMan pointer");
             s_diagLogCount++;
         }
         return 0;
@@ -332,7 +332,7 @@ int osi_func_cache_by_id(uint32_t funcId) {
 
     /* Log first few attempts to see what pFunctionData returns */
     if (s_diagLogCount < MAX_DIAG_LOGS) {
-        log_message("[FuncCache] Query funcId=0x%08x: funcMan=%p, funcDef=%p", funcId, funcMan, funcDef);
+        LOG_OSIRIS_DEBUG("Query funcId=0x%08x: funcMan=%p, funcDef=%p", funcId, funcMan, funcDef);
         s_diagLogCount++;
     }
 
@@ -352,7 +352,7 @@ int osi_func_cache_by_id(uint32_t funcId) {
 
             /* Log success for first few */
             if (s_diagLogCount < MAX_DIAG_LOGS) {
-                log_message("[FuncCache] SUCCESS: funcId=0x%08x -> '%s' (arity=%d)",
+                LOG_OSIRIS_DEBUG("SUCCESS: funcId=0x%08x -> '%s' (arity=%d)",
                            funcId, name, arity);
                 s_diagLogCount++;
             }
@@ -361,7 +361,7 @@ int osi_func_cache_by_id(uint32_t funcId) {
             return 1;
         } else if (s_diagLogCount < MAX_DIAG_LOGS) {
             /* Log failure - but don't try to dump memory unsafely */
-            log_message("[FuncCache] Failed to extract name for funcId=0x%08x, funcDef=%p (memory inaccessible or invalid)", funcId, funcDef);
+            LOG_OSIRIS_DEBUG("Failed to extract name for funcId=0x%08x, funcDef=%p (memory inaccessible or invalid)", funcId, funcDef);
             s_diagLogCount++;
         }
     }
@@ -387,11 +387,11 @@ void osi_func_cache_from_event(uint32_t funcId) {
 
 void osi_func_enumerate(void) {
     if (!s_pfn_pFunctionData || !s_ppOsiFunctionMan || !*s_ppOsiFunctionMan) {
-        log_message("[FuncEnum] Cannot enumerate - pFunctionData or OsiFunctionMan not available");
+        LOG_OSIRIS_DEBUG("Cannot enumerate - pFunctionData or OsiFunctionMan not available");
         return;
     }
 
-    log_message("[FuncEnum] Starting function enumeration...");
+    LOG_OSIRIS_DEBUG("Starting function enumeration...");
     int found_count = 0;
 
     // Osiris function IDs are split into two ranges:
@@ -413,7 +413,7 @@ void osi_func_enumerate(void) {
         }
     }
 
-    log_message("[FuncEnum] Enumeration complete: %d functions cached", found_count);
+    LOG_OSIRIS_DEBUG("Enumeration complete: %d functions cached", found_count);
 
     // Log some key functions we're looking for
     const char *key_funcs[] = {
@@ -422,11 +422,11 @@ void osi_func_enumerate(void) {
         "DB_Players", "CharacterGetDisplayName", NULL
     };
 
-    log_message("[FuncEnum] Checking key functions:");
+    LOG_OSIRIS_DEBUG("Checking key functions:");
     for (int i = 0; key_funcs[i]; i++) {
         uint32_t fid = osi_func_lookup_id(key_funcs[i]);
         if (fid != INVALID_FUNCTION_ID) {
-            log_message("  %s -> 0x%08x", key_funcs[i], fid);
+            LOG_OSIRIS_DEBUG("  %s -> 0x%08x", key_funcs[i], fid);
         }
     }
 }
@@ -520,7 +520,7 @@ void osi_func_update_known_event_id(const char *name, uint32_t funcId) {
                 s_knownEvents[i].funcId == 0) {
                 // Update the placeholder with the discovered ID
                 s_knownEvents[i].funcId = funcId;
-                log_message("[Osiris] Discovered event ID: %s = 0x%x", name, funcId);
+                LOG_OSIRIS_INFO("Discovered event ID: %s = 0x%x", name, funcId);
                 return;
             }
         }
@@ -548,7 +548,7 @@ void osi_func_track_seen(uint32_t funcId, uint8_t arity) {
         g_seenFuncIdCount++;
 
         // Log new unique function ID
-        log_message("[FuncID] New unique: id=%u (0x%08x), arity=%d, total_unique=%d",
+        LOG_OSIRIS_DEBUG("New unique: id=%u (0x%08x), arity=%d, total_unique=%d",
                    funcId, funcId, arity, g_seenFuncIdCount);
     }
 }

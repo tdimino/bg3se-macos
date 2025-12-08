@@ -63,7 +63,7 @@ static void fire_state_change(lua_State *L, ServerGameState from, ServerGameStat
     g_previous_state = from;
     g_current_state = to;
 
-    log_message("[GameState] State transition: %s (%d) -> %s (%d)",
+    LOG_GAME_INFO("State transition: %s (%d) -> %s (%d)",
                 game_state_get_name(from), from,
                 game_state_get_name(to), to);
 
@@ -85,7 +85,7 @@ void game_state_init(void) {
     g_pause_detection_enabled = 0;
     g_initialized = 1;
 
-    log_message("[GameState] Game state tracker initialized");
+    LOG_GAME_INFO("Game state tracker initialized");
 }
 
 // ============================================================================
@@ -148,12 +148,12 @@ void game_state_on_combat_started(lua_State *L) {
     // Combat is a substate of Running, no state change needed
     // But we log it for debugging
     (void)L;
-    log_message("[GameState] Combat started (still in Running state)");
+    LOG_GAME_INFO("Combat started (still in Running state)");
 }
 
 void game_state_on_combat_ended(lua_State *L) {
     (void)L;
-    log_message("[GameState] Combat ended (still in Running state)");
+    LOG_GAME_INFO("Combat ended (still in Running state)");
 }
 
 void game_state_on_pause(lua_State *L) {
