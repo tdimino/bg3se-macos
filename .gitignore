@@ -37,3 +37,6 @@ lib/Dobby/libdobby-universal.a
 scripts/bg3-wrapper.sh
 scripts/launch_bg3.sh
 scripts/launch_via_steam.sh
+
+# Archived plans (completed implementation plans)
+plans/archive/

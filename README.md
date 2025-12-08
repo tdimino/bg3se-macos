@@ -44,7 +44,7 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.19.0 | **Feature Parity:** ~55%
+**Version:** v0.20.0 | **Feature Parity:** ~55%
 
 | Feature | Status |
 |---------|--------|
