@@ -1,8 +1,8 @@
 ---
 name: osgrep-reference
 description: Comprehensive CLI reference and search strategies for osgrep semantic code search. Use for detailed CLI options, index management commands, search strategy guidance (architectural vs targeted queries), and troubleshooting. Complements the osgrep plugin which handles daemon lifecycle.
-version: 0.4.15
-last_updated: 2025-12-04
+version: 0.5.16
+last_updated: 2025-12-09
 allowed-tools: "Bash(osgrep:*), Read"
 ---
 
@@ -12,13 +12,18 @@ allowed-tools: "Bash(osgrep:*), Read"
 
 osgrep is a natural-language semantic code search tool that finds code by concept rather than keyword matching. Unlike `grep` which matches literal strings, osgrep understands code semantics using local AI embeddings.
 
-**Version 0.4.x highlights:**
+**Version 0.5.x highlights:**
 - V2 architecture with improved performance (~20% token savings, ~30% speedup)
-- Go language support
+- Call graph tracing with `osgrep trace "function_name"`
+- Role detection (ORCHESTRATION vs DEFINITION)
+- Skeleton generation with `osgrep skeleton`
+- Symbol listing with `osgrep symbols`
+- Go, Rust, Java, C#, Ruby, PHP language support
 - `--reset` flag for clean re-indexing
 - ColBERT reranking for better result relevance
 - Separate "Code" and "Docs" index channels
 - Tree-sitter-based chunking by function/class boundaries
+- Per-repository indexes stored in `.osgrep/` within each repo root
 
 **When to use osgrep:**
 - Exploring unfamiliar codebases ("where is the auth logic?")
@@ -134,14 +139,42 @@ osgrep index -p /path/to/repo   # Index a specific directory
 osgrep index --dry-run          # Preview what would be indexed
 ```
 
-### Other Commands
+### Call Graph Tracing
+
+```bash
+osgrep trace "function_name"    # Show upstream/downstream dependencies
+osgrep symbols                  # List all symbols in the codebase
+```
+
+### Skeleton Generation
+
+```bash
+osgrep skeleton src/lib/auth.ts           # Skeletonize specific file
+osgrep skeleton "SymbolName"              # Find symbol and skeletonize its file
+osgrep skeleton "semantic query"          # Search and skeletonize top matches
+```
+
+Output shows signatures with method references:
+```
+class AuthService {
+  validate(token: string): boolean {
+    // → jwt.verify, checkScope, .. | C:5 | ORCH
+  }
+}
+```
+
+### Server & Management Commands
 
 ```bash
 osgrep list                     # Show all indexed repositories
 osgrep doctor                   # Check health and configuration
 osgrep setup                    # Pre-download models (~150MB)
-osgrep serve                    # Run background daemon (port 4444)
+osgrep serve                    # Run background daemon (auto port from 4444)
 osgrep serve -p 8080            # Custom port (or OSGREP_PORT=8080)
+osgrep serve -b                 # Run in background
+osgrep serve status             # Show server status for current directory
+osgrep serve stop               # Stop server in current directory
+osgrep serve stop --all         # Stop all running osgrep servers
 ```
 
 **Serve endpoints:**
@@ -232,15 +265,16 @@ For architectural questions, snippets are signposts, not answers. Read the key f
 
 ## Technical Details
 
-- **100% Local**: Uses transformers.js embeddings (no remote API calls)
-- **Auto-Isolated**: Each repo gets its own index
+- **100% Local**: Uses onnxruntime-node embeddings (no remote API calls)
+- **Auto-Isolated**: Each repo gets its own index in `.osgrep/` within the repo root
 - **Adaptive Performance**: Bounded concurrency keeps system responsive
-- **Index Location**: `~/.osgrep/data/`
+- **Index Location**: `.osgrep/` directory within each repository root (NOT `~/.osgrep/data/`)
 - **Model Download**: ~150MB on first run (`osgrep setup` to pre-download)
 - **Chunking Strategy**: Tree-sitter parses code into function/class boundaries
 - **Deduplication**: Identical code blocks are deduplicated
 - **Dual Channels**: Separate "Code" and "Docs" indices with ColBERT reranking
 - **Structural Boosting**: Functions/classes prioritized over test files
+- **Role Classification**: Detects ORCHESTRATION (high complexity) vs DEFINITION (types/classes)
 
 ## Troubleshooting
 

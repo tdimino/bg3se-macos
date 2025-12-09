@@ -49,9 +49,21 @@ JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
 ```
 
 ### Semantic Search (osgrep)
+
+osgrep indexes are per-repository (stored in `.osgrep/` in each repo root). Run from the target directory:
+
 ```bash
-osgrep "how does entity lookup work" -p /Users/tomdimino/Desktop/Programming/bg3se-macos
-osgrep "Lua component binding" -p /Users/tomdimino/Desktop/Programming/bg3se
+# Search bg3se-macos (run from its directory)
+cd /Users/tomdimino/Desktop/Programming/bg3se-macos
+osgrep "how does entity lookup work"
+
+# Search Windows reference (run from its directory)
+cd /Users/tomdimino/Desktop/Programming/bg3se
+osgrep "Lua component binding"
+
+# Index a repository (run from its directory, or use -p)
+osgrep index                                    # Current directory
+osgrep index -p /path/to/repo                   # Specific path
 ```
 
 ## Architecture Overview
@@ -223,7 +235,10 @@ For detailed information, see:
 
 ### Porting Windows Feature
 
-1. Search Windows BG3SE with osgrep: `osgrep "feature name" -p /path/to/bg3se`
+1. Search Windows BG3SE with osgrep (from its directory):
+   ```bash
+   cd /Users/tomdimino/Desktop/Programming/bg3se && osgrep "feature name"
+   ```
 2. Understand the Windows implementation pattern
 3. Find equivalent ARM64 offsets with Ghidra
 4. Adapt for macOS constraints (Hardened Runtime, ARM64 ABI)
@@ -247,8 +262,8 @@ For detailed information, see:
 
 **osgrep shows "indexed 0" or no results:**
 - Run from project directory: `cd /path/to/bg3se-macos && osgrep "query"`
-- Or use explicit path: `osgrep "query" -p /path/to/bg3se-macos`
 - Reindex if needed: `osgrep index --reset`
+- Check index exists: `osgrep list` (should show `.osgrep/` in repo root)
 
 **Ghidra headless analysis hangs:**
 - Always use `optimize_analysis.py` as prescript
@@ -257,23 +272,25 @@ For detailed information, see:
 
 ## osgrep Search Patterns
 
+**Important:** osgrep uses per-repo indexes stored in `.osgrep/` within each repository root. Always `cd` to the target repo before searching.
+
 ```bash
-# Architecture/system questions (run from project dir)
+# Search bg3se-macos (from its directory)
+cd /Users/tomdimino/Desktop/Programming/bg3se-macos
+
 osgrep "how does entity component lookup work"
 osgrep "Lua API registration pattern"
 osgrep "ARM64 indirect return via x8"
 osgrep "Osiris event dispatch"
-
-# Finding implementations
 osgrep "Ext.Stats property resolution"
 osgrep "GUID to EntityHandle mapping"
 osgrep "socket console command processing"
-
-# Ghidra/offset discovery
 osgrep "ADRP LDR global pointer pattern"
-osgrep "decompile function address extraction"
 
-# Windows reference (use explicit path)
-osgrep "entity component binding" -p /Users/tomdimino/Desktop/Programming/bg3se
-osgrep "stats property accessor" -p /Users/tomdimino/Desktop/Programming/bg3se
+# Search Windows reference (from its directory)
+cd /Users/tomdimino/Desktop/Programming/bg3se
+
+osgrep "entity component binding"
+osgrep "stats property accessor"
+osgrep "Lua component binding"
 ```
