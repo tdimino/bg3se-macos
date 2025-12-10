@@ -94,6 +94,9 @@ extern "C" {
 // Overlay console
 #include "overlay.h"
 
+// Enum system
+#include "enum_registry.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -657,6 +660,9 @@ static void register_ext_api(lua_State *L) {
 
     // Ext.Vars namespace (persistent variables)
     lua_persistentvars_register(L, -1);
+
+    // Ext.Enums namespace (enum and bitfield types)
+    enum_register_ext_enums(L);
 
     // Set Ext as global
     lua_setglobal(L, "Ext");
@@ -1595,6 +1601,11 @@ static void init_lua(void) {
 
     // Open standard libraries
     luaL_openlibs(L);
+
+    // Initialize enum registry and register metatables
+    enum_registry_init();
+    enum_register_definitions();
+    enum_register_metatables(L);
 
     // Register our Ext API
     register_ext_api(L);

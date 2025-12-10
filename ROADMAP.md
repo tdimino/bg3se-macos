@@ -782,45 +782,52 @@ Ext.RegisterNetListener(channel, function(channel, payload, userID) ... end)
 ## Phase 7: Type System & Enumerations
 
 ### 7.1 Enum Objects
-**Status:** ❌ Not Started
+**Status:** ✅ Complete (v0.26.0 - Issue #29)
 
-From API.md: "Enum values returned from functions are `userdata` values instead of `string`."
+Enum userdata with Label, Value, EnumName properties and flexible comparison.
 
-**Target API:**
+**Implementation:**
+- `src/enum/enum_registry.c/h` - Central enum registry
+- `src/enum/enum_lua.c` - Enum metamethods (__index, __eq, __tostring, __lt, __le)
+- `src/enum/enum_ext.c` - Ext.Enums table registration
+- `src/enum/enum_definitions.c` - 14 enum/bitfield types (DamageType, AbilityId, SkillId, StatusType, SurfaceType, SpellSchoolId, WeaponType, ArmorType, ItemSlot, ItemDataRarity, SpellType, AttributeFlags, WeaponFlags, DamageFlags)
+
+**Working API:**
 ```lua
-local bt = entity.CurrentTemplate.BloodSurfaceType
-bt.Label      -- "Blood"
-bt.Value      -- 16
-bt.EnumName   -- "SurfaceType"
+local dt = Ext.Enums.DamageType.Fire
+dt.Label      -- "Fire"
+dt.Value      -- 7
+dt.EnumName   -- "DamageType"
 
 -- Comparison
-bt == "Blood"  -- true (label)
-bt == 16       -- true (value)
-bt == Ext.Enums.SurfaceType.Blood  -- true
-
--- JSON serialization
-Ext.Json.Stringify(bt)  -- "Blood"
+dt == "Fire"  -- true (label)
+dt == 7       -- true (value)
+dt == Ext.Enums.DamageType.Fire  -- true
 ```
 
 ### 7.2 Bitfield Objects
-**Status:** ❌ Not Started
+**Status:** ✅ Complete (v0.26.0 - Issue #29)
 
+Bitfield userdata with __Labels, __Value, __EnumName, flag queries, and bitwise operations.
+
+**Working API:**
 ```lua
-local af = entity.Stats.AttributeFlags
-af.__Labels    -- {"SuffocatingImmunity", "BleedingImmunity", ...}
-af.__Value     -- 137440004096
-af.__EnumName  -- "StatAttributeFlags"
+local bf = Ext.Enums.AttributeFlags.Backstab
+bf.__Labels   -- {"Backstab"}
+bf.__Value    -- 65536
+bf.__EnumName -- "AttributeFlags"
 
 -- Query flags
-af.DrunkImmunity  -- true/false
+bf.Backstab   -- true
+bf.Torch      -- false
 
 -- Bitwise operators
-~af                    -- Negate
-af | "FreezeImmunity"  -- OR
-af & {"DrunkImmunity"} -- AND
-
--- Assignment
-entity.Stats.AttributeFlags = af | "WebImmunity"
+~bf           -- Negate (masked by allowed_flags)
+bf | "Torch"  -- OR returns new bitfield
+bf & 0xFF     -- AND returns new bitfield
+bf ^ other    -- XOR returns new bitfield
+#bf           -- Popcount (number of set flags)
+tostring(bf)  -- Comma-separated labels
 ```
 
 ### 7.3 Full Type Definitions
@@ -1061,7 +1068,7 @@ Ext.Mod.GetModInfo(guid)
 | ID | Feature | Effort | Status |
 |----|---------|--------|--------|
 | C1 | Ext.Math Library | Medium | ✅ Complete |
-| C2 | Enum/Bitfield Objects | Medium | ❌ Not Started |
+| C2 | Enum/Bitfield Objects | Medium | ✅ Complete (v0.26.0) |
 | C3 | Console Commands | Low | ✅ Complete |
 | C6 | Ext.Debug APIs | Low | ✅ Complete |
 | C4 | Mod Variables | Medium | ❌ Not Started |
@@ -1084,6 +1091,8 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.26.0 | 2025-12-10 | Ext.Enums - Type-safe enum/bitfield userdata with 14 types (DamageType, AbilityId, SkillId, StatusType, SurfaceType, etc.), flexible comparison, bitwise operations (Issue #29) |
+| v0.25.0 | 2025-12-10 | Ext.Stats.Create and Sync (Issue #27) |
 | v0.24.0 | 2025-12-10 | Expanded component property access - 8 component layouts (Health, BaseHp, Armor, Stats, BaseStats, Transform, Level, Data) with data-driven property definitions |
 | v0.23.0 | 2025-12-10 | Health component property access - entity.Health.Hp/MaxHp/TemporaryHp working via data structure traversal + hash fix; Ext.Osiris.RaiseEvent() and GetCustomFunctions() for custom event dispatch |
 | v0.22.0 | 2025-12-09 | Custom Osiris function registration - Ext.Osiris.NewCall/NewQuery/NewEvent for Lua-defined Osiris functions |

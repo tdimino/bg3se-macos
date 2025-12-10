@@ -44,7 +44,7 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.25.0 | **Feature Parity:** ~70%
+**Version:** v0.26.0 | **Feature Parity:** ~72%
 
 | Feature | Status |
 |---------|--------|
@@ -59,6 +59,7 @@ SE mods work automatically—just install them like any other mod:
 | Ext.Vars | ✅ PersistentVars |
 | Ext.Input | ✅ Hotkeys, key injection |
 | Ext.Math | ✅ Vector/matrix operations |
+| Ext.Enums | ✅ 14 enum/bitfield types |
 | Debug Console | ✅ Socket + file + in-game overlay |
 
 See [ROADMAP.md](ROADMAP.md) for detailed progress.

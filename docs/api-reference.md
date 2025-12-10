@@ -206,6 +206,64 @@ sword.Damage = "2d6"     -- Modify at runtime
 
 ---
 
+## Ext.Enums
+
+Type-safe enum and bitfield access matching Windows BG3SE behavior.
+
+### Enum Access
+
+```lua
+-- Access enum values via Ext.Enums.<EnumName>.<Label>
+local dt = Ext.Enums.DamageType.Fire
+_P(dt.Label)      -- "Fire"
+_P(dt.Value)      -- 7
+_P(dt.EnumName)   -- "DamageType"
+
+-- Flexible comparison
+dt == "Fire"      -- true (label match)
+dt == 7           -- true (value match)
+dt == Ext.Enums.DamageType.Fire  -- true
+```
+
+### Bitfield Access
+
+```lua
+-- Access bitfield values
+local bf = Ext.Enums.AttributeFlags.Backstab
+_P(bf.__Labels)   -- {"Backstab"}
+_P(bf.__Value)    -- 65536
+
+-- Query individual flags
+bf.Backstab       -- true
+bf.Torch          -- false
+
+-- Bitwise operations
+local combined = bf | Ext.Enums.AttributeFlags.Torch
+_P(#combined)     -- 2 (popcount)
+_P(tostring(combined))  -- "Backstab, Torch"
+```
+
+### Available Enums
+
+| Enum | Type | Description |
+|------|------|-------------|
+| `DamageType` | Enum | None, Slashing, Piercing, Bludgeoning, Acid, Thunder, Necrotic, Fire, Lightning, Cold, Psychic, Poison, Radiant, Force |
+| `AbilityId` | Enum | None, Strength, Dexterity, Constitution, Intelligence, Wisdom, Charisma |
+| `SkillId` | Enum | Deception, Intimidation, Performance, Persuasion, Acrobatics, SleightOfHand, Stealth, Arcana, History, Investigation, Nature, Religion, Athletics, AnimalHandling, Insight, Medicine, Perception, Survival |
+| `StatusType` | Enum | DYING, HEAL, KNOCKED_DOWN, BOOST, FEAR, INVISIBLE, INCAPACITATED, POLYMORPHED, DOWNED, etc. |
+| `SurfaceType` | Enum | None, Water, WaterElectrified, WaterFrozen, Blood, Poison, Oil, Lava, Fire, Acid, etc. |
+| `SpellSchoolId` | Enum | None, Abjuration, Conjuration, Divination, Enchantment, Evocation, Illusion, Necromancy, Transmutation |
+| `WeaponType` | Enum | None, Sword, Club, Axe, Staff, Bow, Crossbow, Spear, Knife, Wand, Arrow, Rifle |
+| `ArmorType` | Enum | None, Cloth, Padded, Leather, StuddedLeather, Hide, ChainShirt, ScaleMail, BreastPlate, HalfPlate, RingMail, ChainMail, Splint, Plate |
+| `ItemSlot` | Enum | Helmet, Breast, Cloak, MeleeMainHand, MeleeOffHand, RangedMainHand, RangedOffHand, Ring, Boots, Gloves, Amulet, etc. |
+| `ItemDataRarity` | Enum | Common, Unique, Uncommon, Rare, Epic, Legendary, Divine |
+| `SpellType` | Enum | None, Zone, MultiStrike, Projectile, ProjectileStrike, Rush, Shout, Storm, Target, Teleportation, Wall, Throw |
+| `AttributeFlags` | Bitfield | SlippingImmunity, Torch, Arrow, Unbreakable, Grounded, Floating, ThrownImmunity, InvisibilityImmunity, Backstab, BackstabImmunity, etc. |
+| `WeaponFlags` | Bitfield | Light, Ammunition, Finesse, Heavy, Loading, Range, Reach, Thrown, Twohanded, Versatile, Melee, Magical, etc. |
+| `DamageFlags` | Bitfield | Hit, Dodge, Miss, Critical, Backstab, Invisible, Magical, Invulnerable, SavingThrow, KillingBlow, etc. |
+
+---
+
 ## Ext.Events
 
 Event subscription system for game lifecycle events.
