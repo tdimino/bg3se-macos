@@ -200,15 +200,48 @@ Interface to the Osiris scripting engine.
 | API | Status | Description |
 |-----|--------|-------------|
 | `Ext.Osiris.RegisterListener(event, arity, timing, callback)` | ✅ | Register Osiris event callback |
+| `Ext.Osiris.NewQuery(name, signature, handler)` | ✅ | Register custom query (returns values) |
+| `Ext.Osiris.NewCall(name, signature, handler)` | ✅ | Register custom call (no return) |
+| `Ext.Osiris.NewEvent(name, signature)` | ✅ | Register custom event |
 
 **Timing values:** `"before"` or `"after"`
 
-**Example:**
+**Example - Event Listener:**
 ```lua
 Ext.Osiris.RegisterListener("AutomatedDialogStarted", 2, "after", function(dialog, instanceId)
     Ext.Print("Dialog started: " .. tostring(dialog))
 end)
 ```
+
+**Example - Custom Query:**
+```lua
+-- Register a custom query with IN and OUT parameters
+Ext.Osiris.NewQuery("MyMod_Add", "[in](INTEGER)_A,[in](INTEGER)_B,[out](INTEGER)_Sum",
+    function(a, b)
+        return a + b
+    end)
+
+-- Call via Osi namespace
+local result = Osi.MyMod_Add(10, 20)  -- Returns 30
+```
+
+**Example - Custom Call:**
+```lua
+-- Register a custom call (no return value)
+Ext.Osiris.NewCall("MyMod_Log", "(STRING)_Message",
+    function(msg)
+        Ext.Print("Custom: " .. msg)
+    end)
+
+-- Call it
+Osi.MyMod_Log("Hello from Lua!")
+```
+
+**Signature Format:**
+- `[in]` - Input parameter (default if omitted)
+- `[out]` - Output parameter (for queries)
+- Types: `INTEGER`, `INTEGER64`, `REAL`, `STRING`, `GUIDSTRING`
+- Example: `"[in](GUIDSTRING)_Target,[out](INTEGER)_Health"`
 
 ---
 
