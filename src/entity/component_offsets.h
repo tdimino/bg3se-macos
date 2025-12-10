@@ -123,6 +123,66 @@ static const ComponentLayoutDef g_BaseStatsComponent_Layout = {
 };
 
 // ============================================================================
+// TransformComponent (ls::TransformComponent)
+// From: BG3Extender/GameDefinitions/Components/Components.h:435-440
+// Note: Transform struct uses glm::quat (16B) + 2x glm::vec3 (12B each)
+// ============================================================================
+
+static const ComponentPropertyDef g_TransformComponent_Properties[] = {
+    { "Rotation",  0x00, FIELD_TYPE_VEC4, 0, true },  // glm::quat (x,y,z,w)
+    { "Position",  0x10, FIELD_TYPE_VEC3, 0, true },  // glm::vec3 (Translate)
+    { "Scale",     0x1C, FIELD_TYPE_VEC3, 0, true },  // glm::vec3
+};
+
+static const ComponentLayoutDef g_TransformComponent_Layout = {
+    .componentName = "ls::TransformComponent",
+    .shortName = "Transform",
+    .componentTypeIndex = 0,
+    .componentSize = 0x28,
+    .properties = g_TransformComponent_Properties,
+    .propertyCount = sizeof(g_TransformComponent_Properties) / sizeof(g_TransformComponent_Properties[0]),
+};
+
+// ============================================================================
+// LevelComponent (ls::LevelComponent)
+// From: BG3Extender/GameDefinitions/Components/Components.h:328-334
+// ============================================================================
+
+static const ComponentPropertyDef g_LevelComponent_Properties[] = {
+    { "LevelHandle", 0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true },  // EntityHandle field_0
+    { "LevelName",   0x08, FIELD_TYPE_FIXEDSTRING,   0, true },  // FixedString
+};
+
+static const ComponentLayoutDef g_LevelComponent_Layout = {
+    .componentName = "ls::LevelComponent",
+    .shortName = "Level",
+    .componentTypeIndex = 0,
+    .componentSize = 0x10,
+    .properties = g_LevelComponent_Properties,
+    .propertyCount = sizeof(g_LevelComponent_Properties) / sizeof(g_LevelComponent_Properties[0]),
+};
+
+// ============================================================================
+// DataComponent (eoc::DataComponent)
+// From: BG3Extender/GameDefinitions/Components/Stats.h:55-62
+// ============================================================================
+
+static const ComponentPropertyDef g_DataComponent_Properties[] = {
+    { "Weight",    0x00, FIELD_TYPE_INT32,       0, true },  // int32_t
+    { "StatsId",   0x04, FIELD_TYPE_FIXEDSTRING, 0, true },  // FixedString index
+    { "StepsType", 0x08, FIELD_TYPE_UINT32,      0, true },  // uint32_t
+};
+
+static const ComponentLayoutDef g_DataComponent_Layout = {
+    .componentName = "eoc::DataComponent",
+    .shortName = "Data",
+    .componentTypeIndex = 0,
+    .componentSize = 0x10,
+    .properties = g_DataComponent_Properties,
+    .propertyCount = sizeof(g_DataComponent_Properties) / sizeof(g_DataComponent_Properties[0]),
+};
+
+// ============================================================================
 // All Component Layouts (for bulk registration)
 // ============================================================================
 
@@ -132,6 +192,9 @@ static const ComponentLayoutDef* g_AllComponentLayouts[] = {
     &g_ArmorComponent_Layout,
     &g_StatsComponent_Layout,
     &g_BaseStatsComponent_Layout,
+    &g_TransformComponent_Layout,
+    &g_LevelComponent_Layout,
+    &g_DataComponent_Layout,
     NULL  // Sentinel
 };
 

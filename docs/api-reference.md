@@ -55,22 +55,78 @@ Entity Component System access for querying game objects.
 
 ### Component Property Access
 
-| Property | Status | Description |
-|----------|--------|-------------|
-| `entity.Health` | ✅ | Health component with Hp, MaxHp, TemporaryHp, etc. |
-| `entity.Health.Hp` | ✅ | Current HP (int32) |
-| `entity.Health.MaxHp` | ✅ | Maximum HP (int32) |
-| `entity.Health.TemporaryHp` | ✅ | Temporary HP (int32) |
-| `entity.Health.MaxTemporaryHp` | ✅ | Max temporary HP (int32) |
-| `entity.Health.IsInvulnerable` | ✅ | Invulnerability flag (uint8) |
+Components with property layouts return proxy userdata that supports direct property access and iteration with `pairs()`.
+
+#### Health Component
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `entity.Health.Hp` | int32 | Current HP |
+| `entity.Health.MaxHp` | int32 | Maximum HP |
+| `entity.Health.TemporaryHp` | int32 | Temporary HP |
+| `entity.Health.MaxTemporaryHp` | int32 | Max temporary HP |
+| `entity.Health.IsInvulnerable` | bool | Invulnerability flag |
+
+#### BaseHp Component
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `entity.BaseHp.Vitality` | int32 | Base vitality value |
+| `entity.BaseHp.VitalityBoost` | int32 | Vitality boost modifier |
+
+#### Stats Component
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `entity.Stats.InitiativeBonus` | int32 | Initiative modifier |
+| `entity.Stats.Abilities` | int32[7] | Array: STR, DEX, CON, INT, WIS, CHA, unused |
+| `entity.Stats.AbilityModifiers` | int32[7] | Computed ability modifiers |
+| `entity.Stats.Skills` | int32[18] | All skill values |
+| `entity.Stats.ProficiencyBonus` | int32 | Proficiency bonus |
+| `entity.Stats.SpellCastingAbility` | uint8 | Primary casting ability |
+
+#### Level Component
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `entity.Level.LevelHandle` | EntityHandle | Handle to level entity (hex string) |
+| `entity.Level.LevelName` | FixedString | Level name index (raw uint32) |
+
+#### Data Component
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `entity.Data.Weight` | int32 | Entity weight (in game units) |
+| `entity.Data.StatsId` | FixedString | Stats ID index (raw uint32) |
+| `entity.Data.StepsType` | uint32 | Steps type value |
+
+#### Transform Component
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `entity.Transform.Position` | table | {x, y, z} world position |
+| `entity.Transform.Rotation` | table | {x, y, z, w} quaternion rotation |
+| `entity.Transform.Scale` | table | {x, y, z} scale factors |
 
 **Example:**
 ```lua
-local entity = Ext.Entity.Get("S_PLA_Gale_...")
-if entity and entity.Health then
+local entity = Ext.Entity.Get(GetHostCharacter())
+if entity then
+    -- Health
     _P("HP: " .. entity.Health.Hp .. "/" .. entity.Health.MaxHp)
-    if entity.Health.TemporaryHp > 0 then
-        _P("Temp HP: " .. entity.Health.TemporaryHp)
+
+    -- Stats
+    _P("Proficiency: " .. entity.Stats.ProficiencyBonus)
+
+    -- Level
+    _P("Level Handle: " .. entity.Level.LevelHandle)
+
+    -- Data
+    _P("Weight: " .. entity.Data.Weight)
+
+    -- Iterate all properties on a component
+    for k, v in pairs(entity.Stats) do
+        _P(k .. " = " .. tostring(v))
     end
 end
 ```

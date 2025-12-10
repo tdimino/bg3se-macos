@@ -141,14 +141,16 @@ static GetComponentFn g_GetClassesComponent = NULL;
  */
 static const char* get_component_full_name(ComponentType type) {
     switch (type) {
-        case COMPONENT_TRANSFORM: return "ls::TransformComponent";
-        case COMPONENT_LEVEL:     return "ls::LevelComponent";
-        case COMPONENT_PHYSICS:   return "ls::PhysicsComponent";
-        case COMPONENT_VISUAL:    return "ls::VisualComponent";
-        case COMPONENT_STATS:     return "eoc::StatsComponent";
-        case COMPONENT_BASE_HP:   return "eoc::BaseHpComponent";
-        case COMPONENT_HEALTH:    return "eoc::HealthComponent";
-        case COMPONENT_ARMOR:     return "eoc::ArmorComponent";
+        case COMPONENT_TRANSFORM:  return "ls::TransformComponent";
+        case COMPONENT_LEVEL:      return "ls::LevelComponent";
+        case COMPONENT_PHYSICS:    return "ls::PhysicsComponent";
+        case COMPONENT_VISUAL:     return "ls::VisualComponent";
+        case COMPONENT_STATS:      return "eoc::StatsComponent";
+        case COMPONENT_BASE_HP:    return "eoc::BaseHpComponent";
+        case COMPONENT_HEALTH:     return "eoc::HealthComponent";
+        case COMPONENT_ARMOR:      return "eoc::ArmorComponent";
+        case COMPONENT_DATA:       return "eoc::DataComponent";
+        case COMPONENT_BASE_STATS: return "eoc::BaseStatsComponent";
         default: return NULL;
     }
 }
@@ -159,14 +161,16 @@ static const char* get_component_full_name(ComponentType type) {
  */
 static size_t get_component_size_for_type(ComponentType type) {
     switch (type) {
-        case COMPONENT_HEALTH:    return 0x24;  // From component_offsets.h
-        case COMPONENT_BASE_HP:   return 0x08;
-        case COMPONENT_ARMOR:     return 0x10;
-        case COMPONENT_STATS:     return 0xA0;
-        case COMPONENT_TRANSFORM: return 0x50;  // Estimated from Windows BG3SE
-        case COMPONENT_LEVEL:     return 0x10;  // Estimated
-        case COMPONENT_PHYSICS:   return 0x30;  // Estimated
-        case COMPONENT_VISUAL:    return 0x20;  // Estimated
+        case COMPONENT_HEALTH:     return 0x24;  // From component_offsets.h
+        case COMPONENT_BASE_HP:    return 0x08;
+        case COMPONENT_ARMOR:      return 0x10;
+        case COMPONENT_STATS:      return 0xA0;
+        case COMPONENT_TRANSFORM:  return 0x28;  // From component_offsets.h
+        case COMPONENT_LEVEL:      return 0x10;  // From component_offsets.h
+        case COMPONENT_DATA:       return 0x10;  // From component_offsets.h
+        case COMPONENT_BASE_STATS: return 0x1C;  // From component_offsets.h
+        case COMPONENT_PHYSICS:    return 0x30;  // Estimated
+        case COMPONENT_VISUAL:     return 0x20;  // Estimated
         default: return 0;
     }
 }
@@ -1289,6 +1293,10 @@ static int lua_entity_get_component(lua_State *L) {
         type = COMPONENT_HEALTH;
     } else if (strcmp(name, "Armor") == 0) {
         type = COMPONENT_ARMOR;
+    } else if (strcmp(name, "Data") == 0) {
+        type = COMPONENT_DATA;
+    } else if (strcmp(name, "BaseStats") == 0) {
+        type = COMPONENT_BASE_STATS;
     } else {
         found = false;
     }
@@ -1342,6 +1350,33 @@ static int lua_entity_get_component(lua_State *L) {
         }
         case COMPONENT_STATS: {
             const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("Stats");
+            if (layout) {
+                component_property_push_proxy(L, component, layout);
+            } else {
+                lua_pushlightuserdata(L, component);
+            }
+            break;
+        }
+        case COMPONENT_LEVEL: {
+            const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("Level");
+            if (layout) {
+                component_property_push_proxy(L, component, layout);
+            } else {
+                lua_pushlightuserdata(L, component);
+            }
+            break;
+        }
+        case COMPONENT_DATA: {
+            const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("Data");
+            if (layout) {
+                component_property_push_proxy(L, component, layout);
+            } else {
+                lua_pushlightuserdata(L, component);
+            }
+            break;
+        }
+        case COMPONENT_BASE_STATS: {
+            const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("BaseStats");
             if (layout) {
                 component_property_push_proxy(L, component, layout);
             } else {
@@ -1513,6 +1548,10 @@ static int lua_entity_index(lua_State *L) {
         type = COMPONENT_HEALTH;
     } else if (strcmp(key, "Armor") == 0) {
         type = COMPONENT_ARMOR;
+    } else if (strcmp(key, "Data") == 0) {
+        type = COMPONENT_DATA;
+    } else if (strcmp(key, "BaseStats") == 0) {
+        type = COMPONENT_BASE_STATS;
     } else {
         is_component = false;
     }
@@ -1560,6 +1599,33 @@ static int lua_entity_index(lua_State *L) {
             }
             case COMPONENT_STATS: {
                 const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("Stats");
+                if (layout) {
+                    component_property_push_proxy(L, component, layout);
+                } else {
+                    lua_pushlightuserdata(L, component);
+                }
+                break;
+            }
+            case COMPONENT_LEVEL: {
+                const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("Level");
+                if (layout) {
+                    component_property_push_proxy(L, component, layout);
+                } else {
+                    lua_pushlightuserdata(L, component);
+                }
+                break;
+            }
+            case COMPONENT_DATA: {
+                const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("Data");
+                if (layout) {
+                    component_property_push_proxy(L, component, layout);
+                } else {
+                    lua_pushlightuserdata(L, component);
+                }
+                break;
+            }
+            case COMPONENT_BASE_STATS: {
+                const ComponentLayoutDef *layout = component_property_get_layout_by_short_name("BaseStats");
                 if (layout) {
                     component_property_push_proxy(L, component, layout);
                 } else {

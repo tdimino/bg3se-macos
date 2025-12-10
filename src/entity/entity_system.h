@@ -61,6 +61,8 @@ typedef enum {
     COMPONENT_BASE_HP,           // eoc::BaseHpComponent
     COMPONENT_HEALTH,            // eoc::HealthComponent
     COMPONENT_ARMOR,             // eoc::ArmorComponent
+    COMPONENT_DATA,              // eoc::DataComponent
+    COMPONENT_BASE_STATS,        // eoc::BaseStatsComponent
     COMPONENT_CLASSES,           // eoc::ClassesComponent
     COMPONENT_RACE,              // eoc::RaceComponent
     COMPONENT_PLAYER,            // eoc::PlayerComponent

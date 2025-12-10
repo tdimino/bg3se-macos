@@ -7,6 +7,7 @@
 
 #include "component_typeid.h"
 #include "component_registry.h"
+#include "component_property.h"  // For property system linkage
 #include "entity_storage.h"  // For GHIDRA_BASE_ADDRESS
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
@@ -171,6 +172,8 @@ int component_typeid_discover(void) {
             );
 
             if (registered) {
+                // Also update the property system so layouts can be looked up by TypeIndex
+                component_property_set_type_index(entry->componentName, typeIndex);
                 discovered++;
             }
         } else {

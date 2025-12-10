@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.23.0
+## Current Status: v0.24.0
 
-**Overall Feature Parity: ~65%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
+**Overall Feature Parity: ~68%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -36,7 +36,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Osiris` | ✅ Full | ✅ RegisterListener + NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions | **98%** | 1 |
 | `Ext.Json` | ✅ Full | ✅ Parse, Stringify | **90%** | 1 |
 | `Ext.IO` | ✅ Full | ✅ LoadFile, SaveFile | **80%** | 1 |
-| `Ext.Entity` | ✅ Full | ⚠️ GUID lookup + GetAllEntitiesWithComponent | **50%** | 2 |
+| `Ext.Entity` | ✅ Full | ✅ GUID lookup + 8 component property layouts | **70%** | 2 |
 | `Ext.Stats` | ✅ Full | ✅ Read/Write complete (`stat.Damage = "2d6"`) | **95%** | 3 |
 | `Ext.Events` | ✅ Full | ✅ 7 events + advanced features | **75%** | 2.5 |
 | `Ext.Timer` | ✅ Full | ✅ Complete | **100%** | 2.3 |
@@ -171,7 +171,7 @@ end
 - [x] Component accessors via GetComponent template addresses
 
 ### 2.2 Component Access & Property System
-**Status:** ✅ Complete (v0.23.0) - Health component properties working
+**Status:** ✅ Complete (v0.24.0) - 8 component property layouts working
 
 **Key Discovery (Dec 2025):** macOS ARM64 has NO `GetRawComponent` dispatcher like Windows. Template functions are **completely inlined** - calling template addresses directly returns NULL.
 
@@ -213,12 +213,26 @@ buffer + (componentSize * EntryIndex) → Component*
 - [x] `Ext.Entity.GetAllEntitiesWithComponent(name)` - Get all entities with a component
 - [x] `Ext.Entity.CountEntitiesWithComponent(name)` - Count entities with a component
 
-**Completed (v0.23.0) - Health Component Properties:**
-- [x] `entity.Health.Hp` - Current health (int32)
-- [x] `entity.Health.MaxHp` - Maximum health (int32)
-- [x] `entity.Health.TemporaryHp` - Temporary HP (int32)
-- [x] `entity.Health.MaxTemporaryHp` - Max temporary HP (int32)
-- [x] `entity.Health.IsInvulnerable` - Invulnerability flag (uint8)
+**Completed (v0.24.0) - Component Property Layouts:**
+
+8 components with data-driven property access via proxy userdata:
+
+| Component | Properties |
+|-----------|------------|
+| Health | Hp, MaxHp, TemporaryHp, MaxTemporaryHp, IsInvulnerable |
+| BaseHp | Vitality, VitalityBoost |
+| Armor | ArmorType, ArmorClass, AbilityModifierCap, ArmorClassAbility, EquipmentType |
+| Stats | InitiativeBonus, Abilities[7], AbilityModifiers[7], Skills[18], ProficiencyBonus, SpellCastingAbility, etc. |
+| BaseStats | BaseAbilities[7] |
+| Transform | Rotation (vec4), Position (vec3), Scale (vec3) |
+| Level | LevelHandle, LevelName |
+| Data | Weight, StatsId, StepsType |
+
+Features:
+- [x] `entity.Health.Hp` - Direct property access via `__index`
+- [x] `for k,v in pairs(component)` - Iteration support
+- [x] `component.__type` - Full component name
+- [x] `component.__shortname` - Short name
 - [x] **Hash function fix** - ComponentTypeIndex HashMap uses BG3-specific hash:
   ```c
   h0 = (typeIndex & 0x7FFF) + (typeIndex >> 15) * 0x880
@@ -1027,7 +1041,7 @@ Ext.Mod.GetModInfo(guid)
 | A1 | Ext.Events API | Medium | ✅ 6 events + Tick (v0.13.0) |
 | A2 | PersistentVars | Medium | ✅ Complete |
 | A3 | Stats Property Read/Write | High | ✅ Complete (v0.18.0) |
-| A4 | Component Property Access | High | 🔄 In Progress |
+| A4 | Component Property Access | High | ✅ Complete (v0.24.0) |
 | A5 | NetChannel API | High | ❌ Not Started |
 | A6 | User Variables | High | ❌ Not Started |
 
@@ -1070,6 +1084,7 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.24.0 | 2025-12-10 | Expanded component property access - 8 component layouts (Health, BaseHp, Armor, Stats, BaseStats, Transform, Level, Data) with data-driven property definitions |
 | v0.23.0 | 2025-12-10 | Health component property access - entity.Health.Hp/MaxHp/TemporaryHp working via data structure traversal + hash fix; Ext.Osiris.RaiseEvent() and GetCustomFunctions() for custom event dispatch |
 | v0.22.0 | 2025-12-09 | Custom Osiris function registration - Ext.Osiris.NewCall/NewQuery/NewEvent for Lua-defined Osiris functions |
 | v0.21.0 | 2025-12-09 | GetAllEntitiesWithComponent/CountEntitiesWithComponent - entity enumeration by component type |
