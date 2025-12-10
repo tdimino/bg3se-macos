@@ -33,7 +33,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | Namespace | Windows BG3SE | bg3se-macos | Parity | Phase |
 |-----------|---------------|-------------|--------|-------|
 | `Osi.*` | ✅ Full | ✅ Dynamic metatable | **95%** | 1 |
-| `Ext.Osiris` | ✅ Full | ✅ RegisterListener | **90%** | 1 |
+| `Ext.Osiris` | ✅ Full | ✅ RegisterListener + NewCall/NewQuery/NewEvent | **95%** | 1 |
 | `Ext.Json` | ✅ Full | ✅ Parse, Stringify | **90%** | 1 |
 | `Ext.IO` | ✅ Full | ✅ LoadFile, SaveFile | **80%** | 1 |
 | `Ext.Entity` | ✅ Full | ⚠️ GUID lookup + GetAllEntitiesWithComponent | **50%** | 2 |
