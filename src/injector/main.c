@@ -50,6 +50,7 @@ extern "C" {
 // Osiris modules
 #include "osiris_types.h"
 #include "osiris_functions.h"
+#include "custom_functions.h"
 #include "pattern_scan.h"
 
 // PAK file reading
@@ -1020,7 +1021,75 @@ static int osi_dynamic_call(lua_State *L) {
         return luaL_error(L, "Osi function name not found in upvalue");
     }
 
-    // Look up function ID
+    // Check for custom function first
+    CustomFunction *customFunc = custom_func_get_by_name(funcName);
+    if (customFunc) {
+        LOG_OSIRIS_DEBUG("Osi.%s: Dispatching to custom function (ID=0x%x, type=%d)",
+                        funcName, customFunc->assigned_id, customFunc->type);
+
+        // Build OsiArgumentDesc from Lua arguments (for IN params)
+        int numArgs = lua_gettop(L);
+        OsiArgumentDesc *args = NULL;
+
+        if (numArgs > 0) {
+            args = alloc_args(numArgs);
+            if (!args) {
+                return luaL_error(L, "Failed to allocate arguments for custom function");
+            }
+
+            // Convert Lua args to Osiris args
+            for (int i = 0; i < numArgs; i++) {
+                int argIdx = i + 1;
+                int luaType = lua_type(L, argIdx);
+                switch (luaType) {
+                    case LUA_TSTRING: {
+                        const char *str = lua_tostring(L, argIdx);
+                        int isGuid = (str && strlen(str) >= 36 && strchr(str, '-') != NULL);
+                        set_arg_string(&args[i], str, isGuid);
+                        break;
+                    }
+                    case LUA_TNUMBER:
+                        if (lua_isinteger(L, argIdx)) {
+                            set_arg_int(&args[i], (int32_t)lua_tointeger(L, argIdx));
+                        } else {
+                            set_arg_real(&args[i], (float)lua_tonumber(L, argIdx));
+                        }
+                        break;
+                    case LUA_TBOOLEAN:
+                        set_arg_int(&args[i], lua_toboolean(L, argIdx) ? 1 : 0);
+                        break;
+                    default:
+                        set_arg_string(&args[i], "", 0);
+                        break;
+                }
+            }
+        }
+
+        int result = 0;
+        if (customFunc->type == CUSTOM_FUNC_QUERY) {
+            result = custom_func_query(L, customFunc->assigned_id, args);
+            if (result) {
+                // Query returns OUT params - they're pushed by custom_func_query
+                // We need to return the values from the Lua callback
+                // custom_func_query handles this internally; we just return the OUT param count
+                return customFunc->num_out_params;
+            } else {
+                lua_pushnil(L);
+                return 1;
+            }
+        } else if (customFunc->type == CUSTOM_FUNC_CALL) {
+            result = custom_func_call(L, customFunc->assigned_id, args);
+            // Calls don't return values
+            return 0;
+        } else {
+            // Events shouldn't be called this way
+            LOG_OSIRIS_ERROR("Osi.%s: Cannot directly call event functions", funcName);
+            lua_pushnil(L);
+            return 1;
+        }
+    }
+
+    // Look up function ID (native Osiris function)
     uint32_t funcId = osi_func_lookup_id(funcName);
     if (funcId == INVALID_FUNCTION_ID) {
         // Function not yet discovered - return nil gracefully
@@ -1657,6 +1726,9 @@ static void shutdown_lua(void) {
 
         // Shutdown input system before closing Lua
         input_shutdown();
+
+        // Clear custom Osiris functions before closing Lua state
+        lua_osiris_reset_custom_functions(L);
 
         lua_close(L);
         L = NULL;

@@ -44,6 +44,24 @@ typedef struct {
  */
 int lua_ext_osiris_registerlistener(lua_State *L);
 
+/**
+ * Ext.Osiris.NewCall(name, signature, handler)
+ * Registers a custom Osiris call (no return value).
+ */
+int lua_ext_osiris_newcall(lua_State *L);
+
+/**
+ * Ext.Osiris.NewQuery(name, signature, handler)
+ * Registers a custom Osiris query (returns values via OUT params).
+ */
+int lua_ext_osiris_newquery(lua_State *L);
+
+/**
+ * Ext.Osiris.NewEvent(name, signature)
+ * Registers a custom Osiris event (can be raised from Lua).
+ */
+int lua_ext_osiris_newevent(lua_State *L);
+
 // ============================================================================
 // Listener Access Functions
 // ============================================================================
@@ -63,6 +81,12 @@ OsirisListener *lua_osiris_get_listener(int index);
  * Reset all listeners (for cleanup).
  */
 void lua_osiris_reset_listeners(void);
+
+/**
+ * Reset all custom functions (for session cleanup).
+ * @param L Lua state (to release callback references)
+ */
+void lua_osiris_reset_custom_functions(lua_State *L);
 
 // ============================================================================
 // Registration

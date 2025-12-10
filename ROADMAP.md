@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.21.0
+## Current Status: v0.22.0
 
 **Overall Feature Parity: ~60%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
 
@@ -10,7 +10,7 @@ This document tracks the development roadmap for achieving feature parity with W
 - DYLD injection and Dobby hooking infrastructure
 - Osiris event observation (2000+ events captured per session)
 - Lua runtime with mod loading (BootstrapServer.lua)
-- Basic Ext.* API (Print, Require, RegisterListener, Json, IO)
+- Basic Ext.* API (Print, Require, RegisterListener, NewCall/NewQuery/NewEvent, Json, IO)
 - Osiris listener callbacks (before/after event dispatch)
 - Dynamic Osi.* metatable with lazy function lookup
 - Query output parameters (queries return values, not just bool)
@@ -33,7 +33,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | Namespace | Windows BG3SE | bg3se-macos | Parity | Phase |
 |-----------|---------------|-------------|--------|-------|
 | `Osi.*` | ✅ Full | ✅ Dynamic metatable | **95%** | 1 |
-| `Ext.Osiris` | ✅ Full | ✅ RegisterListener | **90%** | 1 |
+| `Ext.Osiris` | ✅ Full | ✅ RegisterListener + NewCall/NewQuery/NewEvent | **95%** | 1 |
 | `Ext.Json` | ✅ Full | ✅ Parse, Stringify | **90%** | 1 |
 | `Ext.IO` | ✅ Full | ✅ LoadFile, SaveFile | **80%** | 1 |
 | `Ext.Entity` | ✅ Full | ⚠️ GUID lookup + GetAllEntitiesWithComponent | **50%** | 2 |
@@ -84,6 +84,43 @@ Lazy function lookup matching Windows BG3SE's OsirisBinding pattern:
 - [x] `Osi.DB_*(values...)` - Insert rows
 - [ ] `Osi.DB_*:Get(filter, nil, nil)` - Filtered queries (needs verification)
 - [ ] `Osi.DB_*:Delete(...)` - Row deletion (needs verification)
+
+### 1.4 Custom Osiris Function Registration
+**Status:** ✅ Complete (v0.22.0)
+
+Allows Lua mods to register custom Osiris functions callable via the `Osi.*` namespace:
+
+**Implemented API:**
+```lua
+-- Register a custom query (returns values via OUT params)
+Ext.Osiris.NewQuery("MyMod_Add", "[in](INTEGER)_A,[in](INTEGER)_B,[out](INTEGER)_Sum",
+    function(a, b)
+        return a + b
+    end)
+
+-- Call it via Osi namespace
+local sum = Osi.MyMod_Add(10, 20)  -- Returns 30
+
+-- Register a custom call (no return value)
+Ext.Osiris.NewCall("MyMod_Log", "(STRING)_Message",
+    function(msg)
+        _P("Custom call: " .. msg)
+    end)
+
+-- Call it
+Osi.MyMod_Log("Hello from Lua!")
+
+-- Register a custom event (for future use)
+Ext.Osiris.NewEvent("MyMod_OnItemUsed", "(GUIDSTRING)_Item,(GUIDSTRING)_User")
+```
+
+**Implementation details:**
+- [x] Signature parsing for Windows BG3SE format: `"[in](TYPE)_Name,[out](TYPE)_Name"`
+- [x] Type support: INTEGER, INTEGER64, REAL, STRING, GUIDSTRING
+- [x] Custom function IDs start at 0xF0000000 (no collision with game IDs)
+- [x] Lua callbacks stored in registry for persistence
+- [x] Integration with `Osi.*` metatable dispatch
+- [x] Session lifecycle management (cleanup on Lua shutdown)
 
 ---
 
@@ -1006,6 +1043,7 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.22.0 | 2025-12-09 | Custom Osiris function registration - Ext.Osiris.NewCall/NewQuery/NewEvent for Lua-defined Osiris functions |
 | v0.21.0 | 2025-12-09 | GetAllEntitiesWithComponent/CountEntitiesWithComponent - entity enumeration by component type |
 | v0.20.0 | 2025-12-08 | Structured logging system - 14 modules, 4 log levels, timestamps, consistent formatting |
 | v0.19.0 | 2025-12-06 | In-game console overlay with Tanit symbol, Ctrl+` toggle, command history |

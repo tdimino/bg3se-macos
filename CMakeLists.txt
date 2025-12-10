@@ -51,6 +51,7 @@ add_library(bg3se SHARED
     src/mod/mod_loader.c
     src/osiris/pattern_scan.c
     src/osiris/osiris_functions.c
+    src/osiris/custom_functions.c
     src/pak/pak_reader.c
     src/entity/entity_system.c
     src/entity/guid_lookup.c

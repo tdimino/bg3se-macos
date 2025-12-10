@@ -44,14 +44,14 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.21.0 | **Feature Parity:** ~60%
+**Version:** v0.22.0 | **Feature Parity:** ~60%
 
 | Feature | Status |
 |---------|--------|
 | DYLD Injection | ✅ Complete |
 | Lua Runtime | ✅ Lua 5.4 with Ext API |
 | Mod Loading | ✅ PAK file reading, auto-detection |
-| Ext.Osiris | ✅ Event listeners |
+| Ext.Osiris | ✅ Event listeners, custom functions (NewCall/NewQuery/NewEvent) |
 | Ext.Entity | ✅ GUID lookup, components, GetAllEntitiesWithComponent |
 | Ext.Stats | ✅ 15,774 stats, property read/write |
 | Ext.Events | ✅ 8 events with GameStateChanged |
@@ -124,6 +124,7 @@ bg3se-macos/
 │   ├── osiris/
 │   │   ├── osiris_functions.c/h    # Osiris function lookup/call
 │   │   ├── osiris_types.h      # FuncDef, OsiArgumentDesc structs
+│   │   ├── custom_functions.c/h    # Custom Osiris function registration
 │   │   └── pattern_scan.c/h    # Memory pattern scanning
 │   ├── console/
 │   │   └── console.c/h         # Socket + file-based console

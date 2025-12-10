@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.15.0 | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.22.0 | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -14,6 +14,7 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 
 - `src/injector/main.c` - Core injection, hooks, Lua state
 - `src/lua/lua_*.c` - Ext.* API implementations
+- `src/osiris/custom_functions.c` - Custom Osiris function registry
 - `src/console/console.c` - Socket server + file-based console
 - `src/stats/stats_manager.c` - RPGStats system (stat property access)
 - `src/entity/` - Entity Component System (GUID lookup, components)
@@ -73,6 +74,7 @@ Run `osgrep index --reset` if the index is stale. Use `osgrep-reference` skill f
 ## Current API Status
 
 - **Osi.*** - Dynamic metatable with lazy lookup (40+ functions seeded)
+- **Ext.Osiris** - RegisterListener, NewCall/NewQuery/NewEvent for custom Osiris functions
 - **Ext.Entity** - GUID lookup, Transform/Level/Physics/Visual components, GetAllEntitiesWithComponent/CountEntitiesWithComponent
 - **Ext.Stats** - Property read working (`stat.Damage` returns "1d8")
 - **Ext.Memory** - Read, Search, GetModuleBase for debugging
