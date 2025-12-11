@@ -477,12 +477,25 @@ static void process_line(lua_State *L, char *line, int client_slot) {
     // Check for console command (! prefix)
     if (line[0] == '!') {
         LOG_CONSOLE_DEBUG("! %s", line + 1);
+
+        // Fire DoConsoleCommand event - handlers can prevent execution
+        if (events_fire_do_console_command(L, line)) {
+            LOG_CONSOLE_DEBUG("DoConsoleCommand prevented by handler");
+            return;
+        }
+
         dispatch_console_command(L, line, client_slot);
         return;
     }
 
     // Normal single-line execution
     LOG_CONSOLE_DEBUG("> %s", line);
+
+    // Fire LuaConsoleInput event - handlers can prevent execution
+    if (events_fire_lua_console_input(L, line)) {
+        LOG_CONSOLE_DEBUG("LuaConsoleInput prevented by handler");
+        return;
+    }
 
     // Begin lifetime scope for single line
     LifetimeHandle scope = lifetime_lua_begin_scope(L);

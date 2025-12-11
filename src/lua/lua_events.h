@@ -25,6 +25,8 @@ typedef enum {
     EVENT_MODULE_LOAD_STARTED,
     EVENT_GAME_STATE_CHANGED,
     EVENT_KEY_INPUT,           // Keyboard input event
+    EVENT_DO_CONSOLE_COMMAND,  // Console command interception
+    EVENT_LUA_CONSOLE_INPUT,   // Raw Lua console input
     EVENT_MAX
 } BG3SEEventType;
 
@@ -107,5 +109,27 @@ int events_get_handler_count(BG3SEEventType event);
  * @return Static event name string
  */
 const char *events_get_name(BG3SEEventType event);
+
+/**
+ * Fire the DoConsoleCommand event with command data.
+ * Handlers receive {Command = string} table.
+ * Returns true if any handler requested to prevent default execution.
+ *
+ * @param L       Lua state
+ * @param command The console command (including ! prefix)
+ * @return true if command should be prevented (a handler set e.Prevent = true)
+ */
+bool events_fire_do_console_command(lua_State *L, const char *command);
+
+/**
+ * Fire the LuaConsoleInput event with input data.
+ * Handlers receive {Input = string} table.
+ * Returns true if any handler requested to prevent default execution.
+ *
+ * @param L     Lua state
+ * @param input The Lua code input
+ * @return true if execution should be prevented (a handler set e.Prevent = true)
+ */
+bool events_fire_lua_console_input(lua_State *L, const char *input);
 
 #endif /* LUA_EVENTS_H */

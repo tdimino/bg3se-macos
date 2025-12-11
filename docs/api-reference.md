@@ -312,16 +312,18 @@ _P(tostring(combined))  -- "Backstab, Torch"
 
 Event subscription system for game lifecycle events.
 
-| Event | Status | Description |
-|-------|--------|-------------|
-| `Ext.Events.SessionLoading` | ✅ | Before save loads |
-| `Ext.Events.SessionLoaded` | ✅ | After save loads |
-| `Ext.Events.ResetCompleted` | ✅ | After reset command |
-| `Ext.Events.Tick` | ✅ | Every game loop (~30hz), provides `e.DeltaTime` |
-| `Ext.Events.StatsLoaded` | ✅ | After stats loaded |
-| `Ext.Events.ModuleLoadStarted` | ✅ | Before mod scripts load |
-| `Ext.Events.GameStateChanged` | ✅ | State transitions (`e.FromState`, `e.ToState`) |
-| `Ext.Events.KeyInput` | ✅ | Keyboard input (`e.Key`, `e.Pressed`, `e.Repeat`) |
+| Event | Status | Event Data | Description |
+|-------|--------|------------|-------------|
+| `Ext.Events.SessionLoading` | ✅ | {} | Before save loads |
+| `Ext.Events.SessionLoaded` | ✅ | {} | After save loads |
+| `Ext.Events.ResetCompleted` | ✅ | {} | After reset command |
+| `Ext.Events.Tick` | ✅ | {DeltaTime} | Every game loop (~30hz) |
+| `Ext.Events.StatsLoaded` | ✅ | {} | After stats loaded |
+| `Ext.Events.ModuleLoadStarted` | ✅ | {} | Before mod scripts load |
+| `Ext.Events.GameStateChanged` | ✅ | {FromState, ToState} | State transitions |
+| `Ext.Events.KeyInput` | ✅ | {Key, Pressed, Modifiers, Character} | Keyboard input |
+| `Ext.Events.DoConsoleCommand` | ✅ | {Command, Prevent} | Console `!` command interception |
+| `Ext.Events.LuaConsoleInput` | ✅ | {Input, Prevent} | Raw Lua console input interception |
 
 ### Subscribing to Events
 
@@ -337,6 +339,96 @@ Ext.Events.SessionLoaded:Unsubscribe(handlerId)
 **Options:**
 - `Priority` - Lower numbers run first (default: 100)
 - `Once` - Auto-unsubscribe after first call (default: false)
+
+### Preventable Events
+
+Some events support the `Prevent` pattern, allowing handlers to stop the default action:
+
+```lua
+-- Intercept console commands
+Ext.Events.DoConsoleCommand:Subscribe(function(e)
+    Ext.Print("Command: " .. e.Command)
+    if e.Command == "!secret" then
+        Ext.Print("Access denied!")
+        e.Prevent = true  -- Stop command execution
+    end
+end)
+
+-- Intercept raw Lua input
+Ext.Events.LuaConsoleInput:Subscribe(function(e)
+    Ext.Print("Lua input received: " .. #e.Input .. " chars")
+    -- e.Prevent = true would skip execution
+end)
+```
+
+### Combat & Status Events via Osiris
+
+Combat and status events are available through `Ext.Osiris.RegisterListener`. These fire from the Osiris scripting engine and provide comprehensive coverage for combat mechanics:
+
+**Combat Events:**
+```lua
+-- Turn started (fires when a character's turn begins)
+Ext.Osiris.RegisterListener("TurnStarted", 1, "after", function(charGuid)
+    Ext.Print("Turn started for: " .. charGuid)
+end)
+
+-- Turn ended
+Ext.Osiris.RegisterListener("TurnEnded", 1, "after", function(charGuid)
+    Ext.Print("Turn ended for: " .. charGuid)
+end)
+
+-- Combat started/ended
+Ext.Osiris.RegisterListener("EnteredCombat", 2, "after", function(charGuid, combatGuid)
+    Ext.Print("Entered combat: " .. charGuid)
+end)
+
+Ext.Osiris.RegisterListener("LeftCombat", 2, "after", function(charGuid, combatGuid)
+    Ext.Print("Left combat: " .. charGuid)
+end)
+
+-- Combat round events
+Ext.Osiris.RegisterListener("CombatRoundStarted", 2, "after", function(combatGuid, round)
+    Ext.Print("Round " .. round .. " started")
+end)
+```
+
+**Status Events:**
+```lua
+-- Status applied
+Ext.Osiris.RegisterListener("StatusApplied", 4, "after", function(target, status, causee, storyActionID)
+    Ext.Print("Status " .. status .. " applied to " .. target)
+end)
+
+-- Status removed
+Ext.Osiris.RegisterListener("StatusRemoved", 4, "after", function(target, status, causee, storyActionID)
+    Ext.Print("Status " .. status .. " removed from " .. target)
+end)
+```
+
+**Attack Events:**
+```lua
+-- Attack of opportunity
+Ext.Osiris.RegisterListener("AttackedByObject", 3, "after", function(defender, attackerOwner, attacker)
+    Ext.Print(defender .. " attacked by " .. attacker)
+end)
+```
+
+**Rest Events:**
+```lua
+-- Short rest
+Ext.Osiris.RegisterListener("ShortRested", 1, "after", function(charGuid)
+    Ext.Print(charGuid .. " short rested")
+end)
+
+-- Long rest
+Ext.Osiris.RegisterListener("LongRestStarted", 0, "after", function()
+    Ext.Print("Long rest started")
+end)
+
+Ext.Osiris.RegisterListener("LongRestFinished", 0, "after", function()
+    Ext.Print("Long rest finished")
+end)
+```
 
 ### Convenience Functions
 

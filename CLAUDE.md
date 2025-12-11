@@ -92,7 +92,7 @@ Run `osgrep index --reset` if the index is stale. Use `bg3se-macos-ghidra` skill
 - **Ext.Entity** - GUID lookup working for all entity types including characters (template GUIDs like `S_PLA_*_<uuid>` supported), Transform/Level/Physics/Visual components, GetAllEntitiesWithComponent/CountEntitiesWithComponent
 - **Ext.Stats** - Property read working (`stat.Damage` returns "1d8")
 - **Ext.Memory** - Read, Search, GetModuleBase for debugging
-- **Ext.Events** - 7 events (SessionLoading/Loaded, ResetCompleted, Tick, StatsLoaded, ModuleLoadStarted, GameStateChanged) with priority ordering, Once flag, handler IDs
+- **Ext.Events** - 10 events (SessionLoading/Loaded, ResetCompleted, Tick, StatsLoaded, ModuleLoadStarted, GameStateChanged, KeyInput, DoConsoleCommand, LuaConsoleInput) with priority ordering, Once flag, handler IDs, Prevent pattern
 - **Ext.Vars** - PersistentVars, User Variables (entity.Vars), Mod Variables (GetModVariables)
 - **Ext.Debug** - Memory introspection (ReadPtr/U32/I32/Float, ProbeStruct, HexDump)
 

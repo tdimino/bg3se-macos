@@ -61,7 +61,9 @@ static const char *g_event_names[EVENT_MAX] = {
     "StatsLoaded",
     "ModuleLoadStarted",
     "GameStateChanged",
-    "KeyInput"
+    "KeyInput",
+    "DoConsoleCommand",
+    "LuaConsoleInput"
 };
 
 // ============================================================================
@@ -385,6 +387,148 @@ void events_fire_key_input(lua_State *L, int keyCode, bool pressed, int modifier
     if (g_dispatch_depth[EVENT_KEY_INPUT] == 0) {
         process_deferred_unsubscribes(L, EVENT_KEY_INPUT);
     }
+}
+
+// ============================================================================
+// Public API: Fire DoConsoleCommand Event
+// ============================================================================
+
+bool events_fire_do_console_command(lua_State *L, const char *command) {
+    if (!L) return false;
+
+    int count = g_handler_counts[EVENT_DO_CONSOLE_COMMAND];
+    if (count == 0) return false;
+
+    LOG_EVENTS_DEBUG("Firing DoConsoleCommand (command=%s, %d handlers)", command, count);
+
+    bool prevented = false;
+    g_dispatch_depth[EVENT_DO_CONSOLE_COMMAND]++;
+
+    for (int i = 0; i < g_handler_counts[EVENT_DO_CONSOLE_COMMAND]; i++) {
+        EventHandler *h = &g_handlers[EVENT_DO_CONSOLE_COMMAND][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) {
+            continue;
+        }
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        // Create event data table with Command and Prevent fields
+        lua_newtable(L);
+        lua_pushstring(L, command);
+        lua_setfield(L, -2, "Command");
+        lua_pushboolean(L, 0);
+        lua_setfield(L, -2, "Prevent");
+
+        // Keep reference to event table to check Prevent after call
+        lua_pushvalue(L, -1);
+        int event_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            const char *err = lua_tostring(L, -1);
+            LOG_EVENTS_ERROR("DoConsoleCommand handler error (id=%llu): %s",
+                       h->handler_id, err ? err : "unknown");
+            lua_pop(L, 1);
+        } else {
+            // Check if handler set Prevent = true
+            lua_rawgeti(L, LUA_REGISTRYINDEX, event_ref);
+            lua_getfield(L, -1, "Prevent");
+            if (lua_toboolean(L, -1)) {
+                prevented = true;
+            }
+            lua_pop(L, 2);  // Prevent value and event table
+        }
+        luaL_unref(L, LUA_REGISTRYINDEX, event_ref);
+
+        if (h->once) {
+            if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+                g_deferred_unsubs[g_deferred_unsub_count++] =
+                    (DeferredUnsubscribe){EVENT_DO_CONSOLE_COMMAND, h->handler_id};
+            }
+        }
+    }
+
+    g_dispatch_depth[EVENT_DO_CONSOLE_COMMAND]--;
+
+    if (g_dispatch_depth[EVENT_DO_CONSOLE_COMMAND] == 0) {
+        process_deferred_unsubscribes(L, EVENT_DO_CONSOLE_COMMAND);
+    }
+
+    return prevented;
+}
+
+// ============================================================================
+// Public API: Fire LuaConsoleInput Event
+// ============================================================================
+
+bool events_fire_lua_console_input(lua_State *L, const char *input) {
+    if (!L) return false;
+
+    int count = g_handler_counts[EVENT_LUA_CONSOLE_INPUT];
+    if (count == 0) return false;
+
+    LOG_EVENTS_DEBUG("Firing LuaConsoleInput (%d handlers)", count);
+
+    bool prevented = false;
+    g_dispatch_depth[EVENT_LUA_CONSOLE_INPUT]++;
+
+    for (int i = 0; i < g_handler_counts[EVENT_LUA_CONSOLE_INPUT]; i++) {
+        EventHandler *h = &g_handlers[EVENT_LUA_CONSOLE_INPUT][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) {
+            continue;
+        }
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        // Create event data table with Input and Prevent fields
+        lua_newtable(L);
+        lua_pushstring(L, input);
+        lua_setfield(L, -2, "Input");
+        lua_pushboolean(L, 0);
+        lua_setfield(L, -2, "Prevent");
+
+        // Keep reference to event table to check Prevent after call
+        lua_pushvalue(L, -1);
+        int event_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            const char *err = lua_tostring(L, -1);
+            LOG_EVENTS_ERROR("LuaConsoleInput handler error (id=%llu): %s",
+                       h->handler_id, err ? err : "unknown");
+            lua_pop(L, 1);
+        } else {
+            // Check if handler set Prevent = true
+            lua_rawgeti(L, LUA_REGISTRYINDEX, event_ref);
+            lua_getfield(L, -1, "Prevent");
+            if (lua_toboolean(L, -1)) {
+                prevented = true;
+            }
+            lua_pop(L, 2);  // Prevent value and event table
+        }
+        luaL_unref(L, LUA_REGISTRYINDEX, event_ref);
+
+        if (h->once) {
+            if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+                g_deferred_unsubs[g_deferred_unsub_count++] =
+                    (DeferredUnsubscribe){EVENT_LUA_CONSOLE_INPUT, h->handler_id};
+            }
+        }
+    }
+
+    g_dispatch_depth[EVENT_LUA_CONSOLE_INPUT]--;
+
+    if (g_dispatch_depth[EVENT_LUA_CONSOLE_INPUT] == 0) {
+        process_deferred_unsubscribes(L, EVENT_LUA_CONSOLE_INPUT);
+    }
+
+    return prevented;
 }
 
 // ============================================================================
