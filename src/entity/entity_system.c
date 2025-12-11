@@ -1698,6 +1698,23 @@ static int lua_entity_index(lua_State *L) {
         return 1;
     }
 
+    // Dynamic component lookup via property system
+    // This allows new components to be accessed by short name without hardcoding
+    const ComponentLayoutDef *layout = component_property_get_layout_by_short_name(key);
+    if (layout && layout->componentTypeIndex > 0) {
+        // Look up component by TypeIndex
+        void *component = component_lookup_by_index(
+            handle,
+            layout->componentTypeIndex,
+            layout->componentSize,
+            false  // not proxy
+        );
+        if (component) {
+            component_property_push_proxy(L, component, layout);
+            return 1;
+        }
+    }
+
     lua_pushnil(L);
     return 1;
 }
