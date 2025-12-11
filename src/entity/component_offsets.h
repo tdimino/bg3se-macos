@@ -405,6 +405,287 @@ static const ComponentLayoutDef g_MovementComponent_Layout = {
 };
 
 // ============================================================================
+// BackgroundComponent (eoc::BackgroundComponent)
+// From: BG3Extender/GameDefinitions/Components/Data.h:118-123
+// ============================================================================
+
+static const ComponentPropertyDef g_BackgroundComponent_Properties[] = {
+    { "Background", 0x00, FIELD_TYPE_GUID, 0, true },  // Guid
+};
+
+static const ComponentLayoutDef g_BackgroundComponent_Layout = {
+    .componentName = "eoc::BackgroundComponent",
+    .shortName = "Background",
+    .componentTypeIndex = 0,
+    .componentSize = 0x10,
+    .properties = g_BackgroundComponent_Properties,
+    .propertyCount = sizeof(g_BackgroundComponent_Properties) / sizeof(g_BackgroundComponent_Properties[0]),
+};
+
+// ============================================================================
+// GodComponent (eoc::god::GodComponent)
+// From: BG3Extender/GameDefinitions/Components/Data.h:125-131
+// Note: std::optional<Guid> = 1 byte has_value + 16 bytes Guid = 17 bytes
+// ============================================================================
+
+static const ComponentPropertyDef g_GodComponent_Properties[] = {
+    { "God",            0x00, FIELD_TYPE_GUID, 0, true },  // Guid
+    // GodOverride is std::optional<Guid>: has_value byte at 0x10, then Guid at 0x11
+    // Alignment may push Guid to 0x18, check at runtime
+    { "HasGodOverride", 0x10, FIELD_TYPE_BOOL, 0, true },  // optional::has_value
+    { "GodOverride",    0x18, FIELD_TYPE_GUID, 0, true },  // optional::value (aligned)
+};
+
+static const ComponentLayoutDef g_GodComponent_Layout = {
+    .componentName = "eoc::god::GodComponent",
+    .shortName = "God",
+    .componentTypeIndex = 0,
+    .componentSize = 0x28,  // 16 (God) + 8 (padding) + 1 (has) + 7 (pad) + 16 (override)
+    .properties = g_GodComponent_Properties,
+    .propertyCount = sizeof(g_GodComponent_Properties) / sizeof(g_GodComponent_Properties[0]),
+};
+
+// ============================================================================
+// ValueComponent (eoc::ValueComponent)
+// From: BG3Extender/GameDefinitions/Components/Stats.h:147-154
+// ============================================================================
+
+static const ComponentPropertyDef g_ValueComponent_Properties[] = {
+    { "Value",  0x00, FIELD_TYPE_INT32, 0, true },  // int32_t
+    { "Rarity", 0x04, FIELD_TYPE_UINT8, 0, true },  // uint8_t enum
+    { "Unique", 0x05, FIELD_TYPE_BOOL,  0, true },  // bool
+};
+
+static const ComponentLayoutDef g_ValueComponent_Layout = {
+    .componentName = "eoc::ValueComponent",
+    .shortName = "Value",
+    .componentTypeIndex = 0,
+    .componentSize = 0x08,
+    .properties = g_ValueComponent_Properties,
+    .propertyCount = sizeof(g_ValueComponent_Properties) / sizeof(g_ValueComponent_Properties[0]),
+};
+
+// ============================================================================
+// TurnBasedComponent (eoc::TurnBasedComponent)
+// From: BG3Extender/GameDefinitions/Components/Combat.h:54-69
+// Note: Multiple bool fields, optional floats (8 bytes each), then Guid
+// ============================================================================
+
+static const ComponentPropertyDef g_TurnBasedComponent_Properties[] = {
+    { "IsActiveCombatTurn",    0x00, FIELD_TYPE_BOOL, 0, true },
+    { "Removed",               0x01, FIELD_TYPE_BOOL, 0, true },
+    { "RequestedEndTurn",      0x02, FIELD_TYPE_BOOL, 0, true },
+    { "TurnActionsCompleted",  0x03, FIELD_TYPE_BOOL, 0, true },
+    { "ActedThisRoundInCombat",0x04, FIELD_TYPE_BOOL, 0, true },
+    { "HadTurnInCombat",       0x05, FIELD_TYPE_BOOL, 0, true },
+    { "CanActInCombat",        0x06, FIELD_TYPE_BOOL, 0, true },
+    // 0x08: std::optional<float> Timeout (8 bytes: has_value + pad + float)
+    // 0x10: std::optional<float> PauseTimer
+    // 0x18: std::optional<float> EndTurnHoldTimer
+    // 0x20: Guid CombatTeam (16 bytes)
+    { "CombatTeam",            0x20, FIELD_TYPE_GUID, 0, true },
+};
+
+static const ComponentLayoutDef g_TurnBasedComponent_Layout = {
+    .componentName = "eoc::TurnBasedComponent",
+    .shortName = "TurnBased",
+    .componentTypeIndex = 0,
+    .componentSize = 0x30,
+    .properties = g_TurnBasedComponent_Properties,
+    .propertyCount = sizeof(g_TurnBasedComponent_Properties) / sizeof(g_TurnBasedComponent_Properties[0]),
+};
+
+// ============================================================================
+// WeaponComponent (eoc::WeaponComponent)
+// From: BG3Extender/GameDefinitions/Components/Stats.h:156-171
+// Note: Has LegacyRefMap at start, so floats are after those
+// ============================================================================
+
+static const ComponentPropertyDef g_WeaponComponent_Properties[] = {
+    // LegacyRefMap<AbilityId, Array<RollDefinition>> Rolls at 0x00 (complex, skip)
+    // LegacyRefMap<AbilityId, Array<RollDefinition>> Rolls2 at 0x?? (complex, skip)
+    // Estimate: 2 RefMaps ~= 0x30 each = 0x60, then floats
+    { "WeaponRange",      0x60, FIELD_TYPE_FLOAT,  0, true },
+    { "DamageRange",      0x64, FIELD_TYPE_FLOAT,  0, true },
+    // WeaponFunctors* at 0x68 (pointer, skip)
+    { "WeaponProperties", 0x70, FIELD_TYPE_UINT32, 0, true },  // Flags
+    { "WeaponGroup",      0x74, FIELD_TYPE_UINT8,  0, true },
+    { "Ability",          0x75, FIELD_TYPE_UINT8,  0, true },  // AbilityId enum
+    // Array<StatsExpressionWithMetadata> DamageValues after
+    // DiceSizeId at end
+};
+
+static const ComponentLayoutDef g_WeaponComponent_Layout = {
+    .componentName = "eoc::WeaponComponent",
+    .shortName = "Weapon",
+    .componentTypeIndex = 0,
+    .componentSize = 0x90,  // Estimate
+    .properties = g_WeaponComponent_Properties,
+    .propertyCount = sizeof(g_WeaponComponent_Properties) / sizeof(g_WeaponComponent_Properties[0]),
+};
+
+// ============================================================================
+// SpellBookComponent (eoc::spell::BookComponent)
+// From: BG3Extender/GameDefinitions/Components/Spell.h:217-223
+// ============================================================================
+
+static const ComponentPropertyDef g_SpellBookComponent_Properties[] = {
+    { "Entity",     0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true },  // EntityHandle
+    // Array<SpellData> Spells at 0x08
+    { "SpellCount", 0x10, FIELD_TYPE_UINT32, 0, true },  // Array.size field
+};
+
+static const ComponentLayoutDef g_SpellBookComponent_Layout = {
+    .componentName = "eoc::spell::BookComponent",
+    .shortName = "SpellBook",
+    .componentTypeIndex = 0,
+    .componentSize = 0x18,
+    .properties = g_SpellBookComponent_Properties,
+    .propertyCount = sizeof(g_SpellBookComponent_Properties) / sizeof(g_SpellBookComponent_Properties[0]),
+};
+
+// ============================================================================
+// StatusContainerComponent (eoc::status::ContainerComponent)
+// From: BG3Extender/GameDefinitions/Components/Status.h:5-10
+// Note: Contains HashMap<EntityHandle, FixedString>, exposed as count
+// ============================================================================
+
+static const ComponentPropertyDef g_StatusContainerComponent_Properties[] = {
+    // HashMap<EntityHandle, FixedString> Statuses at 0x00
+    // HashMap layout: HashSet (0x40) contains count at offset ~0x18
+    { "StatusCount", 0x18, FIELD_TYPE_UINT32, 0, true },  // HashMap element count
+};
+
+static const ComponentLayoutDef g_StatusContainerComponent_Layout = {
+    .componentName = "eoc::status::ContainerComponent",
+    .shortName = "StatusContainer",
+    .componentTypeIndex = 0,
+    .componentSize = 0x48,  // HashMap size estimate
+    .properties = g_StatusContainerComponent_Properties,
+    .propertyCount = sizeof(g_StatusContainerComponent_Properties) / sizeof(g_StatusContainerComponent_Properties[0]),
+};
+
+// ============================================================================
+// InventoryContainerComponent (eoc::inventory::ContainerComponent)
+// From: BG3Extender/GameDefinitions/Components/Inventory.h:34-39
+// Note: Contains HashMap<uint16_t, ContainerSlotData>, exposed as count
+// ============================================================================
+
+static const ComponentPropertyDef g_InventoryContainerComponent_Properties[] = {
+    // HashMap<uint16_t, ContainerSlotData> Items at 0x00
+    { "ItemCount", 0x18, FIELD_TYPE_UINT32, 0, true },  // HashMap element count
+};
+
+static const ComponentLayoutDef g_InventoryContainerComponent_Layout = {
+    .componentName = "eoc::inventory::ContainerComponent",
+    .shortName = "InventoryContainer",
+    .componentTypeIndex = 0,
+    .componentSize = 0x48,
+    .properties = g_InventoryContainerComponent_Properties,
+    .propertyCount = sizeof(g_InventoryContainerComponent_Properties) / sizeof(g_InventoryContainerComponent_Properties[0]),
+};
+
+// ============================================================================
+// ActionResourcesComponent (eoc::ActionResourcesComponent)
+// From: BG3Extender/GameDefinitions/Components/ActionResources.h:63-68
+// Note: Contains HashMap<Guid, Array<ActionResourceEntry>>, exposed as count
+// ============================================================================
+
+static const ComponentPropertyDef g_ActionResourcesComponent_Properties[] = {
+    // HashMap<Guid, Array<ActionResourceEntry>> Resources at 0x00
+    { "ResourceTypeCount", 0x18, FIELD_TYPE_UINT32, 0, true },  // HashMap element count
+};
+
+static const ComponentLayoutDef g_ActionResourcesComponent_Layout = {
+    .componentName = "eoc::ActionResourcesComponent",
+    .shortName = "ActionResources",
+    .componentTypeIndex = 0,
+    .componentSize = 0x48,
+    .properties = g_ActionResourcesComponent_Properties,
+    .propertyCount = sizeof(g_ActionResourcesComponent_Properties) / sizeof(g_ActionResourcesComponent_Properties[0]),
+};
+
+// ============================================================================
+// InventoryOwnerComponent (eoc::inventory::OwnerComponent)
+// From: BG3Extender/GameDefinitions/Components/Inventory.h:15-20
+// On characters - links to their inventory entity
+// ============================================================================
+
+static const ComponentPropertyDef g_InventoryOwnerComponent_Properties[] = {
+    // Array<EntityHandle> Inventories at 0x00 (ptr + size + capacity = 24 bytes)
+    { "InventoryCount",    0x08, FIELD_TYPE_UINT32,        0, true },  // Array size
+    { "PrimaryInventory",  0x18, FIELD_TYPE_ENTITY_HANDLE, 0, true },  // EntityHandle
+};
+
+static const ComponentLayoutDef g_InventoryOwnerComponent_Layout = {
+    .componentName = "eoc::inventory::OwnerComponent",
+    .shortName = "InventoryOwner",
+    .componentTypeIndex = 0,
+    .componentSize = 0x20,
+    .properties = g_InventoryOwnerComponent_Properties,
+    .propertyCount = sizeof(g_InventoryOwnerComponent_Properties) / sizeof(g_InventoryOwnerComponent_Properties[0]),
+};
+
+// ============================================================================
+// InventoryMemberComponent (eoc::inventory::MemberComponent)
+// From: BG3Extender/GameDefinitions/Components/Inventory.h:22-27
+// On items - links back to containing inventory and equipment slot
+// ============================================================================
+
+static const ComponentPropertyDef g_InventoryMemberComponent_Properties[] = {
+    { "Inventory",      0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true },  // EntityHandle
+    { "EquipmentSlot",  0x08, FIELD_TYPE_INT16,         0, true },  // -1 if not equipped
+};
+
+static const ComponentLayoutDef g_InventoryMemberComponent_Layout = {
+    .componentName = "eoc::inventory::MemberComponent",
+    .shortName = "InventoryMember",
+    .componentTypeIndex = 0,
+    .componentSize = 0x0C,
+    .properties = g_InventoryMemberComponent_Properties,
+    .propertyCount = sizeof(g_InventoryMemberComponent_Properties) / sizeof(g_InventoryMemberComponent_Properties[0]),
+};
+
+// ============================================================================
+// InventoryIsOwnedComponent (eoc::inventory::IsOwnedComponent)
+// From: BG3Extender/GameDefinitions/Components/Inventory.h:29-33
+// On items - links to owning character
+// ============================================================================
+
+static const ComponentPropertyDef g_InventoryIsOwnedComponent_Properties[] = {
+    { "Owner", 0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true },  // EntityHandle to owner
+};
+
+static const ComponentLayoutDef g_InventoryIsOwnedComponent_Layout = {
+    .componentName = "eoc::inventory::IsOwnedComponent",
+    .shortName = "InventoryIsOwned",
+    .componentTypeIndex = 0,
+    .componentSize = 0x08,
+    .properties = g_InventoryIsOwnedComponent_Properties,
+    .propertyCount = sizeof(g_InventoryIsOwnedComponent_Properties) / sizeof(g_InventoryIsOwnedComponent_Properties[0]),
+};
+
+// ============================================================================
+// EquipableComponent (eoc::EquipableComponent)
+// From: BG3Extender/GameDefinitions/Components/Stats.h:80-86
+// On equippable items - indicates which slot type
+// ============================================================================
+
+static const ComponentPropertyDef g_EquipableComponent_Properties[] = {
+    { "EquipmentTypeID", 0x00, FIELD_TYPE_GUID,  0, true },  // Guid (16 bytes)
+    { "Slot",            0x10, FIELD_TYPE_UINT8, 0, true },  // ItemSlot enum
+};
+
+static const ComponentLayoutDef g_EquipableComponent_Layout = {
+    .componentName = "eoc::EquipableComponent",
+    .shortName = "Equipable",
+    .componentTypeIndex = 0,
+    .componentSize = 0x14,
+    .properties = g_EquipableComponent_Properties,
+    .propertyCount = sizeof(g_EquipableComponent_Properties) / sizeof(g_EquipableComponent_Properties[0]),
+};
+
+// ============================================================================
 // All Component Layouts (for bulk registration)
 // ============================================================================
 
@@ -429,6 +710,22 @@ static const ComponentLayoutDef* g_AllComponentLayouts[] = {
     &g_OriginComponent_Layout,
     &g_ClassesComponent_Layout,
     &g_MovementComponent_Layout,
+    // Phase 2 batch 2 (Issue #33)
+    &g_BackgroundComponent_Layout,
+    &g_GodComponent_Layout,
+    &g_ValueComponent_Layout,
+    &g_TurnBasedComponent_Layout,
+    // Phase 2 batch 3 (Issue #33) - High-priority gameplay components
+    &g_WeaponComponent_Layout,
+    &g_SpellBookComponent_Layout,
+    &g_StatusContainerComponent_Layout,
+    &g_InventoryContainerComponent_Layout,
+    &g_ActionResourcesComponent_Layout,
+    // Phase 2 batch 4 (Issue #33) - Inventory relationship components
+    &g_InventoryOwnerComponent_Layout,
+    &g_InventoryMemberComponent_Layout,
+    &g_InventoryIsOwnedComponent_Layout,
+    &g_EquipableComponent_Layout,
     NULL  // Sentinel
 };
 

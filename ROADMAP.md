@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.30.0
+## Current Status: v0.31.0
 
-**Overall Feature Parity: ~52%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~53%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -36,7 +36,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Osiris` | ✅ Full | ✅ RegisterListener + NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions | **100%** | 1 |
 | `Ext.Json` | ✅ Full (2) | ✅ Parse, Stringify | **100%** | 1 |
 | `Ext.IO` | ✅ Full (4) | ✅ LoadFile, SaveFile | **50%** | 1 |
-| `Ext.Entity` | ✅ Full (26) | ⚠️ Get, components, enumeration (15) | **58%** | 2 |
+| `Ext.Entity` | ✅ Full (26) | ⚠️ Get, GetByHandle, components, enumeration (16) | **62%** | 2 |
 | `Ext.Stats` | ✅ Full (52) | ⚠️ Get, GetAll, Create, property read/write (15) | **29%** | 3 |
 | `Ext.Events` | ✅ Full (~30) | ⚠️ 10 events + Subscribe/Unsubscribe/Prevent | **33%** | 2.5 |
 | `Ext.Timer` | ✅ Full (13) | ⚠️ WaitFor, Cancel, Pause, Resume, IsPaused, MonotonicTime (6) | **46%** | 2.3 |
@@ -180,7 +180,7 @@ end
 - [x] Component accessors via GetComponent template addresses
 
 ### 2.2 Component Access & Property System
-**Status:** ✅ Complete (v0.24.0) - 8 component property layouts working
+**Status:** ✅ Complete (v0.24.0+) - 32 component property layouts working
 
 **Key Discovery (Dec 2025):** macOS ARM64 has NO `GetRawComponent` dispatcher like Windows. Template functions are **completely inlined** - calling template addresses directly returns NULL.
 
@@ -222,20 +222,44 @@ buffer + (componentSize * EntryIndex) → Component*
 - [x] `Ext.Entity.GetAllEntitiesWithComponent(name)` - Get all entities with a component
 - [x] `Ext.Entity.CountEntitiesWithComponent(name)` - Count entities with a component
 
-**Completed (v0.24.0) - Component Property Layouts:**
+**Completed (v0.24.0+) - Component Property Layouts:**
 
-8 components with data-driven property access via proxy userdata:
+32 components with data-driven property access via proxy userdata:
 
 | Component | Properties |
 |-----------|------------|
 | Health | Hp, MaxHp, TemporaryHp, MaxTemporaryHp, IsInvulnerable |
 | BaseHp | Vitality, VitalityBoost |
 | Armor | ArmorType, ArmorClass, AbilityModifierCap, ArmorClassAbility, EquipmentType |
-| Stats | InitiativeBonus, Abilities[7], AbilityModifiers[7], Skills[18], ProficiencyBonus, SpellCastingAbility, etc. |
+| Stats | InitiativeBonus, Abilities[7], AbilityModifiers[7], Skills[18], ProficiencyBonus, etc. |
 | BaseStats | BaseAbilities[7] |
 | Transform | Rotation (vec4), Position (vec3), Scale (vec3) |
 | Level | LevelHandle, LevelName |
 | Data | Weight, StatsId, StepsType |
+| Experience | CurrentLevelExperience, NextLevelExperience, TotalExperience |
+| AvailableLevel | Level |
+| EocLevel | Level (character level, distinct from ls::LevelComponent) |
+| Passive | Type, PassiveId, Source, Item, ToggledOn, Disabled |
+| Resistances | AC |
+| PassiveContainer | PassiveCount |
+| Tag | TagCount |
+| Race | Race (GUID) |
+| Origin | field_18, Origin |
+| Classes | ClassCount |
+| Movement | Direction, Acceleration, Speed, Speed2 |
+| Background | Background (GUID) |
+| God | God, HasGodOverride, GodOverride |
+| Value | Value, Rarity, Unique |
+| TurnBased | IsActiveCombatTurn, Removed, RequestedEndTurn, TurnActionsCompleted, ActedThisRoundInCombat, HadTurnInCombat, CanActInCombat, CombatTeam |
+| SpellBook | Entity, SpellCount |
+| StatusContainer | StatusCount |
+| ActionResources | ResourceTypeCount |
+| Weapon | WeaponRange, DamageRange, WeaponProperties, WeaponGroup, Ability |
+| InventoryContainer | ItemCount |
+| InventoryOwner | InventoryCount, PrimaryInventory (EntityHandle) |
+| InventoryMember | Inventory (EntityHandle), EquipmentSlot |
+| InventoryIsOwned | Owner (EntityHandle) |
+| Equipable | EquipmentTypeID (GUID), Slot |
 
 Features:
 - [x] `entity.Health.Hp` - Direct property access via `__index`
@@ -1210,6 +1234,8 @@ Full debugging experience with breakpoints, stepping, and variable inspection.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.31.0 | 2025-12-11 | Entity Relationship Traversal - Ext.Entity.GetByHandle(), 32 component layouts (was 28), added InventoryOwner, InventoryMember, InventoryIsOwned, Equipable with EntityHandle support for character→inventory→item traversal (Issue #33) |
+| v0.30.1 | 2025-12-11 | Component Property Layouts Expansion - 28 components (was 19), added Background, God, Value, TurnBased, SpellBook, StatusContainer, ActionResources, Weapon, InventoryContainer (Issue #33) |
 | v0.30.0 | 2025-12-11 | Ext.Events Expansion - 10 events (was 8), DoConsoleCommand and LuaConsoleInput with Prevent pattern, combat/status events documented via Osiris (Issue #34) |
 | v0.29.0 | 2025-12-10 | Userdata Lifetime Scoping - Entities, Components, and StatsObjects now validate lifetime on every access, preventing stale object use (Issue #28) |
 | v0.28.0 | 2025-12-10 | Mod Variables - Ext.Vars.GetModVariables() for global per-mod data storage with persistence |

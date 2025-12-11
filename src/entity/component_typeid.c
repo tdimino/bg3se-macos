@@ -73,6 +73,31 @@ static const TypeIdEntry g_KnownTypeIds[] = {
     { "eoc::ClassesComponent",           0x10890b098, 0, false },
     { "eoc::MovementComponent",          0x108909240, 0, false },
 
+    // =====================================================================
+    // Phase 2 Batch 2 Components (Issue #33)
+    // =====================================================================
+    { "eoc::BackgroundComponent",        0x1089004e0, 0, false },
+    { "eoc::god::GodComponent",          0x1088faf68, 0, false },
+    { "eoc::ValueComponent",             0x1089078e8, 0, false },
+    { "eoc::TurnBasedComponent",         0x10890e9a8, 0, false },
+
+    // =====================================================================
+    // Phase 2 Batch 3 Components (Issue #33) - High-priority gameplay
+    // =====================================================================
+    { "eoc::WeaponComponent",            0x108912e00, 0, false },
+    { "eoc::spell::BookComponent",       0x10890ae78, 0, false },
+    { "eoc::status::ContainerComponent", 0x1089130e0, 0, false },
+    { "eoc::inventory::ContainerComponent", 0x108908f08, 0, false },
+    { "eoc::ActionResourcesComponent",   0x10890eb08, 0, false },
+
+    // =====================================================================
+    // Phase 2 Batch 4 Components (Issue #33) - Inventory relationships
+    // =====================================================================
+    { "eoc::inventory::OwnerComponent",    0x108908ef8, 0, false },
+    { "eoc::inventory::MemberComponent",   0x1089153b0, 0, false },
+    { "eoc::inventory::IsOwnedComponent",  0x108903ca8, 0, false },
+    { "eoc::EquipableComponent",           0x1089078f8, 0, false },
+
     // Sentinel
     { NULL, 0, 0, false }
 };

@@ -1034,6 +1034,51 @@ static int lua_entity_get_world(lua_State *L) {
     return 1;
 }
 
+// Ext.Entity.GetByHandle(handle) -> entity userdata or nil
+// Takes an EntityHandle (number) and returns an entity proxy
+// Useful for traversing entity relationships (e.g., InventoryOwner.PrimaryInventory -> Inventory entity)
+static int lua_entity_get_by_handle(lua_State *L) {
+    if (!entity_system_ready()) {
+        lua_pushnil(L);
+        lua_pushstring(L, "Entity system not ready");
+        return 2;
+    }
+
+    // Accept either integer or hex string for handle
+    EntityHandle handle;
+    if (lua_isinteger(L, 1)) {
+        handle = (EntityHandle)lua_tointeger(L, 1);
+    } else if (lua_isnumber(L, 1)) {
+        handle = (EntityHandle)lua_tonumber(L, 1);
+    } else if (lua_isstring(L, 1)) {
+        // Parse hex string like "0x3fdbcca5bd6aeec7"
+        const char *str = lua_tostring(L, 1);
+        if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
+            handle = (EntityHandle)strtoull(str + 2, NULL, 16);
+        } else {
+            handle = (EntityHandle)strtoull(str, NULL, 16);
+        }
+    } else {
+        return luaL_error(L, "GetByHandle: expected number or hex string");
+    }
+
+    if (!entity_is_valid(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Create entity userdata with lifetime scoping
+    EntityUserdata *ud = (EntityUserdata*)lua_newuserdata(L, sizeof(EntityUserdata));
+    ud->handle = handle;
+    ud->lifetime = lifetime_lua_get_current(L);
+
+    // Set metatable
+    luaL_getmetatable(L, "BG3Entity");
+    lua_setmetatable(L, -2);
+
+    return 1;
+}
+
 // Ext.Entity.IsReady() -> boolean
 static int lua_entity_is_ready(lua_State *L) {
     lua_pushboolean(L, entity_system_ready());
@@ -2098,6 +2143,9 @@ void entity_register_lua(lua_State *L) {
 
     lua_pushcfunction(L, lua_entity_get);
     lua_setfield(L, -2, "Get");
+
+    lua_pushcfunction(L, lua_entity_get_by_handle);
+    lua_setfield(L, -2, "GetByHandle");
 
     lua_pushcfunction(L, lua_entity_get_world);
     lua_setfield(L, -2, "GetWorld");

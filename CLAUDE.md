@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.30.0 | **Parity:** ~52% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.31.0 | **Parity:** ~53% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -89,7 +89,7 @@ Run `osgrep index --reset` if the index is stale. Use `bg3se-macos-ghidra` skill
 
 - **Osi.*** - Dynamic metatable with lazy lookup (40+ functions seeded)
 - **Ext.Osiris** - RegisterListener, NewCall/NewQuery/NewEvent for custom Osiris functions
-- **Ext.Entity** - GUID lookup working for all entity types including characters (template GUIDs like `S_PLA_*_<uuid>` supported), Transform/Level/Physics/Visual components, GetAllEntitiesWithComponent/CountEntitiesWithComponent
+- **Ext.Entity** - GUID lookup working for all entity types including characters (template GUIDs like `S_PLA_*_<uuid>` supported), 32 component property layouts (Health, Stats, Transform, Experience, Race, Background, God, Value, TurnBased, SpellBook, StatusContainer, ActionResources, Weapon, InventoryContainer, InventoryOwner, InventoryMember, Equipable, etc.), GetAllEntitiesWithComponent/CountEntitiesWithComponent
 - **Ext.Stats** - Property read working (`stat.Damage` returns "1d8")
 - **Ext.Memory** - Read, Search, GetModuleBase for debugging
 - **Ext.Events** - 10 events (SessionLoading/Loaded, ResetCompleted, Tick, StatsLoaded, ModuleLoadStarted, GameStateChanged, KeyInput, DoConsoleCommand, LuaConsoleInput) with priority ordering, Once flag, handler IDs, Prevent pattern
