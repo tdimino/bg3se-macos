@@ -7,6 +7,7 @@
 #include "lua_stats.h"
 #include "../stats/stats_manager.h"
 #include "../strings/fixed_string.h"
+#include "../lifetime/lifetime.h"
 #include "logging.h"
 
 #include "../../lib/lua/src/lua.h"
@@ -30,6 +31,7 @@ static int lua_stats_object_get_raw_property(lua_State *L);
 
 typedef struct {
     StatsObjectPtr obj;  // Opaque handle from stats_manager
+    LifetimeHandle lifetime;
 } LuaStatsObject;
 
 // Push a StatsObject userdata onto the stack
@@ -41,6 +43,7 @@ static void push_stats_object(lua_State *L, StatsObjectPtr obj) {
 
     LuaStatsObject *ud = (LuaStatsObject*)lua_newuserdata(L, sizeof(LuaStatsObject));
     ud->obj = obj;
+    ud->lifetime = lifetime_lua_get_current(L);
 
     luaL_getmetatable(L, STATS_OBJECT_METATABLE);
     lua_setmetatable(L, -2);
@@ -58,6 +61,9 @@ static LuaStatsObject* check_stats_object(lua_State *L, int idx) {
 // StatsObject.__index - Property access
 static int lua_stats_object_index(lua_State *L) {
     LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
     const char *key = luaL_checkstring(L, 2);
 
     if (!ud->obj) {
@@ -146,6 +152,9 @@ static int lua_stats_object_index(lua_State *L) {
 // StatsObject.__newindex - Property modification
 static int lua_stats_object_newindex(lua_State *L) {
     LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
     const char *key = luaL_checkstring(L, 2);
 
     if (!ud->obj) {
@@ -191,6 +200,8 @@ static int lua_stats_object_newindex(lua_State *L) {
 // StatsObject.__tostring
 static int lua_stats_object_tostring(lua_State *L) {
     LuaStatsObject *ud = check_stats_object(L, 1);
+    // tostring works even on expired objects (for debugging)
+    bool valid = lifetime_lua_is_valid(L, ud->lifetime);
 
     if (!ud->obj) {
         lua_pushstring(L, "StatsObject(nil)");
@@ -199,13 +210,14 @@ static int lua_stats_object_tostring(lua_State *L) {
 
     const char *name = stats_get_name(ud->obj);
     const char *type = stats_get_type(ud->obj);
+    const char *expired = valid ? "" : " [EXPIRED]";
 
     if (name && type) {
-        lua_pushfstring(L, "StatsObject(%s [%s])", name, type);
+        lua_pushfstring(L, "StatsObject(%s [%s])%s", name, type, expired);
     } else if (name) {
-        lua_pushfstring(L, "StatsObject(%s)", name);
+        lua_pushfstring(L, "StatsObject(%s)%s", name, expired);
     } else {
-        lua_pushfstring(L, "StatsObject(%p)", ud->obj);
+        lua_pushfstring(L, "StatsObject(%p)%s", ud->obj, expired);
     }
 
     return 1;
@@ -215,6 +227,9 @@ static int lua_stats_object_tostring(lua_State *L) {
 // Returns the raw property index value at the given position
 static int lua_stats_object_get_raw_property(lua_State *L) {
     LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
     int index = (int)luaL_checkinteger(L, 2);
 
     if (!ud->obj) {
@@ -230,6 +245,9 @@ static int lua_stats_object_get_raw_property(lua_State *L) {
 // StatsObject:GetProperty(name) -> value
 static int lua_stats_object_get_property(lua_State *L) {
     LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
     const char *prop = luaL_checkstring(L, 2);
 
     if (!ud->obj) {
@@ -265,6 +283,9 @@ static int lua_stats_object_get_property(lua_State *L) {
 // StatsObject:SetProperty(name, value) -> bool
 static int lua_stats_object_set_property(lua_State *L) {
     LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
     const char *prop = luaL_checkstring(L, 2);
 
     if (!ud->obj) {
@@ -295,6 +316,9 @@ static int lua_stats_object_set_property(lua_State *L) {
 // StatsObject:Dump()
 static int lua_stats_object_dump(lua_State *L) {
     LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
     if (ud->obj) {
         stats_dump(ud->obj);
     }

@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.28.0
+## Current Status: v0.29.0
 
-**Overall Feature Parity: ~70%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
+**Overall Feature Parity: ~78%** (based on [comprehensive gap analysis](plans/bg3se-docs-gap-analysis.md))
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -465,29 +465,36 @@ From API.md: "The game is split into client and server components... the extende
 **Impact:** Client-side mods (UI modification, visual effects) completely broken.
 
 ### 2.8 Object Scopes/Lifetimes
-**Status:** ❌ Not Started - **HIGH**
+**Status:** ✅ Complete (v0.29.0 - Issue #28)
 
 From API.md: "Most `userdata` types are now bound to their enclosing *extender scope*."
 
-**Current State:** Objects live forever (memory leak risk)
+**Implementation:**
+- `src/lifetime/lifetime.h` - Lifetime handle types and pool API
+- `src/lifetime/lifetime.c` - LifetimePool (4096 entries) + LifetimeStack (64 nested scopes)
+- Modified: `EntityUserdata`, `ComponentProxy`, `LuaStatsObject` - all include `LifetimeHandle` field
+- Console commands and Lua callbacks wrapped with `lifetime_lua_begin_scope()`/`lifetime_lua_end_scope()`
 
-**Target Behavior:**
+**Working Behavior:**
 ```lua
 -- BAD: Smuggling objects outside scope
-local spellbook = Ext.Entity.Get(...).SpellBook
-Ext.OnNextTick(function()
-    -- Should THROW: "lifetime has expired"
-    local uuid = spellbook.Spells[2].SpellUUID
-end)
+local entity = Ext.Entity.Get(GetHostCharacter())
+stored = entity  -- Store for later
+
+-- Next console command...
+_P(stored)  -- Shows: Entity(0x...) [EXPIRED]
+stored.Health.Hp  -- ERROR: "Lifetime of Entity has expired; re-fetch the object in the current scope"
 
 -- GOOD: Fetch fresh reference in each scope
-Ext.OnNextTick(function()
-    local spellbook = Ext.Entity.Get(...).SpellBook
-    local uuid = spellbook.Spells[2].SpellUUID
-end)
+local entity = Ext.Entity.Get(GetHostCharacter())
+_P(entity.Health.Hp)  -- Works!
 ```
 
-**Impact:** Memory leaks, potential crashes from accessing deleted entities.
+**Features:**
+- 12-bit index + 36-bit salt for staleness detection
+- All userdata (Entity, Component, StatsObject) validate lifetime on every access
+- `__tostring` shows `[EXPIRED]` for debugging
+- Proper error messages guide users to re-fetch objects
 
 ---
 
@@ -1050,7 +1057,7 @@ Ext.Mod.GetModInfo(guid)
 - [ ] Memory leak detection
 - [ ] Thread safety audit
 - [ ] Extensive error handling
-- [ ] Userdata lifetime scoping
+- [x] Userdata lifetime scoping (v0.29.0)
 
 ### Testing
 - [ ] Unit tests for Lua bindings
@@ -1088,7 +1095,7 @@ Ext.Mod.GetModInfo(guid)
 | B3 | Console/REPL | Medium | ✅ Complete (socket + file + in-game overlay) |
 | B4 | GetAllComponents | Low | ✅ Complete |
 | B5 | Stats Create/Sync | Medium | ❌ Not Started |
-| B6 | Userdata Lifetime Scoping | Medium | ❌ Not Started |
+| B6 | Userdata Lifetime Scoping | Medium | ✅ Complete (v0.29.0) |
 
 ### Priority C: Medium Impact (Developer Experience)
 
@@ -1118,6 +1125,8 @@ Ext.Mod.GetModInfo(guid)
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.29.0 | 2025-12-10 | Userdata Lifetime Scoping - Entities, Components, and StatsObjects now validate lifetime on every access, preventing stale object use (Issue #28) |
+| v0.28.0 | 2025-12-10 | Mod Variables - Ext.Vars.GetModVariables() for global per-mod data storage with persistence |
 | v0.27.0 | 2025-12-10 | User Variables - entity.Vars for attaching custom data to entities with persistence (Issue #13) |
 | v0.26.0 | 2025-12-10 | Ext.Enums - Type-safe enum/bitfield userdata with 14 types (DamageType, AbilityId, SkillId, StatusType, SurfaceType, etc.), flexible comparison, bitwise operations (Issue #29) |
 | v0.25.0 | 2025-12-10 | Ext.Stats.Create and Sync (Issue #27) |

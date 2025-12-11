@@ -37,6 +37,9 @@
 // Include user variables for entity.Vars
 #include "../vars/user_variables.h"
 
+// Include lifetime for userdata scoping
+#include "../lifetime/lifetime.h"
+
 // ============================================================================
 // Global State
 // ============================================================================
@@ -1009,9 +1012,10 @@ static int lua_entity_get(lua_State *L) {
         return 1;
     }
 
-    // Create entity userdata
-    EntityHandle *ud = (EntityHandle*)lua_newuserdata(L, sizeof(EntityHandle));
-    *ud = handle;
+    // Create entity userdata with lifetime scoping
+    EntityUserdata *ud = (EntityUserdata*)lua_newuserdata(L, sizeof(EntityUserdata));
+    ud->handle = handle;
+    ud->lifetime = lifetime_lua_get_current(L);
 
     // Set metatable
     luaL_getmetatable(L, "BG3Entity");
@@ -1201,15 +1205,21 @@ static int lua_entity_test(lua_State *L) {
 
 // Entity:IsAlive() method
 static int lua_entity_is_alive(lua_State *L) {
-    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
-    lua_pushboolean(L, entity_is_alive(*ud));
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
+    lua_pushboolean(L, entity_is_alive(ud->handle));
     return 1;
 }
 
 // Entity:GetHandle() method - returns raw handle for debugging
 static int lua_entity_get_handle(lua_State *L) {
-    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
-    lua_pushinteger(L, (lua_Integer)*ud);
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
+    lua_pushinteger(L, (lua_Integer)ud->handle);
     return 1;
 }
 
@@ -1255,14 +1265,17 @@ static void push_transform_component(lua_State *L, void *component) {
 // Entity:GetComponent(name) method
 // Supports both short names (e.g., "Transform") and full names (e.g., "ls::TransformComponent")
 static int lua_entity_get_component(lua_State *L) {
-    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
     const char *name = luaL_checkstring(L, 2);
 
     // First try component_get_by_name which handles:
     // 1. Direct template calls for known components (ecl::Character, etc.)
     // 2. Registry-based lookup for discovered components
     if (g_EntityWorld) {
-        void *component = component_get_by_name(g_EntityWorld, *ud, name);
+        void *component = component_get_by_name(g_EntityWorld, ud->handle, name);
         if (component) {
             // For Transform, use proper struct conversion
             if (strstr(name, "TransformComponent") != NULL) {
@@ -1324,7 +1337,7 @@ static int lua_entity_get_component(lua_State *L) {
         return 2;
     }
 
-    void *component = entity_get_component(*ud, type);
+    void *component = entity_get_component(ud->handle, type);
     if (!component) {
         lua_pushnil(L);
         return 1;
@@ -1417,7 +1430,10 @@ static int lua_entity_get_component(lua_State *L) {
 // Entity:GetAllComponentNames(requireMapped) -> { "name1", "name2", ... }
 // Returns an array of component type names attached to this entity
 static int lua_entity_get_all_component_names(lua_State *L) {
-    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
     bool requireMapped = lua_toboolean(L, 2);  // optional, default false
 
     if (!component_lookup_ready()) {
@@ -1426,7 +1442,7 @@ static int lua_entity_get_all_component_names(lua_State *L) {
     }
 
     // Get EntityStorageData for this entity
-    void *storageData = component_lookup_get_storage_data(*ud);
+    void *storageData = component_lookup_get_storage_data(ud->handle);
     if (!storageData) {
         lua_newtable(L);
         return 1;
@@ -1463,7 +1479,10 @@ static int lua_entity_get_all_component_names(lua_State *L) {
 // Entity:GetAllComponents(warnOnMissing) -> { ["ComponentName"] = componentData, ... }
 // Returns a table mapping component names to their data (light userdata)
 static int lua_entity_get_all_components(lua_State *L) {
-    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
     bool warnOnMissing = lua_toboolean(L, 2);  // optional
 
     if (!component_lookup_ready() || !g_EntityWorld) {
@@ -1471,7 +1490,7 @@ static int lua_entity_get_all_components(lua_State *L) {
         return 1;
     }
 
-    void *storageData = component_lookup_get_storage_data(*ud);
+    void *storageData = component_lookup_get_storage_data(ud->handle);
     if (!storageData) {
         lua_newtable(L);
         return 1;
@@ -1490,7 +1509,7 @@ static int lua_entity_get_all_components(lua_State *L) {
 
         // Get component data
         void *component = component_lookup_by_index(
-            *ud, indices[i],
+            ud->handle, indices[i],
             info ? info->size : 0,
             info ? info->is_proxy : false
         );
@@ -1519,10 +1538,11 @@ static int lua_entity_get_all_components(lua_State *L) {
 
 // Entity metatable __index
 static int lua_entity_index(lua_State *L) {
-    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
     const char *key = luaL_checkstring(L, 2);
 
-    // Check for methods first
+    // Check for methods first - methods don't need lifetime check
+    // (the method itself will check when invoked)
     if (strcmp(key, "IsAlive") == 0) {
         lua_pushcfunction(L, lua_entity_is_alive);
         return 1;
@@ -1544,16 +1564,23 @@ static int lua_entity_index(lua_State *L) {
         return 1;
     }
 
+    // For property access (not methods), validate lifetime
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
+
+    EntityHandle handle = ud->handle;
+
     // entity.Vars - Returns user variables proxy for this entity
     if (strcmp(key, "Vars") == 0) {
-        const char *guid = entity_get_guid_from_cache(*ud);
+        const char *guid = entity_get_guid_from_cache(handle);
         if (guid) {
-            uvar_push_entity_proxy(L, guid, *ud);
+            uvar_push_entity_proxy(L, guid, handle);
         } else {
             // Entity not in cache - create empty proxy with handle string as key
             char handle_str[32];
-            snprintf(handle_str, sizeof(handle_str), "0x%llx", (unsigned long long)*ud);
-            uvar_push_entity_proxy(L, handle_str, *ud);
+            snprintf(handle_str, sizeof(handle_str), "0x%llx", (unsigned long long)handle);
+            uvar_push_entity_proxy(L, handle_str, handle);
         }
         return 1;
     }
@@ -1587,7 +1614,7 @@ static int lua_entity_index(lua_State *L) {
     }
 
     if (is_component) {
-        void *component = entity_get_component(*ud, type);
+        void *component = entity_get_component(handle, type);
         if (!component) {
             lua_pushnil(L);
             return 1;
@@ -1677,9 +1704,15 @@ static int lua_entity_index(lua_State *L) {
 
 // Entity metatable __tostring
 static int lua_entity_tostring(lua_State *L) {
-    EntityHandle *ud = (EntityHandle*)luaL_checkudata(L, 1, "BG3Entity");
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Entity(0x%llx)", (unsigned long long)*ud);
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    // tostring works even on expired entities (for debugging)
+    bool valid = lifetime_lua_is_valid(L, ud->lifetime);
+    char buf[80];
+    if (valid) {
+        snprintf(buf, sizeof(buf), "Entity(0x%llx)", (unsigned long long)ud->handle);
+    } else {
+        snprintf(buf, sizeof(buf), "Entity(0x%llx) [EXPIRED]", (unsigned long long)ud->handle);
+    }
     lua_pushstring(L, buf);
     return 1;
 }
@@ -1974,13 +2007,15 @@ static int lua_entity_get_all_with_component(lua_State *L) {
     LOG_ENTITY_DEBUG("GetAllEntitiesWithComponent('%s'): Found %d entities (typeIndex=%u)",
                      componentName, count, info->index);
 
-    // Create result table of entity userdata
+    // Create result table of entity userdata with lifetime scoping
     lua_createtable(L, count, 0);
+    LifetimeHandle currentLifetime = lifetime_lua_get_current(L);
 
     for (int i = 0; i < count; i++) {
         // Push entity as userdata (same pattern as lua_entity_get)
-        EntityHandle *ud = (EntityHandle *)lua_newuserdata(L, sizeof(EntityHandle));
-        *ud = handles[i];
+        EntityUserdata *ud = (EntityUserdata *)lua_newuserdata(L, sizeof(EntityUserdata));
+        ud->handle = handles[i];
+        ud->lifetime = currentLifetime;
         luaL_getmetatable(L, "BG3Entity");
         lua_setmetatable(L, -2);
         lua_rawseti(L, -2, i + 1);

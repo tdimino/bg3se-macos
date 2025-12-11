@@ -12,6 +12,7 @@
 #include "../core/logging.h"
 #include "../lua/lua_events.h"
 #include "../overlay/overlay.h"
+#include "../lifetime/lifetime.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -439,6 +440,10 @@ static void process_line(lua_State *L, char *line, int client_slot) {
         s_multiline_client = -1;
         LOG_CONSOLE_DEBUG("Executing multi-line block (%zu bytes)", s_multiline_len);
 
+        // Begin lifetime scope for multi-line block
+        LifetimeHandle scope = lifetime_lua_begin_scope(L);
+        (void)scope;
+
         int result = luaL_dostring(L, s_multiline_buffer);
         if (result != LUA_OK) {
             const char *err = lua_tostring(L, -1);
@@ -448,6 +453,9 @@ static void process_line(lua_State *L, char *line, int client_slot) {
             LOG_CONSOLE_ERROR("Error: %s", err ? err : "(unknown)");
             lua_pop(L, 1);
         }
+
+        // End lifetime scope
+        lifetime_lua_end_scope(L);
         multiline_buffer_clear();
         return;
     }
@@ -476,6 +484,10 @@ static void process_line(lua_State *L, char *line, int client_slot) {
     // Normal single-line execution
     LOG_CONSOLE_DEBUG("> %s", line);
 
+    // Begin lifetime scope for single line
+    LifetimeHandle scope = lifetime_lua_begin_scope(L);
+    (void)scope;
+
     int result = luaL_dostring(L, line);
     if (result != LUA_OK) {
         const char *err = lua_tostring(L, -1);
@@ -485,6 +497,9 @@ static void process_line(lua_State *L, char *line, int client_slot) {
         LOG_CONSOLE_ERROR("Error: %s", err ? err : "(unknown)");
         lua_pop(L, 1);
     }
+
+    // End lifetime scope
+    lifetime_lua_end_scope(L);
 }
 
 // ============================================================================
@@ -682,13 +697,20 @@ bool console_execute_lua(const char *command) {
 
     LOG_CONSOLE_DEBUG("Overlay execute: %s", command);
 
+    // Begin lifetime scope for console command
+    LifetimeHandle scope = lifetime_lua_begin_scope(s_lua_state);
+    (void)scope;
+
     int result = luaL_dostring(s_lua_state, command);
     if (result != LUA_OK) {
         const char *err = lua_tostring(s_lua_state, -1);
         console_error("Error: %s", err ? err : "unknown error");
         lua_pop(s_lua_state, 1);
+        lifetime_lua_end_scope(s_lua_state);
         return false;
     }
 
+    // End lifetime scope - userdata created during command become invalid
+    lifetime_lua_end_scope(s_lua_state);
     return true;
 }

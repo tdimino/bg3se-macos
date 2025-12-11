@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.28.0 | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.29.0 | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -18,6 +18,7 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 - `src/console/console.c` - Socket server + file-based console
 - `src/stats/stats_manager.c` - RPGStats system (stat property access)
 - `src/entity/` - Entity Component System (GUID lookup, components)
+- `src/lifetime/` - Userdata lifetime scoping (prevents stale object access)
 - `tools/bg3se-console.c` - Standalone readline console client
 - `ghidra/offsets/` - Reverse-engineered offsets documentation
 

@@ -100,6 +100,9 @@ extern "C" {
 // Enum system
 #include "enum_registry.h"
 
+// Lifetime scoping
+#include "lifetime.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -1615,6 +1618,9 @@ static void init_lua(void) {
     // Open standard libraries
     luaL_openlibs(L);
 
+    // Initialize lifetime scoping system
+    lifetime_lua_init(L);
+
     // Initialize enum registry and register metatables
     enum_registry_init();
     enum_register_definitions();
@@ -2104,6 +2110,9 @@ static void dispatch_event_to_lua(const char *eventName, int arity,
             LOG_OSIRIS_INFO("Dispatching %s callback (%s, arity=%d)",
                        eventName, timing, listener->arity);
 
+            // Begin lifetime scope for this callback
+            LifetimeHandle scope = lifetime_lua_begin_scope(L);
+
             // Push arguments (up to listener's requested arity)
             int argsToPass = listener->arity;
             int pushed = 0;
@@ -2141,6 +2150,10 @@ static void dispatch_event_to_lua(const char *eventName, int arity,
                            eventName, lua_tostring(L, -1));
                 lua_pop(L, 1);
             }
+
+            // End lifetime scope - all userdata created in callback become invalid
+            lifetime_lua_end_scope(L);
+            (void)scope;  // Suppress unused warning
         }
     }
 }

@@ -44,7 +44,7 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.28.0 | **Feature Parity:** ~75%
+**Version:** v0.29.0 | **Feature Parity:** ~78%
 
 | Feature | Status |
 |---------|--------|
@@ -60,6 +60,7 @@ SE mods work automatically—just install them like any other mod:
 | Ext.Input | ✅ Hotkeys, key injection |
 | Ext.Math | ✅ Vector/matrix operations |
 | Ext.Enums | ✅ 14 enum/bitfield types |
+| Lifetime Scoping | ✅ Prevents stale object access |
 | Debug Console | ✅ Socket + file + in-game overlay |
 
 See [ROADMAP.md](ROADMAP.md) for detailed progress.

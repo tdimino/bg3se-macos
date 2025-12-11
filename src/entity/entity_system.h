@@ -145,6 +145,21 @@ typedef struct {
 } ClassesComponent;
 
 // ============================================================================
+// Entity Userdata (for Lua binding with lifetime scoping)
+// ============================================================================
+
+#include "lifetime.h"
+
+/**
+ * Lua userdata for entity references.
+ * Includes lifetime handle to detect stale references.
+ */
+typedef struct {
+    EntityHandle handle;
+    LifetimeHandle lifetime;
+} EntityUserdata;
+
+// ============================================================================
 // EntityWorld Interface
 // ============================================================================
 

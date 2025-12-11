@@ -8,6 +8,7 @@
 #include "component_offsets.h"
 #include "../core/safe_memory.h"
 #include "../core/logging.h"
+#include "../lifetime/lifetime.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -408,10 +409,14 @@ bool component_property_write(lua_State *L, void *componentPtr,
 typedef struct {
     void *componentPtr;
     const ComponentLayoutDef *layout;
+    LifetimeHandle lifetime;
 } ComponentProxy;
 
 static int component_proxy_index(lua_State *L) {
     ComponentProxy *proxy = (ComponentProxy *)luaL_checkudata(L, 1, COMPONENT_PROXY_METATABLE);
+    if (!lifetime_lua_is_valid(L, proxy->lifetime)) {
+        return lifetime_lua_expired_error(L, "Component");
+    }
     const char *key = luaL_checkstring(L, 2);
 
     // Special properties
@@ -441,6 +446,9 @@ static int component_proxy_index(lua_State *L) {
 
 static int component_proxy_newindex(lua_State *L) {
     ComponentProxy *proxy = (ComponentProxy *)luaL_checkudata(L, 1, COMPONENT_PROXY_METATABLE);
+    if (!lifetime_lua_is_valid(L, proxy->lifetime)) {
+        return lifetime_lua_expired_error(L, "Component");
+    }
     const char *key = luaL_checkstring(L, 2);
 
     const ComponentPropertyDef *prop = find_property(proxy->layout, key);
@@ -457,15 +465,28 @@ static int component_proxy_newindex(lua_State *L) {
 
 static int component_proxy_tostring(lua_State *L) {
     ComponentProxy *proxy = (ComponentProxy *)luaL_checkudata(L, 1, COMPONENT_PROXY_METATABLE);
-    lua_pushfstring(L, "Component<%s>(%p)",
-                   proxy->layout->shortName ? proxy->layout->shortName : proxy->layout->componentName,
-                   proxy->componentPtr);
+    // tostring works even on expired components (for debugging)
+    bool valid = lifetime_lua_is_valid(L, proxy->lifetime);
+    if (valid) {
+        lua_pushfstring(L, "Component<%s>(%p)",
+                       proxy->layout->shortName ? proxy->layout->shortName : proxy->layout->componentName,
+                       proxy->componentPtr);
+    } else {
+        lua_pushfstring(L, "Component<%s>(%p) [EXPIRED]",
+                       proxy->layout->shortName ? proxy->layout->shortName : proxy->layout->componentName,
+                       proxy->componentPtr);
+    }
     return 1;
 }
 
 static int component_proxy_pairs_iter(lua_State *L) {
     ComponentProxy *proxy = (ComponentProxy *)lua_touserdata(L, lua_upvalueindex(1));
     int *index = (int *)lua_touserdata(L, lua_upvalueindex(2));
+
+    // Validate lifetime on each iteration
+    if (!lifetime_lua_is_valid(L, proxy->lifetime)) {
+        return lifetime_lua_expired_error(L, "Component");
+    }
 
     if (*index >= proxy->layout->propertyCount) {
         return 0;  // End of iteration
@@ -481,6 +502,9 @@ static int component_proxy_pairs_iter(lua_State *L) {
 
 static int component_proxy_pairs(lua_State *L) {
     ComponentProxy *proxy = (ComponentProxy *)luaL_checkudata(L, 1, COMPONENT_PROXY_METATABLE);
+    if (!lifetime_lua_is_valid(L, proxy->lifetime)) {
+        return lifetime_lua_expired_error(L, "Component");
+    }
 
     // Create upvalues: proxy and index
     lua_pushlightuserdata(L, proxy);
@@ -503,6 +527,7 @@ void component_property_push_proxy(lua_State *L, void *componentPtr,
     ComponentProxy *proxy = (ComponentProxy *)lua_newuserdata(L, sizeof(ComponentProxy));
     proxy->componentPtr = componentPtr;
     proxy->layout = layout;
+    proxy->lifetime = lifetime_lua_get_current(L);
 
     luaL_getmetatable(L, COMPONENT_PROXY_METATABLE);
     lua_setmetatable(L, -2);

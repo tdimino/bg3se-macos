@@ -12,6 +12,50 @@ Complete documentation for BG3SE-macOS Lua APIs.
 
 ---
 
+## Userdata Lifetime Scoping
+
+BG3SE-macOS implements lifetime scoping for userdata objects (Entities, Components, StatsObjects). This prevents accessing stale objects that may have been destroyed or modified by the game engine.
+
+### How It Works
+
+Each console command or Lua callback runs in its own **lifetime scope**. Objects created within a scope are valid only for that scope's duration. When the scope ends, all objects created in it become **expired**.
+
+```lua
+-- Scope 1: First console command
+local entity = Ext.Entity.Get(GetHostCharacter())
+stored = entity  -- Store for later (BAD PRACTICE)
+
+-- Scope 2: Second console command
+_P(stored)              -- Shows: Entity(0x...) [EXPIRED]
+stored.Health.Hp        -- ERROR: "Lifetime of Entity has expired"
+
+-- Correct usage: Re-fetch in each scope
+local entity = Ext.Entity.Get(GetHostCharacter())
+_P(entity.Health.Hp)    -- Works!
+```
+
+### Affected Types
+
+| Type | Description |
+|------|-------------|
+| Entity | From `Ext.Entity.Get()` |
+| Component | From `entity.Health`, `entity:GetComponent()`, etc. |
+| StatsObject | From `Ext.Stats.Get()` |
+
+### Detecting Expired Objects
+
+- `tostring(obj)` shows `[EXPIRED]` suffix for expired objects
+- Property access on expired objects throws a clear error message
+- The error message instructs you to re-fetch the object
+
+### Best Practices
+
+1. **Don't store userdata** in global tables for later use
+2. **Re-fetch objects** at the start of each callback or command
+3. **Complete work within one scope** when possible
+
+---
+
 ## Ext Namespace
 
 ### Core Functions
