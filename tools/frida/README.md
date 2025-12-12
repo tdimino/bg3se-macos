@@ -28,6 +28,27 @@ brew install frida-tools
 
 ## Scripts
 
+### capture_singletons.js
+
+**NEW** - Capture singleton pointers for reverse engineering:
+- PhysicsScene via AiGrid constructor
+- SpellPrototype::Init calls
+- EntityWorld via IsInCombat
+
+```bash
+frida -U -n "Baldur's Gate 3" -l capture_singletons.js
+```
+
+### capture_physics.js
+
+**NEW** - Specialized script for Issue #37 (Ext.Level/Physics):
+- Hooks AiGrid constructor to capture PhysicsScene*
+- Triggers when loading saves or changing areas
+
+```bash
+frida -U -n "Baldur's Gate 3" -l capture_physics.js
+```
+
 ### discover_components.js
 
 Main discovery script that:

@@ -44,7 +44,7 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.32.2 | **Feature Parity:** ~55%
+**Version:** v0.32.3 | **Feature Parity:** ~55%
 
 | Feature | Status |
 |---------|--------|
@@ -62,6 +62,7 @@ SE mods work automatically—just install them like any other mod:
 | Ext.Enums | ✅ 14 enum/bitfield types |
 | Lifetime Scoping | ✅ Prevents stale object access |
 | Debug Console | ✅ Socket + file + in-game overlay |
+| Testing | ✅ `!test` suite, Debug.* helpers, Frida scripts |
 
 See [ROADMAP.md](ROADMAP.md) for detailed progress.
 

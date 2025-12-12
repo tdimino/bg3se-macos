@@ -13,6 +13,38 @@ Each entry includes:
 
 ---
 
+## [v0.32.3] - 2025-12-12
+
+**Parity:** ~55% | **Category:** Testing & Tooling | **Issues:** #8
+
+### Added
+- **`!test` console command** - Automated regression test suite (8 tests)
+- **`Debug.*` helper library** - Preloaded Lua functions for reverse engineering
+  - `Debug.ProbeRefMap(mgr, fs)` - Single-call RefMap lookup
+  - `Debug.ProbeStructSpec(base, spec)` - Structured memory probing
+  - `Debug.ProbeManager(mgr)` - Prototype manager inspection
+  - `Debug.Hex(n)`, `Debug.HexMath(base, offset)` - Hex formatting
+- **Script library system** - Reusable Lua scripts in `scripts/library/`
+  - `probe_spell_refmap.lua` - SpellPrototypeManager probing
+  - `dump_managers.lua` - All prototype manager states
+  - `find_physics_scene.lua` - PhysicsScene discovery (Issue #37)
+  - `test_audio_init.lua` - Wwise audio testing (Issue #38)
+- **Frida scripts** for singleton capture
+  - `capture_singletons.js` - Multi-target singleton capture
+  - `capture_physics.js` - PhysicsScene capture for Issue #37
+- **Meridian persona** - Reverse engineering approach documentation
+
+### Changed
+- Console command log now includes `!test`
+- Global helpers log now includes `Debug.*`
+
+### Documentation
+- `agent_docs/meridian-persona.md` - RE persona with prompt template
+- `plans/testing-advanced.md` - Full testing optimization plan
+- Updated `tools/frida/README.md` with new scripts
+
+---
+
 ## [v0.32.2] - 2025-12-12
 
 **Parity:** ~55% | **Category:** Stats System | **Issues:** #32

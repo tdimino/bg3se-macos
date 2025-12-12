@@ -627,6 +627,56 @@ void lua_ext_register_global_helpers(lua_State *L) {
         lua_pop(L, 1);
     }
 
+    // Debug helper library (for reverse engineering acceleration)
+    static const char *debug_lib =
+        "Debug = Debug or {}\n"
+        "function Debug.ProbeRefMap(mgr_addr, target_fs)\n"
+        "  local cap = Ext.Debug.ReadU32(mgr_addr + 0x10) or 0\n"
+        "  local keys = Ext.Debug.ReadPtr(mgr_addr + 0x28)\n"
+        "  local vals = Ext.Debug.ReadPtr(mgr_addr + 0x38)\n"
+        "  if not keys or not vals then return nil end\n"
+        "  for i = 0, math.min(cap, 15000) - 1 do\n"
+        "    local k = Ext.Debug.ReadU32(keys + i * 4)\n"
+        "    if k == target_fs then\n"
+        "      local v = Ext.Debug.ReadPtr(vals + i * 8)\n"
+        "      return {index = i, key = k, value = v}\n"
+        "    end\n"
+        "  end\n"
+        "  return nil\n"
+        "end\n"
+        "function Debug.ProbeStructSpec(base, spec)\n"
+        "  local result = {}\n"
+        "  for _, field in ipairs(spec) do\n"
+        "    local name, off, typ = field[1], field[2], field[3]\n"
+        "    if typ == 'ptr' then result[name] = Ext.Debug.ReadPtr(base + off)\n"
+        "    elseif typ == 'u32' then result[name] = Ext.Debug.ReadU32(base + off)\n"
+        "    elseif typ == 'u64' then result[name] = Ext.Debug.ReadU64(base + off)\n"
+        "    elseif typ == 'i32' then result[name] = Ext.Debug.ReadI32(base + off)\n"
+        "    elseif typ == 'float' then result[name] = Ext.Debug.ReadFloat(base + off)\n"
+        "    elseif typ == 'str' then result[name] = Ext.Debug.ReadString(base + off, 64)\n"
+        "    elseif typ == 'fs' then result[name] = Ext.Debug.ReadFixedString(base + off)\n"
+        "    end\n"
+        "  end\n"
+        "  return result\n"
+        "end\n"
+        "function Debug.Hex(n) return string.format('0x%X', n or 0) end\n"
+        "function Debug.HexMath(base, offset) return string.format('0x%X', (base or 0) + (offset or 0)) end\n"
+        "function Debug.ProbeManager(mgr)\n"
+        "  return {\n"
+        "    buckets = Ext.Debug.ReadPtr(mgr + 0x08),\n"
+        "    capacity = Ext.Debug.ReadU32(mgr + 0x10),\n"
+        "    next_chain = Ext.Debug.ReadPtr(mgr + 0x18),\n"
+        "    keys = Ext.Debug.ReadPtr(mgr + 0x28),\n"
+        "    values = Ext.Debug.ReadPtr(mgr + 0x38)\n"
+        "  }\n"
+        "end\n";
+
+    if (luaL_dostring(L, debug_lib) != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        LOG_LUA_WARN(" Failed to register Debug library: %s", err ? err : "(unknown)");
+        lua_pop(L, 1);
+    }
+
     // Register built-in console commands (split into smaller chunks to avoid
     // exceeding the 4095 char limit that ISO C99 requires compilers to support)
     static const char *console_cmd_probe =
@@ -720,10 +770,79 @@ void lua_ext_register_global_helpers(lua_State *L) {
         "  Ext.Print('Reloading...') Ext.Vars.ReloadPersistentVars() Ext.Print('Reload complete')\n"
         "end)\n";
 
+    // Test suite command (!test)
+    static const char *console_cmd_test =
+        "Ext.RegisterConsoleCommand('test', function(cmd, filter)\n"
+        "  local TestRunner = {tests = {}, passed = 0, failed = 0}\n"
+        "  -- Stats tests\n"
+        "  TestRunner.tests['Stats.Get returns table'] = function()\n"
+        "    local s = Ext.Stats.Get('WPN_Longsword')\n"
+        "    assert(type(s) == 'table', 'Expected table')\n"
+        "    assert(s.Name == 'WPN_Longsword', 'Wrong name: ' .. tostring(s.Name))\n"
+        "  end\n"
+        "  TestRunner.tests['Stats.Get property access'] = function()\n"
+        "    local s = Ext.Stats.Get('WPN_Longsword')\n"
+        "    assert(s.Damage, 'Damage should be readable')\n"
+        "    assert(s.Type == 'Weapon', 'Expected Weapon type')\n"
+        "  end\n"
+        "  TestRunner.tests['Stats.Sync no crash'] = function()\n"
+        "    local s = Ext.Stats.Get('Projectile_FireBolt')\n"
+        "    s.Damage = '2d6'\n"
+        "    Ext.Stats.Sync('Projectile_FireBolt') -- Should not crash\n"
+        "  end\n"
+        "  -- JSON tests\n"
+        "  TestRunner.tests['JSON roundtrip'] = function()\n"
+        "    local orig = {a=1, b='test', c={nested=true}}\n"
+        "    local json = Ext.Json.Stringify(orig)\n"
+        "    local parsed = Ext.Json.Parse(json)\n"
+        "    assert(parsed.a == 1, 'a mismatch')\n"
+        "    assert(parsed.b == 'test', 'b mismatch')\n"
+        "    assert(parsed.c.nested == true, 'nested mismatch')\n"
+        "  end\n"
+        "  -- Timer tests\n"
+        "  TestRunner.tests['Timer.WaitFor returns handle'] = function()\n"
+        "    local handle = Ext.Timer.WaitFor(99999, function() end)\n"
+        "    assert(type(handle) == 'number', 'Expected number handle')\n"
+        "    Ext.Timer.Cancel(handle)\n"
+        "  end\n"
+        "  -- Events tests\n"
+        "  TestRunner.tests['Events.Subscribe returns ID'] = function()\n"
+        "    local id = Ext.Events.Subscribe('Tick', function() end)\n"
+        "    assert(type(id) == 'number', 'Expected number ID')\n"
+        "    Ext.Events.Unsubscribe('Tick', id)\n"
+        "  end\n"
+        "  -- Debug tests\n"
+        "  TestRunner.tests['Debug.ReadPtr safe'] = function()\n"
+        "    local v = Ext.Debug.ReadPtr(0)  -- Invalid addr returns nil\n"
+        "    assert(v == nil, 'Expected nil for invalid address')\n"
+        "  end\n"
+        "  -- Enums tests\n"
+        "  TestRunner.tests['Enums accessible'] = function()\n"
+        "    assert(Ext.Enums.DamageType, 'DamageType should exist')\n"
+        "    assert(Ext.Enums.DamageType.Fire, 'Fire damage should exist')\n"
+        "  end\n"
+        "  -- Run tests\n"
+        "  Ext.Print('\\n=== BG3SE Test Suite ===')\n"
+        "  for name, test in pairs(TestRunner.tests) do\n"
+        "    if not filter or name:find(filter) then\n"
+        "      local ok, err = pcall(test)\n"
+        "      if ok then\n"
+        "        Ext.Print('  PASS: ' .. name)\n"
+        "        TestRunner.passed = TestRunner.passed + 1\n"
+        "      else\n"
+        "        Ext.Print('  FAIL: ' .. name .. ' - ' .. tostring(err))\n"
+        "        TestRunner.failed = TestRunner.failed + 1\n"
+        "      end\n"
+        "    end\n"
+        "  end\n"
+        "  Ext.Print(string.format('\\nResults: %d passed, %d failed', TestRunner.passed, TestRunner.failed))\n"
+        "  if TestRunner.failed > 0 then Ext.Print('SOME TESTS FAILED') else Ext.Print('ALL TESTS PASSED') end\n"
+        "end)\n";
+
     // Execute each command registration chunk
     const char *console_cmds[] = {
         console_cmd_probe, console_cmd_dumpstat, console_cmd_findstr,
-        console_cmd_hexdump, console_cmd_types, console_cmd_pv
+        console_cmd_hexdump, console_cmd_types, console_cmd_pv, console_cmd_test
     };
     for (size_t i = 0; i < sizeof(console_cmds) / sizeof(console_cmds[0]); i++) {
         if (luaL_dostring(L, console_cmds[i]) != LUA_OK) {
@@ -733,6 +852,6 @@ void lua_ext_register_global_helpers(lua_State *L) {
         }
     }
 
-    LOG_LUA_INFO("Global helpers registered (_P, _D, _DS, _H, _PTR, _PE)");
-    LOG_LUA_INFO("Built-in console commands registered (!probe, !dumpstat, !findstr, !hexdump, !types, !pv_dump, !pv_set, !pv_save, !pv_reload)");
+    LOG_LUA_INFO("Global helpers registered (_P, _D, _DS, _H, _PTR, _PE, Debug.*)");
+    LOG_LUA_INFO("Console commands: !probe !dumpstat !findstr !hexdump !types !pv_* !test");
 }

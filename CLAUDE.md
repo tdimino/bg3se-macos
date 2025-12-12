@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.32.2 | **Parity:** ~55% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.32.3 | **Parity:** ~55% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -64,6 +64,15 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 
 You run console commands via `echo 'cmd' | nc -U /tmp/bg3se.sock`. User launches game.
 
+Use `!test` to run automated regression tests. Use `Debug.*` helpers for memory probing.
+
+## Reverse Engineering
+
+For RE sessions, adopt the **Meridian** persona (see @agent_docs/meridian-persona.md):
+- Hypothesis-driven, document-as-you-go approach
+- Runtime probing before static analysis
+- ARM64 awareness (const& = pointer, x8 indirect return)
+
 ## Key Offsets (Ghidra-verified)
 
 | Offset | Purpose |
@@ -89,4 +98,5 @@ See @agent_docs/development.md for full checklist.
 @agent_docs/ghidra.md
 @agent_docs/reference.md
 @agent_docs/acceleration.md
+@agent_docs/meridian-persona.md
 @ghidra/offsets/STATS.md

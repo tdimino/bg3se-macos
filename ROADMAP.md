@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.32.2
+## Current Status: v0.32.3
 
 **Overall Feature Parity: ~55%** (based on comprehensive API function count analysis)
 
@@ -1246,6 +1246,7 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.32.3 | 2025-12-12 | Testing Infrastructure - !test suite, Debug.* helpers, Frida scripts (#8) |
 | v0.32.2 | 2025-12-12 | Stats Sync Complete - ARM64 const& fix, RefMap linear search, Sync working (#32) |
 | v0.32.1 | 2025-12-12 | Stats Sync - SpellPrototype::Init, RefMap lookup, existing spell sync (#32) |
 | v0.32.0 | 2025-12-12 | Prototype Managers - All 5 singletons discovered, Sync() integration |
