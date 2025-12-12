@@ -1,5 +1,26 @@
 {
   "mcpServers": {
+    "ghidra": {
+      "description": "GhidraMCP - Query Ghidra directly from Claude for reverse engineering",
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "/path/to/GhidraMCP/bridge_mcp_ghidra.py",
+        "--ghidra-server",
+        "http://127.0.0.1:8080/"
+      ],
+      "setup": {
+        "instructions": [
+          "1. Download: curl -LO https://github.com/LaurieWired/GhidraMCP/releases/download/1.4/GhidraMCP-release-1-4.zip",
+          "2. Headless install: unzip to ~/ghidra/Ghidra/Extensions/, then unzip inner GhidraMCP-1-4.zip",
+          "3. Enable once in GUI: File → Configure → Developer → GhidraMCPPlugin",
+          "4. Clone bridge: git clone https://github.com/LaurieWired/GhidraMCP ~/ghidra/GhidraMCP",
+          "5. Install deps: pip install mcp requests",
+          "6. Update path above to your bridge_mcp_ghidra.py location",
+          "Requires: Ghidra running with binary loaded and plugin enabled on port 8080"
+        ]
+      }
+    },
     "perplexity": {
       "description": "Perplexity AI search - ARM64 docs, Ghidra scripting, reverse engineering",
       "type": "stdio",
@@ -46,14 +67,17 @@
     }
   },
   "metadata": {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "BG3SE-macOS development MCP configuration",
-    "lastUpdated": "2025-12-09",
+    "lastUpdated": "2025-12-12",
+    "configLocation": "Claude Code uses per-project config in ~/.claude.json under projects['/path'].mcpServers, NOT ~/.claude/settings.json",
     "notes": [
-      "Minimal set of MCP servers for C/reverse engineering workflow",
+      "MCP servers for C/reverse engineering workflow",
+      "ghidra: Direct Ghidra queries (decompile, list functions, search)",
       "perplexity: Research ARM64, Ghidra scripting, game engine internals",
       "context7: Lua C API, CMake, library documentation",
-      "Replace placeholder API keys with your actual keys"
+      "Replace placeholder paths and API keys with your actual values",
+      "Use 'claude mcp add' CLI or manually edit ~/.claude.json for your project"
     ]
   }
 }

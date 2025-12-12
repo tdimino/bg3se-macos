@@ -11,6 +11,42 @@ BG3SE-macOS requires reverse-engineering the macOS ARM64 binary to discover memo
 - Ghidra 11.x: `brew install ghidra` or download from [ghidra-sre.org](https://ghidra-sre.org)
 - Java 21: `brew install openjdk@21`
 
+## Quick Launch
+
+```bash
+ghidra-bg3  # Launch Ghidra with JAVA_HOME set (requires ~/bin in PATH)
+```
+
+Then open the BG3 project → select libOsiris.dylib → CodeBrowser.
+
+### GhidraMCP Integration
+
+With the GhidraMCP plugin enabled, an HTTP server starts on port 8080 when you open a binary in CodeBrowser. This enables Claude to query decompilation directly via MCP tools.
+
+**Quick setup:**
+1. Install plugin: `unzip GhidraMCP-release-1-4.zip -d ~/ghidra/Ghidra/Extensions/`
+2. Enable in Ghidra: File → Configure → Developer → GhidraMCPPlugin
+3. Install bridge: `pip install mcp requests && git clone https://github.com/LaurieWired/GhidraMCP ~/ghidra/GhidraMCP`
+4. Configure Claude Code (per-project in `~/.claude.json`):
+   ```json
+   "mcpServers": {
+     "ghidra": {
+       "type": "stdio",
+       "command": "python",
+       "args": ["/path/to/GhidraMCP/bridge_mcp_ghidra.py", "--ghidra-server", "http://127.0.0.1:8080/"]
+     }
+   }
+   ```
+
+**Note:** Claude Code MCP servers are configured per-project in `~/.claude.json`, NOT in `~/.claude/settings.json`.
+
+Verify server is running:
+```bash
+curl http://127.0.0.1:8080/methods | head -5
+```
+
+Full setup: See [plans/unexplored-re-techniques.md](../plans/unexplored-re-techniques.md)
+
 ## Headless Analysis
 
 For the 1GB+ BG3 binary, **always use the wrapper script**:
