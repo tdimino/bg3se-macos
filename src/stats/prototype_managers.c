@@ -37,8 +37,13 @@
 // From EvaluateInterrupt ADRP patterns: 0x108aecce0, 0x108aecd70
 #define OFFSET_INTERRUPT_PROTOTYPE_MANAGER_PTR 0x108aecce0ULL
 
-// SpellPrototypeManager - TBD (GetSpellPrototype at 0x10346e740)
-// StatusPrototypeManager - TBD
+// SpellPrototypeManager::m_ptr at 0x1089bac80 (discovered via GetSpellPrototype decompilation)
+// GetSpellPrototype at 0x10346e740: adrp x8,0x1089ba000; ldr x20,[x8, #0xc80] = 0x1089bac80
+#define OFFSET_SPELL_PROTOTYPE_MANAGER_PTR 0x1089bac80ULL
+
+// StatusPrototypeManager::m_ptr at 0x1089bdb30 (discovered via Ghidra symbol search)
+// Symbol: __ZN3eoc22StatusPrototypeManager5m_ptrE at 0x1089bdb30
+#define OFFSET_STATUS_PROTOTYPE_MANAGER_PTR 0x1089bdb30ULL
 
 // Additional globals from EvaluateInterrupt (may be related)
 #define OFFSET_MEMORY_MANAGER 0x108aefa98ULL  // Memory manager (appears in multiple functions)
@@ -133,22 +138,17 @@ bool prototype_managers_init(void *main_binary_base) {
                     (void*)g_pInterruptPrototypeManagerPtr,
                     (unsigned long long)OFFSET_INTERRUPT_PROTOTYPE_MANAGER_PTR);
 
-    // SpellPrototypeManager - need to discover via GetSpellPrototype analysis
-    // For now, try dlsym (unlikely to be exported, but worth checking)
-    void *handle = dlopen(NULL, RTLD_NOW);
-    if (handle) {
-        g_pSpellPrototypeManagerPtr = (void**)dlsym(handle, "__ZN3eoc21SpellPrototypeManager5m_ptrE");
-        if (g_pSpellPrototypeManagerPtr) {
-            LOG_STATS_DEBUG("[PrototypeManagers] SpellPrototypeManager found via dlsym: %p",
-                            (void*)g_pSpellPrototypeManagerPtr);
-        }
+    // SpellPrototypeManager - discovered via GetSpellPrototype decompilation
+    g_pSpellPrototypeManagerPtr = (void**)ghidra_to_runtime(OFFSET_SPELL_PROTOTYPE_MANAGER_PTR);
+    LOG_STATS_DEBUG("[PrototypeManagers] SpellPrototypeManager ptr addr: %p (Ghidra: 0x%llx)",
+                    (void*)g_pSpellPrototypeManagerPtr,
+                    (unsigned long long)OFFSET_SPELL_PROTOTYPE_MANAGER_PTR);
 
-        g_pStatusPrototypeManagerPtr = (void**)dlsym(handle, "__ZN3eoc22StatusPrototypeManager5m_ptrE");
-        if (g_pStatusPrototypeManagerPtr) {
-            LOG_STATS_DEBUG("[PrototypeManagers] StatusPrototypeManager found via dlsym: %p",
-                            (void*)g_pStatusPrototypeManagerPtr);
-        }
-    }
+    // StatusPrototypeManager - discovered via Ghidra symbol search
+    g_pStatusPrototypeManagerPtr = (void**)ghidra_to_runtime(OFFSET_STATUS_PROTOTYPE_MANAGER_PTR);
+    LOG_STATS_DEBUG("[PrototypeManagers] StatusPrototypeManager ptr addr: %p (Ghidra: 0x%llx)",
+                    (void*)g_pStatusPrototypeManagerPtr,
+                    (unsigned long long)OFFSET_STATUS_PROTOTYPE_MANAGER_PTR);
 
     g_Initialized = true;
     LOG_STATS_DEBUG("[PrototypeManagers] Initialization complete");
@@ -235,19 +235,22 @@ bool sync_spell_prototype(StatsObjectPtr obj, const char *name) {
 
     void *manager = get_spell_prototype_manager();
     if (!manager) {
-        LOG_STATS_DEBUG("[PrototypeManagers] sync_spell_prototype: Manager not found for '%s'", name);
-        LOG_STATS_DEBUG("[PrototypeManagers]   SpellPrototypeManager singleton address needs discovery");
-        LOG_STATS_DEBUG("[PrototypeManagers]   Analyze GetSpellPrototype at 0x10346e740 in Ghidra");
+        LOG_STATS_DEBUG("[PrototypeManagers] sync_spell_prototype: Manager not accessible for '%s'", name);
         return false;
     }
 
-    LOG_STATS_DEBUG("[PrototypeManagers] sync_spell_prototype: Manager found at %p", manager);
-    LOG_STATS_DEBUG("[PrototypeManagers]   TODO: Call SpellPrototype::Init or insert into manager HashMap");
+    LOG_STATS_DEBUG("[PrototypeManagers] sync_spell_prototype: Manager found at %p for '%s'", manager, name);
+
+    // SpellPrototypeManager uses RefMap<FixedString, SpellPrototype> for lookup
+    // From GetSpellPrototype decompilation (0x10346e740):
+    //   Loads manager from 0x1089bac80, then does HashMap lookup
 
     // TODO: Implementation requires:
     // 1. Find or create SpellPrototype in manager's HashMap
     // 2. Call SpellPrototype::Init(statsObject) or manually populate fields
-    // 3. Manager's HashMap: RefMap<FixedString, SpellPrototype>
+    // 3. SpellPrototype is a large struct (~300+ bytes)
+
+    LOG_STATS_DEBUG("[PrototypeManagers]   TODO: Insert prototype into manager's RefMap");
 
     return true;
 }
@@ -257,13 +260,21 @@ bool sync_status_prototype(StatsObjectPtr obj, const char *name) {
 
     void *manager = get_status_prototype_manager();
     if (!manager) {
-        LOG_STATS_DEBUG("[PrototypeManagers] sync_status_prototype: Manager not found for '%s'", name);
-        LOG_STATS_DEBUG("[PrototypeManagers]   StatusPrototypeManager singleton address needs discovery");
+        LOG_STATS_DEBUG("[PrototypeManagers] sync_status_prototype: Manager not accessible for '%s'", name);
         return false;
     }
 
-    LOG_STATS_DEBUG("[PrototypeManagers] sync_status_prototype: Manager found at %p", manager);
-    LOG_STATS_DEBUG("[PrototypeManagers]   TODO: Call StatusPrototype::Init or insert into manager HashMap");
+    LOG_STATS_DEBUG("[PrototypeManagers] sync_status_prototype: Manager found at %p for '%s'", manager, name);
+
+    // StatusPrototypeManager uses RefMap<FixedString, StatusPrototype> for lookup
+    // Singleton found via Ghidra at 0x1089bdb30
+
+    // TODO: Implementation requires:
+    // 1. Find or create StatusPrototype in manager's HashMap
+    // 2. Call StatusPrototype::Init(statsObject) or manually populate fields
+    // 3. StatusPrototype struct layout needs discovery
+
+    LOG_STATS_DEBUG("[PrototypeManagers]   TODO: Insert prototype into manager's RefMap");
 
     return true;
 }
@@ -391,10 +402,11 @@ void prototype_managers_dump_status(void) {
 
     LOG_STATS_DEBUG("");
     LOG_STATS_DEBUG("Sync Requirements:");
-    LOG_STATS_DEBUG("  SpellData -> SpellPrototypeManager (needs singleton discovery)");
-    LOG_STATS_DEBUG("  StatusData -> StatusPrototypeManager (needs singleton discovery)");
-    LOG_STATS_DEBUG("  PassiveData -> PassivePrototypeManager (singleton found, needs Init)");
-    LOG_STATS_DEBUG("  InterruptData -> InterruptPrototypeManager (singleton found, needs Init)");
+    LOG_STATS_DEBUG("  SpellData -> SpellPrototypeManager (singleton found at 0x1089bac80)");
+    LOG_STATS_DEBUG("  StatusData -> StatusPrototypeManager (singleton found at 0x1089bdb30)");
+    LOG_STATS_DEBUG("  PassiveData -> PassivePrototypeManager (singleton found at 0x108aeccd8)");
+    LOG_STATS_DEBUG("  InterruptData -> InterruptPrototypeManager (singleton found at 0x108aecce0)");
+    LOG_STATS_DEBUG("  BoostData -> BoostPrototypeManager (singleton found at 0x108991528)");
     LOG_STATS_DEBUG("  Weapon/Armor/etc -> No prototype manager (direct RPGStats use)");
 }
 

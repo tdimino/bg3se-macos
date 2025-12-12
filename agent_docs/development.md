@@ -188,6 +188,7 @@ When completing a feature or ending a session, update these files:
 
 | File | What to Update |
 |------|----------------|
+| `docs/CHANGELOG.md` | Add entry for new version with Added/Changed/Technical sections |
 | `src/core/version.h` | Bump `BG3SE_VERSION` if releasing |
 | `CLAUDE.md` | Version number, API status summary, key offsets |
 | `README.md` | Version number, feature status table |

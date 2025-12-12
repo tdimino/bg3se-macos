@@ -494,23 +494,28 @@ struct SpellPrototype {
 
 ### macOS Findings (Dec 2025)
 
-**Ghidra script:** `find_prototype_managers.py`
+**Ghidra script:** `find_prototype_managers.py`, `analyze_get_spell_prototype.py`, `find_status_manager.py`
 
-**Discovered symbols:**
+**Discovered Singleton Addresses (all verified Dec 2025):**
+| Manager | Singleton Address | Discovery Method |
+|---------|------------------|------------------|
+| `SpellPrototypeManager::m_ptr` | `0x1089bac80` | GetSpellPrototype decompilation (ADRP+LDR pattern) |
+| `StatusPrototypeManager::m_ptr` | `0x1089bdb30` | Ghidra symbol search |
+| `PassivePrototypeManager*` | `0x108aeccd8` | GetPassivePrototype ADRP+LDR pattern |
+| `InterruptPrototypeManager*` | `0x108aecce0` | EvaluateInterrupt ADRP patterns |
+| `BoostPrototypeManager::m_ptr` | `0x108991528` | Symbol table (not exported via dlsym) |
+
+**Discovered Functions:**
 | Function | Address | Notes |
 |----------|---------|-------|
 | `GetPassivePrototype` | `0x102655c14` | Retrieves passive by name |
 | `GetPassivePrototypes` | `0x102014284` | Bulk retrieval |
+| `GetSpellPrototype` (SpellCastWrapper) | `0x10346e740` | Loads SpellPrototypeManager singleton |
+| `__GLOBAL__sub_I_SpellPrototype.cpp` | `0x1066e389c` | Static initializer |
+| `__GLOBAL__sub_I_StatusPrototypeManager.cpp` | `0x106704ad4` | Static initializer |
 | `__GLOBAL__sub_I_PassivePrototype.cpp` | `0x106691108` | Static initializer |
 
-**Symbol patterns found:**
-- Functions referencing `SpellPrototypeManager` in lambdas/closures
-- Functions referencing `StatusPrototypeManager` in lambdas/closures
-- Character creation using `Selector<PassivePrototype>`
-
-**Not found:**
-- Direct singleton pointer symbols (not exported)
-- Init function symbols (likely inlined or mangled differently)
+**All 5 prototype manager singletons discovered - Issue #32 singleton discovery complete!**
 
 ### Implementation Approach
 
@@ -548,19 +553,20 @@ To complete `Ext.Stats.Sync()`:
    }
    ```
 
-### Current State (v0.29.0)
+### Current State (v0.32.0)
 
 - `Ext.Stats.Create()` - Works, creates stats in shadow registry
-- `Ext.Stats.Sync()` - Marks as synced, but NO prototype manager integration
-- Created stats accessible via `Ext.Stats.Get()` but NOT usable by game
+- `Ext.Stats.Sync()` - Calls prototype managers (manager access verified)
+- **All 5 singleton addresses discovered** (Spell, Status, Passive, Interrupt, Boost)
+- Created stats accessible via `Ext.Stats.Get()`
+- Runtime manager pointer resolution implemented in `prototype_managers.c`
 
-### Effort Estimate
+### Remaining Work (Medium effort)
 
-**Medium-High effort:**
-- 4 prototype managers to integrate (Spell, Status, Passive, Interrupt)
-- Each requires: singleton discovery + Init function + struct layout
-- ARM64-specific challenges (struct packing, calling conventions)
-- May require game allocator for new prototypes
+- Implement RefMap insertion for each prototype type
+- Understand Prototype struct layouts on ARM64
+- Call `Prototype::Init()` or manually populate prototype fields
+- Test that synced stats are usable by game (Osi.AddSpell, etc.)
 
 ### Related Issue
 

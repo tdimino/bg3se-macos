@@ -19,16 +19,23 @@ Each entry includes:
 
 ### Added
 - Prototype managers infrastructure (`src/stats/prototype_managers.c/h`)
-- PassivePrototypeManager singleton at `0x108aeccd8`
-- BoostPrototypeManager singleton at `0x108991528`
+- **All 5 prototype manager singletons discovered:**
+  - SpellPrototypeManager::m_ptr at `0x1089bac80`
+  - StatusPrototypeManager::m_ptr at `0x1089bdb30`
+  - PassivePrototypeManager at `0x108aeccd8`
+  - InterruptPrototypeManager at `0x108aecce0`
+  - BoostPrototypeManager at `0x108991528`
 - Debug functions: `Ext.Stats.DumpPrototypeManagers()`, `ProbePrototypeManager()`, `GetPrototypeManagerPtrs()`
+- Ghidra scripts: `analyze_get_spell_prototype.py`, `find_status_manager.py`
 
 ### Changed
-- `Ext.Stats.Sync()` now calls prototype managers for PassiveData types
+- `Ext.Stats.Sync()` now calls all prototype managers
 - Verified 16/21 component property layouts working via entity access
 
 ### Technical
 - Ghidra offset discovery via ADRP+LDR pattern analysis
+- GetSpellPrototype decompilation at `0x10346e740` revealed SpellPrototypeManager
+- Ghidra symbol search revealed StatusPrototypeManager
 - Runtime verification of manager instance pointers
 
 ---
