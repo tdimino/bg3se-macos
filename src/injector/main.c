@@ -103,6 +103,10 @@ extern "C" {
 // Lifetime scoping
 #include "lifetime.h"
 
+// Localization system
+#include "localization.h"
+#include "lua_localization.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -679,6 +683,9 @@ static void register_ext_api(lua_State *L) {
 
     // Ext.Enums namespace (enum and bitfield types)
     enum_register_ext_enums(L);
+
+    // Ext.Loca namespace (localization system)
+    lua_ext_register_loca(L, -1);
 
     // Set Ext as global
     lua_setglobal(L, "Ext");
@@ -2551,6 +2558,10 @@ static void install_hooks(void) {
                 } else {
                     LOG_STATS_INFO("Stats system initialized (will be ready after game loads)");
                 }
+
+                // Initialize localization system
+                localization_init(binary_base);
+                LOG_CORE_INFO("Localization system initialized");
                 found = true;
             }
         }
