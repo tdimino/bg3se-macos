@@ -14,7 +14,7 @@ Techniques discovered via Exa MCP research (2025-12-12) that we haven't yet empl
 | Frida Stalker | Frida | #32 (hash function) | 1h | ⚠️ CRASHES BG3 |
 | frida-itrace | Frida | Complex flows | 2h | NOT STARTED |
 | Parallel Ghidra | Bash/Scripts | Init discovery | 1h | NOT STARTED |
-| pyghidra-mcp | MCP server | Multi-binary | 3h | ✅ INSTALLED |
+| pyghidra-mcp | MCP server | Multi-binary | 3h | ✅ VERIFIED WORKING |
 
 ---
 
@@ -239,6 +239,25 @@ uvx pyghidra-mcp -t streamable-http -p 8000 ~/ghidra_projects/BG3_arm64_current.
 ```
 
 **Note:** First analysis of 500MB BG3 binary will take 30-60+ minutes. Results are cached in `pyghidra_mcp_projects/`.
+
+### ✅ Verified Working (Dec 12, 2025)
+
+PyGhidra-MCP was successfully used to:
+- List 1000s of BG3 functions (Curl, Graphine/Granite, Wwise audio, game logic)
+- Search for `SpellPrototype`, `RefMap`, `XXH3` functions
+- Decompile `XXH_INLINE_XXH3_64bits_withSeed` to verify hash algorithm
+- Discover `DEPRECATED_RefMapImpl::GetOrAdd` function addresses
+
+**Key Discovery - GetOrAdd Functions (for RefMap insertion):**
+
+| Template Specialization | Address |
+|------------------------|---------|
+| `GetOrAdd<FixedString, eoc::ai::ActionResourceMappingComponent*>` | `0x1003da9bc` |
+| `GetOrAdd<FixedString, eoc::AbilityDistributionPresetMappingComponent*>` | `0x1003dd014` |
+| `GetOrAdd<FixedString, eoc::AnimationSetMappingComponent*>` | `0x100401a9c` |
+| `GetOrAdd<FixedString, eoc::spell::SpellPrototype*>` | (search pending) |
+
+**Note:** `claude mcp list` may show "Failed to connect" but the actual MCP tools work correctly - this is a status display quirk.
 
 ---
 

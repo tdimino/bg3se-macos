@@ -565,14 +565,16 @@ The SpellPrototypeManager uses a `DEPRECATED_RefMapImpl` with this layout:
 
 **✅ SOLVED: BG3 uses XXH3 (XXHash 3)**
 
-Via GhidraMCP decompilation, discovered BG3 uses the **XXH3_64bits** hash algorithm - an open standard by Cyan4973.
+Via GhidraMCP and pyghidra-mcp decompilation, discovered BG3 uses the **XXH3_64bits** hash algorithm - an open standard by Cyan4973.
 
-**Functions found in binary:**
-| Function | Address | Purpose |
+**Functions found in binary (pyghidra-mcp verified Dec 12, 2025):**
+| Function | Address (Absolute) | Purpose |
 |----------|---------|---------|
-| `XXH_INLINE_XXH3_64bits` | `0x000386d4` | Main entry point |
-| `XXH3_len_129to240_64b` | `0x00038f00` | Medium-length inputs |
-| `XXH3_hashLong_64b_default` | `0x0003910c` | Long inputs (>240 bytes) |
+| `_XXH32` | `0x100b3f2ac` | XXH32 (legacy, not used for RefMap) |
+| `XXH_INLINE_XXH3_64bits_withSeed` | `0x105d092cc` | Main XXH3 entry point |
+| `XXH3_hashLong_64b_default` | `0x10636af84` | Long inputs (>240 bytes) |
+
+**Note:** Addresses are absolute (include base address ~0x100000000). For Ghidra analysis, subtract base to get file offset.
 
 **Key constants from decompilation:**
 - `0xc73ab174c5ecd5a2` - XOR mixing constant
