@@ -23,9 +23,11 @@
 // ImmutableDataHeadmaster m_State pointer address (for TypeContext traversal)
 #define OFFSET_MSTATE_PTR             0x083c4a68  // PTR_m_State - pointer to m_State
 
-// FeatManager structure offsets (from GetFeats decompilation @ 0x101b752b4)
-// When captured via GetFeats hook (x1 parameter), use these offsets:
-#define FEATMANAGER_OFFSET_COUNT      0x7C   // int32_t count
+// FeatManager structure offsets
+// NOTE: TypeContext gives us a metadata structure, not the real FeatManager.
+// Real FeatManager (from GetFeats) has count at +0x7C, but TypeContext has count at +0x00.
+// Using TypeContext layout since hooks are disabled:
+#define FEATMANAGER_OFFSET_COUNT      0x00   // int32_t count (TypeContext metadata)
 #define FEATMANAGER_OFFSET_ARRAY      0x80   // Feat* array pointer
 
 // Feat structure
@@ -128,10 +130,6 @@ static int capture_managers_via_typecontext(void) {
 
             // Try to match against known manager names
             for (int i = 0; i < STATICDATA_COUNT; i++) {
-                // Skip FeatManager - it must be captured via GetFeats hook
-                // (TypeContext gives us metadata, not the real manager with correct offsets)
-                if (i == STATICDATA_FEAT) continue;
-
                 // Only capture if not already captured
                 if (!g_staticdata.managers[i] && strcmp(name, s_manager_type_names[i]) == 0) {
                     g_staticdata.managers[i] = typeinfo->manager_ptr;
@@ -275,23 +273,12 @@ bool staticdata_manager_init(void *main_binary_base) {
     // Clear manager pointers
     memset(g_staticdata.managers, 0, sizeof(g_staticdata.managers));
 
-    // Install hook for FeatManager::GetFeats
-    void* feat_getfeats_addr = (void*)((uint8_t*)main_binary_base + OFFSET_FEAT_GETFEATS);
+    // NOTE: GetFeats/GetAllFeats hooks DISABLED - they break feat selection UI
+    // The hook intercepts correctly but breaks the original function call.
+    // For now, use TypeContext capture for FeatManager instead.
+    // TODO: Debug why original function call fails after hook
 
-    if (DobbyHook(feat_getfeats_addr, (void*)hook_FeatGetFeats, (void**)&g_orig_FeatGetFeats) == 0) {
-        log_message("[StaticData] Hooked FeatManager::GetFeats at %p", feat_getfeats_addr);
-    } else {
-        log_message("[StaticData] WARNING: Failed to hook FeatManager::GetFeats");
-    }
-
-    // Install hook for GetAllFeats (called from UI, has environment pointer)
-    void* getallfeats_addr = (void*)((uint8_t*)main_binary_base + OFFSET_GETALLFEATS);
-
-    if (DobbyHook(getallfeats_addr, (void*)hook_GetAllFeats, (void**)&g_orig_GetAllFeats) == 0) {
-        log_message("[StaticData] Hooked GetAllFeats at %p", getallfeats_addr);
-    } else {
-        log_message("[StaticData] WARNING: Failed to hook GetAllFeats");
-    }
+    log_message("[StaticData] GetFeats hooks DISABLED (broke feat UI) - using TypeContext only");
 
     g_staticdata.initialized = true;
     log_message("[StaticData] Static data manager initialized");
