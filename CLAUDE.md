@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.32.8 | **Parity:** ~65% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.32.8 | **Parity:** ~66% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -54,7 +54,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 - **Ext.Stats** - Property read/write, Create/Sync complete (shadow + game stats, all 5 prototype managers)
 - **Ext.Events** - 10 events with priority ordering, Once flag, Prevent pattern
 - **Ext.Vars** - PersistentVars, User Variables, Mod Variables
-- **Ext.StaticData** - Immutable game data (Feats, hook-based capture)
+- **Ext.StaticData** - Immutable game data (Feat type via Frida capture: GetAll, Get, LoadFridaCapture)
 - **Ext.Debug** - Memory introspection (ReadPtr, ProbeStruct, HexDump)
 
 ## Conventions

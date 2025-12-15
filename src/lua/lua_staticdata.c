@@ -281,6 +281,38 @@ static int lua_staticdata_trytypecontext(lua_State *L) {
 }
 
 // ============================================================================
+// Ext.StaticData.LoadFridaCapture()
+// ============================================================================
+
+/**
+ * Load captured managers from Frida capture file.
+ *
+ * Workflow:
+ * 1. In terminal: frida -U -n "Baldur's Gate 3" -l tools/frida/capture_featmanager_live.js
+ * 2. In game: Open respec or level-up and click on feats
+ * 3. In console: Ext.StaticData.LoadFridaCapture()
+ * 4. Now GetAll("Feat") will return actual feat data
+ *
+ * @return boolean true if capture loaded successfully
+ */
+static int lua_staticdata_loadfridacapture(lua_State *L) {
+    bool success = staticdata_load_frida_capture();
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+/**
+ * Check if Frida capture is available.
+ *
+ * @return boolean true if capture file exists
+ */
+static int lua_staticdata_fridacaptureavailable(lua_State *L) {
+    bool available = staticdata_frida_capture_available();
+    lua_pushboolean(L, available);
+    return 1;
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -294,6 +326,8 @@ static const luaL_Reg staticdata_funcs[] = {
     {"DumpEntries", lua_staticdata_dumpentries},
     {"Probe", lua_staticdata_probe},
     {"TryTypeContext", lua_staticdata_trytypecontext},
+    {"LoadFridaCapture", lua_staticdata_loadfridacapture},
+    {"FridaCaptureAvailable", lua_staticdata_fridacaptureavailable},
     {NULL, NULL}
 };
 

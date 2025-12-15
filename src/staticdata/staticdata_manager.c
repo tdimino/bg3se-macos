@@ -700,6 +700,103 @@ const char* staticdata_get_display_name(StaticDataType type, StaticDataPtr entry
 }
 
 // ============================================================================
+// File-Based Frida Capture Integration
+// ============================================================================
+
+#define FRIDA_CAPTURE_FILE "/tmp/bg3se_featmanager.txt"
+
+/**
+ * Try to load captured FeatManager pointer from file.
+ * The file should contain lines:
+ *   Line 1: FeatManager pointer (hex)
+ *   Line 2: Count
+ *   Line 3: Array pointer (hex)
+ *
+ * Returns true if successfully loaded.
+ */
+static bool load_captured_featmanager(void) {
+    FILE* f = fopen(FRIDA_CAPTURE_FILE, "r");
+    if (!f) {
+        return false;
+    }
+
+    char line1[64], line2[64], line3[64];
+    if (!fgets(line1, sizeof(line1), f) ||
+        !fgets(line2, sizeof(line2), f) ||
+        !fgets(line3, sizeof(line3), f)) {
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+
+    // Parse pointer addresses
+    void* feat_mgr = NULL;
+    int count = 0;
+    void* array = NULL;
+
+    if (sscanf(line1, "%p", &feat_mgr) != 1 && sscanf(line1, "0x%lx", (unsigned long*)&feat_mgr) != 1) {
+        log_message("[StaticData] Failed to parse FeatManager pointer from capture file");
+        return false;
+    }
+    count = atoi(line2);
+    if (sscanf(line3, "%p", &array) != 1 && sscanf(line3, "0x%lx", (unsigned long*)&array) != 1) {
+        log_message("[StaticData] Failed to parse array pointer from capture file");
+        return false;
+    }
+
+    // Validate the captured data
+    if (!feat_mgr || count <= 0 || count > 1000 || !array) {
+        log_message("[StaticData] Invalid captured data: mgr=%p count=%d array=%p", feat_mgr, count, array);
+        return false;
+    }
+
+    // Verify the pointers are still valid
+    int32_t verify_count = 0;
+    void* verify_array = NULL;
+    if (!safe_memory_read_i32((mach_vm_address_t)feat_mgr + FEATMANAGER_REAL_COUNT_OFFSET, &verify_count) ||
+        !safe_memory_read_pointer((mach_vm_address_t)feat_mgr + FEATMANAGER_REAL_ARRAY_OFFSET, &verify_array)) {
+        log_message("[StaticData] Captured FeatManager pointer no longer valid (game restarted?)");
+        return false;
+    }
+
+    if (verify_count != count || verify_array != array) {
+        log_message("[StaticData] Captured FeatManager data mismatch (count=%d vs %d, array=%p vs %p)",
+                    verify_count, count, verify_array, array);
+        // Use the verified values instead
+        count = verify_count;
+        array = verify_array;
+    }
+
+    // Store as real manager
+    g_staticdata.real_managers[STATICDATA_FEAT] = feat_mgr;
+    log_message("[StaticData] Loaded REAL FeatManager from capture file: %p (count=%d, array=%p)",
+                feat_mgr, count, array);
+
+    return true;
+}
+
+/**
+ * Lua-callable function to load captured managers from Frida.
+ * Call this after running the Frida capture script.
+ */
+bool staticdata_load_frida_capture(void) {
+    log_message("[StaticData] Attempting to load Frida capture from %s", FRIDA_CAPTURE_FILE);
+    return load_captured_featmanager();
+}
+
+/**
+ * Check if Frida capture is available (file exists and is recent).
+ */
+bool staticdata_frida_capture_available(void) {
+    FILE* f = fopen(FRIDA_CAPTURE_FILE, "r");
+    if (f) {
+        fclose(f);
+        return true;
+    }
+    return false;
+}
+
+// ============================================================================
 // Debugging
 // ============================================================================
 
@@ -707,6 +804,11 @@ void staticdata_try_typecontext_capture(void) {
     log_message("[StaticData] Attempting TypeContext capture...");
     int captured = capture_managers_via_typecontext();
     log_message("[StaticData] Captured %d managers via TypeContext", captured);
+
+    // Also try to load Frida capture if available
+    if (staticdata_frida_capture_available()) {
+        load_captured_featmanager();
+    }
 }
 
 void staticdata_dump_status(void) {

@@ -211,12 +211,35 @@ const char* staticdata_get_name(StaticDataType type, StaticDataPtr entry);
 const char* staticdata_get_display_name(StaticDataType type, StaticDataPtr entry);
 
 // ============================================================================
+// Frida Capture Integration
+// ============================================================================
+
+/**
+ * Load captured manager pointers from Frida capture file.
+ * The Frida script (tools/frida/capture_featmanager_live.js) writes
+ * manager pointers to /tmp/bg3se_featmanager.txt when triggered.
+ *
+ * Call this after running the Frida script and triggering feat selection.
+ *
+ * @return true if capture file was loaded successfully
+ */
+bool staticdata_load_frida_capture(void);
+
+/**
+ * Check if Frida capture is available (file exists).
+ *
+ * @return true if capture file exists
+ */
+bool staticdata_frida_capture_available(void);
+
+// ============================================================================
 // Debugging
 // ============================================================================
 
 /**
  * Try to capture managers via TypeContext traversal.
  * Alternative to hook-based capture, useful for debugging.
+ * Also loads Frida capture if available.
  */
 void staticdata_try_typecontext_capture(void);
 

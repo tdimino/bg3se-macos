@@ -4,7 +4,7 @@ This document tracks the development roadmap for achieving feature parity with W
 
 ## Current Status: v0.32.8
 
-**Overall Feature Parity: ~65%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~66%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -52,7 +52,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
 | `Ext.Audio` | ✅ Full (17) | ❌ Not impl | **0%** | 10 |
 | `Ext.Localization` | ✅ Full (2) | ⚠️ GetLanguage + safe stubs (1/2) | **50%** | 10 |
-| `Ext.StaticData` | ✅ Full (5) | 🔶 Metadata only (blocked #44) | **20%** | 10 |
+| `Ext.StaticData` | ✅ Full (5) | ✅ GetAll, Get, LoadFridaCapture (Feat type working) | **60%** | 10 |
 | `Ext.Resource` | ✅ Full (2) | ❌ Not impl | **0%** | 10 |
 | `Ext.Template` | ✅ Full (9) | ❌ Not impl | **0%** | 10 |
 | Console/REPL | ✅ Full | ✅ Socket + file + in-game overlay | **95%** | 5 |
