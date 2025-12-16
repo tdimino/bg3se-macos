@@ -285,6 +285,11 @@ static const struct luaL_Reg template_functions[] = {
 };
 
 void lua_template_register(lua_State* L, int ext_table_index) {
+    // Convert to absolute index before pushing new values
+    if (ext_table_index < 0) {
+        ext_table_index = lua_gettop(L) + ext_table_index + 1;
+    }
+
     // Create Ext.Template table
     lua_newtable(L);
 
