@@ -280,6 +280,15 @@ static int lua_staticdata_trytypecontext(lua_State *L) {
     return 0;
 }
 
+/**
+ * Dump feat array memory for debugging structure layout (debug function).
+ */
+static int lua_staticdata_dumpfeatmemory(lua_State *L) {
+    (void)L;
+    staticdata_dump_feat_memory();
+    return 0;
+}
+
 // ============================================================================
 // Ext.StaticData.LoadFridaCapture()
 // ============================================================================
@@ -328,6 +337,7 @@ static const luaL_Reg staticdata_funcs[] = {
     {"TryTypeContext", lua_staticdata_trytypecontext},
     {"LoadFridaCapture", lua_staticdata_loadfridacapture},
     {"FridaCaptureAvailable", lua_staticdata_fridacaptureavailable},
+    {"DumpFeatMemory", lua_staticdata_dumpfeatmemory},
     {NULL, NULL}
 };
 

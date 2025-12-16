@@ -1102,49 +1102,52 @@ Ext.Mod.GetModInfo(guid)
 ## Phase 10: Data Access & Audio
 
 ### 10.1 Ext.StaticData API
-**Status:** 🔶 ~20% Complete - [Issue #40](https://github.com/tdimino/bg3se-macos/issues/40) (Blocked by [#44](https://github.com/tdimino/bg3se-macos/issues/44))
+**Status:** ✅ ~60% Complete - [Issue #40](https://github.com/tdimino/bg3se-macos/issues/40)
 
 Access to static game resource types (Feats, Races, Backgrounds, Origins, Gods, Classes).
 
 ```lua
+-- Frida capture workflow (required once per game session)
+Ext.StaticData.LoadFridaCapture()  -- Load captured manager pointers
+
 -- Get all entries of a type
-local feats = Ext.StaticData.GetAll("Feat")
+local feats = Ext.StaticData.GetAll("Feat")  -- Returns 41 feats with GUIDs
 
 -- Get by GUID
-local feat = Ext.StaticData.Get("Feat", "e7ab823e-32b2-49f8-b7b3-7f9c2d4c1f5e")
+local feat = Ext.StaticData.Get("Feat", "d215b9ad-9753-4d74-f98f-bf24ce1dd653")
 
 -- Get count
-local count = Ext.StaticData.GetCount("Feat")
-
--- Check if ready
-local ready = Ext.StaticData.IsReady("Feat")
+local count = Ext.StaticData.GetCount("Feat")  -- Returns 41
 
 -- Debug helpers
 Ext.StaticData.DumpStatus()
-Ext.StaticData.DumpEntries("Feat", 10)
+Ext.StaticData.DumpFeatMemory()  -- Diagnostic memory dump
 ```
 
 **Implementation Notes:**
-- API surface implemented and stable (GetCount, GetAll, Get, IsReady, GetTypes)
-- TypeContext capture returns metadata counts (37 feats registered)
-- **Key Finding (Dec 2025):** TypeContext gives registration metadata, NOT actual manager data
-- Real FeatManager is at Environment+0x130 with count at +0x7C, array at +0x80
-- **CRITICAL:** FeatManager is session-scoped (only exists during character creation/respec)
-- See: `ghidra/offsets/STATICDATA.md`, `docs/solutions/reverse-engineering/staticdata-featmanager-discovery.md`
+- **Frida capture workflow** - Runtime capture of FeatManager pointer via Frida script
+- Safe memory reads prevent crashes when captured pointers become stale
+- Offsets verified via Ghidra: count at +0x7C, array at +0x80, FEAT_SIZE=0x128
 
-**What Works:**
-- ✅ API functions exist and don't crash
-- ✅ TypeContext traversal captures 7 manager types
-- ✅ Metadata counts available (Feat: 37, Race, Origin, etc.)
+**What Works (Dec 15, 2025):**
+- ✅ `GetAll("Feat")` returns 41 feats with valid GUIDs
+- ✅ `Get("Feat", guid)` retrieves single feat by GUID
+- ✅ `LoadFridaCapture()` loads manager pointers from Frida capture file
+- ✅ Safe memory reads prevent crashes on stale pointers
+- ✅ `DumpFeatMemory()` diagnostic for debugging
 
-**What's Missing (Blocked by [#44](https://github.com/tdimino/bg3se-macos/issues/44)):**
-- ❌ Full feat data (names, GUIDs, descriptions) - requires FeatManager::GetFeats hook
-- ❌ Hook-based capture during character creation/respec sessions
-- ❌ Dobby hooks corrupt ARM64 PC-relative instructions (ADRP+LDR patterns)
+**Workflow:**
+1. Run: `frida -p <PID> -l tools/frida/capture_featmanager_live.js`
+2. In-game: Navigate to feat selection (level-up/respec)
+3. In console: `Ext.StaticData.LoadFridaCapture()`
+4. Use `GetAll("Feat")` / `Get("Feat", guid)`
 
-**Blocker:** ARM64-safe inline hooking infrastructure ([Issue #44](https://github.com/tdimino/bg3se-macos/issues/44)) is required before FeatManager::GetFeats can be hooked reliably.
+**Remaining Work:**
+- [ ] Extract feat names from structure (FixedString resolution)
+- [ ] Expand pattern to Race, Background, Origin, God, Class types
+- [ ] Auto-capture without Frida (requires ARM64-safe hooking)
 
-Resource types: Feat (🔶 metadata only), Race (🔶), Background (🔶), Origin (🔶), God (🔶), ClassDescription (🔶)
+Resource types: Feat (✅ working), Race (🔶 pending), Background (🔶), Origin (🔶), God (🔶), ClassDescription (🔶)
 
 ### 10.2 Ext.Resource & Ext.Template API
 **Status:** ❌ Not Started - [Issue #41](https://github.com/tdimino/bg3se-macos/issues/41)

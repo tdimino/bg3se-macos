@@ -5,8 +5,11 @@
  * Hooks GetFeats to capture the real FeatManager pointer.
  */
 
-// Offsets (from Ghidra)
+// Offsets (from Ghidra - verified Dec 15 2025)
 const OFFSET_GETFEATS = 0x01b752b4;  // FeatManager::GetFeats
+const OFFSET_GETALLFEATS = 0x0120b3e8;  // GetAllFeats
+const OFFSET_GETFROMUISELECTABLEFEATS = 0x022b0f44;  // GetFromUISelectableFeats
+const OFFSET_SETUPFEATS = 0x022fd8cc;  // SetupFeats
 
 // FeatManager structure offsets
 const FEATMANAGER_COUNT_OFFSET = 0x7C;
@@ -36,10 +39,75 @@ if (!mainModule) {
 console.log("[*] Main module: " + mainModule.name + " @ " + mainModule.base + " (size: " + mainModule.size + ")");
 
 var getFeatsAddr = mainModule.base.add(OFFSET_GETFEATS);
+var getAllFeatsAddr = mainModule.base.add(OFFSET_GETALLFEATS);
+var getUIFeatsAddr = mainModule.base.add(OFFSET_GETFROMUISELECTABLEFEATS);
+var setupFeatsAddr = mainModule.base.add(OFFSET_SETUPFEATS);
+
 console.log("[*] GetFeats at: " + getFeatsAddr);
+console.log("[*] GetAllFeats at: " + getAllFeatsAddr);
+console.log("[*] GetFromUISelectableFeats at: " + getUIFeatsAddr);
+console.log("[*] SetupFeats at: " + setupFeatsAddr);
 
 var capturedFeatManager = null;
 
+// Helper to try capturing FeatManager from various arg positions
+function tryCaptureFeatManager(funcName, args) {
+    // Try different argument positions (x0, x1, x2)
+    for (var i = 0; i < 4; i++) {
+        var ptr = args[i];
+        if (ptr && !ptr.isNull()) {
+            try {
+                // Check if it looks like a FeatManager (has count at +0x7C, array at +0x80)
+                var maybeCount = ptr.add(FEATMANAGER_COUNT_OFFSET).readU32();
+                var maybeArray = ptr.add(FEATMANAGER_ARRAY_OFFSET).readPointer();
+
+                if (maybeCount > 0 && maybeCount < 1000 && !maybeArray.isNull()) {
+                    console.log("\n[+] " + funcName + " - Found FeatManager candidate at arg[" + i + "]: " + ptr);
+                    console.log("    count@+0x7C = " + maybeCount);
+                    console.log("    array@+0x80 = " + maybeArray);
+                    return { ptr: ptr, count: maybeCount, array: maybeArray };
+                }
+            } catch (e) {
+                // Ignore read errors
+            }
+        }
+    }
+    return null;
+}
+
+// Hook all feat functions
+[
+    { addr: getFeatsAddr, name: "GetFeats" },
+    { addr: getAllFeatsAddr, name: "GetAllFeats" },
+    { addr: getUIFeatsAddr, name: "GetFromUISelectableFeats" },
+    { addr: setupFeatsAddr, name: "SetupFeats" }
+].forEach(function(hook) {
+    try {
+        Interceptor.attach(hook.addr, {
+            onEnter: function(args) {
+                var result = tryCaptureFeatManager(hook.name, args);
+                if (result && !capturedFeatManager) {
+                    capturedFeatManager = result.ptr;
+                    console.log("[+] CAPTURED FeatManager via " + hook.name + "!");
+
+                    // Write to file
+                    var outputPath = "/tmp/bg3se_featmanager.txt";
+                    var file = new File(outputPath, "w");
+                    file.write(result.ptr.toString() + "\n");
+                    file.write(result.count.toString() + "\n");
+                    file.write(result.array.toString() + "\n");
+                    file.close();
+                    console.log("[+] Wrote to " + outputPath);
+                }
+            }
+        });
+        console.log("[*] Hooked " + hook.name);
+    } catch (e) {
+        console.log("[!] Failed to hook " + hook.name + ": " + e);
+    }
+});
+
+// Keep old hook for backwards compatibility
 Interceptor.attach(getFeatsAddr, {
     onEnter: function(args) {
         // x0 = output buffer, x1 = FeatManager*

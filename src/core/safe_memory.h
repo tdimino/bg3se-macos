@@ -88,6 +88,15 @@ bool safe_memory_read_u32(mach_vm_address_t address, uint32_t *out_value);
 bool safe_memory_read_i32(mach_vm_address_t address, int32_t *out_value);
 
 /**
+ * Safely read a uint8_t value from an address.
+ *
+ * @param address Address to read from
+ * @param out_value Output: the value read
+ * @return true on success, false on failure
+ */
+bool safe_memory_read_u8(mach_vm_address_t address, uint8_t *out_value);
+
+/**
  * Safely read a null-terminated string from an address.
  * Reads one byte at a time until null terminator or max_len reached.
  *

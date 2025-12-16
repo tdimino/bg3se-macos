@@ -264,4 +264,10 @@ void staticdata_dump_entries(StaticDataType type, int max_entries);
  */
 void staticdata_probe_manager(StaticDataType type, int probe_range);
 
+/**
+ * Dump feat array memory for debugging structure layout.
+ * Useful when feat access crashes to understand actual memory layout.
+ */
+void staticdata_dump_feat_memory(void);
+
 #endif // STATICDATA_MANAGER_H

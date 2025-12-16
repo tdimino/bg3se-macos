@@ -122,6 +122,14 @@ bool safe_memory_read_i32(mach_vm_address_t address, int32_t *out_value) {
     return safe_memory_read(address, out_value, sizeof(int32_t));
 }
 
+bool safe_memory_read_u8(mach_vm_address_t address, uint8_t *out_value) {
+    if (out_value == NULL) {
+        return false;
+    }
+    *out_value = 0;
+    return safe_memory_read(address, out_value, sizeof(uint8_t));
+}
+
 bool safe_memory_read_string(mach_vm_address_t address, char *buffer, size_t max_len) {
     if (buffer == NULL || max_len == 0) {
         return false;

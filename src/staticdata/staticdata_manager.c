@@ -536,14 +536,33 @@ static void* feat_get_by_index(int index) {
         return NULL;
     }
 
-    int32_t count = *(int32_t*)((uint8_t*)mgr + FEATMANAGER_REAL_COUNT_OFFSET);
+    // Use safe memory reads to prevent crashes
+    int32_t count = 0;
+    if (!safe_memory_read_i32((mach_vm_address_t)mgr + FEATMANAGER_REAL_COUNT_OFFSET, &count)) {
+        log_message("[StaticData] Cannot read feat count at %p+0x%x", mgr, FEATMANAGER_REAL_COUNT_OFFSET);
+        return NULL;
+    }
     if (index < 0 || index >= count) return NULL;
 
-    void* array = *(void**)((uint8_t*)mgr + FEATMANAGER_REAL_ARRAY_OFFSET);
+    void* array = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)mgr + FEATMANAGER_REAL_ARRAY_OFFSET, &array)) {
+        log_message("[StaticData] Cannot read feat array at %p+0x%x", mgr, FEATMANAGER_REAL_ARRAY_OFFSET);
+        return NULL;
+    }
     if (!array) return NULL;
 
-    // Each feat is FEAT_SIZE bytes
-    return (uint8_t*)array + (index * FEAT_SIZE);
+    // Calculate entry address - each feat is FEAT_SIZE bytes
+    void* entry = (uint8_t*)array + (index * FEAT_SIZE);
+
+    // Verify the entry address is readable before returning
+    int32_t test_read = 0;
+    if (!safe_memory_read_i32((mach_vm_address_t)entry, &test_read)) {
+        log_message("[StaticData] Feat entry %d at %p is not readable (array=%p, size=%d)",
+                    index, entry, array, FEAT_SIZE);
+        return NULL;
+    }
+
+    return entry;
 }
 
 static void* feat_get_by_guid(const StaticDataGuid* guid) {
@@ -663,7 +682,21 @@ bool staticdata_get_guid(StaticDataType type, StaticDataPtr entry, StaticDataGui
             break;
     }
 
-    memcpy(out_guid, (uint8_t*)entry + guid_offset, sizeof(StaticDataGuid));
+    // Use safe memory read to prevent crashes
+    uint8_t guid_bytes[16];
+    mach_vm_address_t guid_addr = (mach_vm_address_t)entry + guid_offset;
+
+    // Read GUID bytes safely (16 bytes = sizeof(StaticDataGuid))
+    for (int i = 0; i < 16; i++) {
+        uint8_t byte = 0;
+        if (!safe_memory_read_u8(guid_addr + i, &byte)) {
+            log_message("[StaticData] Cannot read GUID byte %d at %p", i, (void*)(guid_addr + i));
+            return false;
+        }
+        guid_bytes[i] = byte;
+    }
+
+    memcpy(out_guid, guid_bytes, sizeof(StaticDataGuid));
     return true;
 }
 
@@ -854,6 +887,75 @@ void staticdata_dump_entries(StaticDataType type, int max_entries) {
             log_message("  [%d] GUID=%s", i, guid_str);
         } else {
             log_message("  [%d] ptr=%p", i, entry);
+        }
+    }
+}
+
+/**
+ * Diagnostic: Dump the first few entries of the feat array to understand memory layout.
+ */
+void staticdata_dump_feat_memory(void) {
+    void* mgr = g_staticdata.real_managers[STATICDATA_FEAT];
+    if (!mgr) {
+        log_message("[StaticData] No real FeatManager captured for memory dump");
+        return;
+    }
+
+    int32_t count = 0;
+    void* array = NULL;
+
+    if (!safe_memory_read_i32((mach_vm_address_t)mgr + FEATMANAGER_REAL_COUNT_OFFSET, &count)) {
+        log_message("[StaticData] Cannot read count for memory dump");
+        return;
+    }
+    if (!safe_memory_read_pointer((mach_vm_address_t)mgr + FEATMANAGER_REAL_ARRAY_OFFSET, &array)) {
+        log_message("[StaticData] Cannot read array pointer for memory dump");
+        return;
+    }
+
+    log_message("[StaticData] MEMORY DUMP: mgr=%p, count=%d, array=%p", mgr, count, array);
+    log_message("[StaticData] FEAT_SIZE=%d (0x%X), expected array range: %p - %p",
+                FEAT_SIZE, FEAT_SIZE, array, (uint8_t*)array + (count * FEAT_SIZE));
+
+    // Check if array pointer itself is readable
+    int32_t test = 0;
+    if (!safe_memory_read_i32((mach_vm_address_t)array, &test)) {
+        log_message("[StaticData] ARRAY BASE IS NOT READABLE at %p!", array);
+        return;
+    }
+
+    // Dump first 64 bytes of array base
+    log_message("[StaticData] First 64 bytes at array base %p:", array);
+    for (int row = 0; row < 4; row++) {
+        char hex[128] = {0};
+        char* p = hex;
+        for (int col = 0; col < 16; col++) {
+            uint8_t byte = 0;
+            mach_vm_address_t addr = (mach_vm_address_t)array + (row * 16) + col;
+            if (safe_memory_read_u8(addr, &byte)) {
+                p += sprintf(p, "%02X ", byte);
+            } else {
+                p += sprintf(p, "?? ");
+            }
+        }
+        log_message("  +0x%02X: %s", row * 16, hex);
+    }
+
+    // Try to dump first 3 "entries" at different sizes to help identify structure
+    log_message("[StaticData] Testing different entry sizes:");
+    int test_sizes[] = {8, 16, 32, 64, 128, 256, FEAT_SIZE};
+    for (int s = 0; s < sizeof(test_sizes)/sizeof(test_sizes[0]); s++) {
+        int size = test_sizes[s];
+        log_message("  Entry size=%d:", size);
+
+        for (int i = 0; i < 3 && i < count; i++) {
+            void* entry = (uint8_t*)array + (i * size);
+            uint64_t val = 0;
+            if (safe_memory_read_u64((mach_vm_address_t)entry, &val)) {
+                log_message("    [%d] %p: first8=0x%016llx", i, entry, (unsigned long long)val);
+            } else {
+                log_message("    [%d] %p: UNREADABLE", i, entry);
+            }
         }
     }
 }

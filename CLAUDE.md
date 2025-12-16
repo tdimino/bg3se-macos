@@ -65,6 +65,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 - Modular design: each subsystem is header+source pair with static state
 - Prefix public functions with module name (`stats_get_string()`)
 - Use `log_message()` for consistent logging
+- **Git:** Commit freely, but do NOT push until user confirms
 
 ## Testing Workflow
 
