@@ -291,10 +291,9 @@ static const ComponentLayoutDef g_ResistancesComponent_Layout = {
 // ============================================================================
 
 static const ComponentPropertyDef g_PassiveContainerComponent_Properties[] = {
-    // Array<EntityHandle> Passives at 0x00 - need to expose as special type
-    // For now, just expose the count via the array size field
-    // Array layout: buf*(8) + size(4) + capacity(4) = at offset 8 for size
-    { "PassiveCount", 0x08, FIELD_TYPE_UINT32, 0, true },  // Array.size field
+    // Array<EntityHandle> Passives at 0x00 - each EntityHandle is 8 bytes
+    { "Passives",     0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_ENTITY_HANDLE, 8 },
+    { "PassiveCount", 0x0C, FIELD_TYPE_UINT32, 0, true, ELEM_TYPE_UNKNOWN, 0 },  // Array.size field
 };
 
 static const ComponentLayoutDef g_PassiveContainerComponent_Layout = {
@@ -313,8 +312,9 @@ static const ComponentLayoutDef g_PassiveContainerComponent_Layout = {
 // ============================================================================
 
 static const ComponentPropertyDef g_TagComponent_Properties[] = {
-    // Array<Guid> Tags at 0x00
-    { "TagCount", 0x08, FIELD_TYPE_UINT32, 0, true },  // Array.size field
+    // Array<Guid> Tags at 0x00 - each Guid is 16 bytes
+    { "Tags",     0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_GUID, 16 },
+    { "TagCount", 0x0C, FIELD_TYPE_UINT32, 0, true, ELEM_TYPE_UNKNOWN, 0 },  // Array.size field
 };
 
 static const ComponentLayoutDef g_TagComponent_Layout = {
@@ -370,8 +370,9 @@ static const ComponentLayoutDef g_OriginComponent_Layout = {
 // ============================================================================
 
 static const ComponentPropertyDef g_ClassesComponent_Properties[] = {
-    // Array<ClassInfo> Classes at 0x00
-    { "ClassCount", 0x08, FIELD_TYPE_UINT32, 0, true },  // Array.size field
+    // Array<ClassInfo> Classes at 0x00 - ClassInfo is 40 bytes (2x Guid + Level + padding)
+    { "Classes",    0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_CLASS_INFO, 40 },
+    { "ClassCount", 0x0C, FIELD_TYPE_UINT32, 0, true, ELEM_TYPE_UNKNOWN, 0 },  // Array.size field
 };
 
 static const ComponentLayoutDef g_ClassesComponent_Layout = {
@@ -527,12 +528,16 @@ static const ComponentLayoutDef g_WeaponComponent_Layout = {
 // ============================================================================
 // SpellBookComponent (eoc::spell::BookComponent)
 // From: BG3Extender/GameDefinitions/Components/Spell.h:217-223
+// Array<SpellData> layout: buf_(0x00), capacity_(0x08), size_(0x0C)
+// SpellData estimated size: ~88 bytes (contains SpellId, Guid, etc.)
 // ============================================================================
 
 static const ComponentPropertyDef g_SpellBookComponent_Properties[] = {
-    { "Entity",     0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true },  // EntityHandle
-    // Array<SpellData> Spells at 0x08
-    { "SpellCount", 0x10, FIELD_TYPE_UINT32, 0, true },  // Array.size field
+    { "Entity",     0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true, ELEM_TYPE_UNKNOWN, 0 },
+    // Array<SpellData> Spells at 0x08 - dynamic array with iteration support
+    { "Spells",     0x08, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_SPELL_DATA, 88 },
+    // Also expose count for convenience
+    { "SpellCount", 0x14, FIELD_TYPE_UINT32, 0, true, ELEM_TYPE_UNKNOWN, 0 },  // Array.size_ at 0x08+0x0C
 };
 
 static const ComponentLayoutDef g_SpellBookComponent_Layout = {
@@ -692,9 +697,9 @@ static const ComponentLayoutDef g_EquipableComponent_Layout = {
 // ============================================================================
 
 static const ComponentPropertyDef g_SpellContainerComponent_Properties[] = {
-    // Array<SpellMeta> Spells at 0x00
-    // SpellMeta is a complex struct, so we just expose the count
-    { "SpellCount", 0x08, FIELD_TYPE_UINT32, 0, true },  // Array.size field
+    // Array<SpellMeta> Spells at 0x00 - SpellMeta is 80 bytes
+    { "Spells",     0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_SPELL_META, 80 },
+    { "SpellCount", 0x0C, FIELD_TYPE_UINT32, 0, true, ELEM_TYPE_UNKNOWN, 0 },  // Array.size field
 };
 
 static const ComponentLayoutDef g_SpellContainerComponent_Layout = {
@@ -736,9 +741,9 @@ static const ComponentLayoutDef g_ConcentrationComponent_Layout = {
 // ============================================================================
 
 static const ComponentPropertyDef g_BoostsContainerComponent_Properties[] = {
-    // Array<BoostEntry> Boosts at 0x00
-    // BoostEntry has Type (enum) + Array<EntityHandle>
-    { "BoostTypeCount", 0x08, FIELD_TYPE_UINT32, 0, true },  // Array.size field
+    // Array<BoostEntry> Boosts at 0x00 - BoostEntry is 24 bytes (BoostType + padding + Array)
+    { "Boosts",         0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_BOOST_ENTRY, 24 },
+    { "BoostTypeCount", 0x0C, FIELD_TYPE_UINT32, 0, true, ELEM_TYPE_UNKNOWN, 0 },  // Array.size field
 };
 
 static const ComponentLayoutDef g_BoostsContainerComponent_Layout = {

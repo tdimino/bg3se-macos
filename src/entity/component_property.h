@@ -39,7 +39,24 @@ typedef enum {
     FIELD_TYPE_VEC4,            // float[4]
     FIELD_TYPE_INT32_ARRAY,     // Fixed-size int32 array
     FIELD_TYPE_FLOAT_ARRAY,     // Fixed-size float array
+    FIELD_TYPE_DYNAMIC_ARRAY,   // Dynamic Array<T> with runtime size
 } FieldType;
+
+// ============================================================================
+// Element Types for Dynamic Arrays
+// ============================================================================
+
+typedef enum {
+    ELEM_TYPE_UNKNOWN = 0,      // Raw bytes (element size required)
+    ELEM_TYPE_SPELL_DATA,       // spell::SpellData (88 bytes on ARM64)
+    ELEM_TYPE_SPELL_META,       // spell::SpellMeta (80 bytes)
+    ELEM_TYPE_STATUS_INFO,      // Generic status info
+    ELEM_TYPE_GUID,             // Array of GUIDs
+    ELEM_TYPE_FIXED_STRING,     // Array of FixedStrings (indices)
+    ELEM_TYPE_ENTITY_HANDLE,    // Array of EntityHandles
+    ELEM_TYPE_CLASS_INFO,       // ClassInfo (40 bytes: ClassUUID + SubClassUUID + Level)
+    ELEM_TYPE_BOOST_ENTRY,      // BoostEntry (24 bytes: BoostType + Array<EntityHandle>)
+} ArrayElementType;
 
 // ============================================================================
 // Property Definition
@@ -49,8 +66,11 @@ typedef struct {
     const char *name;       // Property name (e.g., "Hp", "MaxHp")
     uint16_t offset;        // Byte offset from component base
     FieldType type;         // Data type
-    uint8_t arraySize;      // For array types (0 = not array)
+    uint8_t arraySize;      // For fixed array types (0 = not fixed array)
     bool readOnly;          // Prevent writes
+    // For FIELD_TYPE_DYNAMIC_ARRAY:
+    ArrayElementType elemType;  // Element type for formatting
+    uint16_t elemSize;          // Element size in bytes
 } ComponentPropertyDef;
 
 // ============================================================================
@@ -167,6 +187,21 @@ void component_property_push_proxy(lua_State *L, void *componentPtr,
  * Returns the layout if it is, NULL otherwise.
  */
 const ComponentLayoutDef *component_property_check_proxy(lua_State *L, int index);
+
+// ============================================================================
+// Array Proxy (for FIELD_TYPE_DYNAMIC_ARRAY)
+// ============================================================================
+
+/**
+ * Create an array proxy userdata and push to Lua stack.
+ * The proxy wraps a dynamic Array<T> and provides __index/__len/__pairs.
+ *
+ * @param L           Lua state
+ * @param arrayPtr    Pointer to the Array<T> (buf_/capacity_/size_ struct)
+ * @param prop        Property definition with element type/size info
+ */
+void component_property_push_array_proxy(lua_State *L, void *arrayPtr,
+                                         const ComponentPropertyDef *prop);
 
 // ============================================================================
 // Debugging

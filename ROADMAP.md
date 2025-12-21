@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.34.2
+## Current Status: v0.35.0
 
-**Overall Feature Parity: ~68%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~70%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -241,17 +241,17 @@ buffer + (componentSize * EntryIndex) → Component*
 | EocLevel | Level (character level, distinct from ls::LevelComponent) |
 | Passive | Type, PassiveId, Source, Item, ToggledOn, Disabled |
 | Resistances | AC |
-| PassiveContainer | PassiveCount |
-| Tag | TagCount |
+| PassiveContainer | **Passives** (ArrayProxy), PassiveCount |
+| Tag | **Tags** (ArrayProxy), TagCount |
 | Race | Race (GUID) |
 | Origin | field_18, Origin |
-| Classes | ClassCount |
+| Classes | **Classes** (ArrayProxy with ClassUUID, SubClassUUID, Level), ClassCount |
 | Movement | Direction, Acceleration, Speed, Speed2 |
 | Background | Background (GUID) |
 | God | God, HasGodOverride, GodOverride |
 | Value | Value, Rarity, Unique |
 | TurnBased | IsActiveCombatTurn, Removed, RequestedEndTurn, TurnActionsCompleted, ActedThisRoundInCombat, HadTurnInCombat, CanActInCombat, CombatTeam |
-| SpellBook | Entity, SpellCount |
+| SpellBook | **Spells** (ArrayProxy with SpellId), Entity, SpellCount |
 | StatusContainer | StatusCount |
 | ActionResources | ResourceTypeCount |
 | Weapon | WeaponRange, DamageRange, WeaponProperties, WeaponGroup, Ability |
@@ -260,9 +260,9 @@ buffer + (componentSize * EntryIndex) → Component*
 | InventoryMember | Inventory (EntityHandle), EquipmentSlot |
 | InventoryIsOwned | Owner (EntityHandle) |
 | Equipable | EquipmentTypeID (GUID), Slot |
-| SpellContainer | SpellCount |
+| SpellContainer | **Spells** (ArrayProxy), SpellCount |
 | Concentration | Caster (EntityHandle), TargetCount, SpellPrototype |
-| BoostsContainer | BoostTypeCount |
+| BoostsContainer | **Boosts** (ArrayProxy with Type, BoostCount), BoostTypeCount |
 | DisplayName | NameHandle, TitleHandle |
 
 Features:
@@ -1300,6 +1300,7 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.35.0 | 2025-12-20 | **Dynamic Array Components** - 6 array-enabled components with ArrayProxy (#33) |
 | v0.34.2 | 2025-12-20 | **Issue #40 Fix** - GetAll returns all entries (41 feats), fixed probe logic |
 | v0.34.1 | 2025-12-17 | **StaticData Auto-Capture** - Eliminates Frida requirement, TriggerCapture API (#40) |
 | v0.34.0 | 2025-12-16 | **ARM64 Safe Hooking** - Complete infrastructure + discovery that FeatManager needs standard Dobby (#44, #40) |

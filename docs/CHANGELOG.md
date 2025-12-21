@@ -13,6 +13,58 @@ Each entry includes:
 
 ---
 
+## [v0.35.0] - 2025-12-20
+
+**Parity:** ~70% | **Category:** Entity Components | **Issues:** #33
+
+### Added
+- **Dynamic Array Support for Components** - Components with `Array<T>` fields now expose iterable Lua arrays
+  - `entity.Tag.Tags` - Array of 16-byte GUIDs (category tags on entities)
+  - `entity.Classes.Classes` - Array of ClassInfo with `ClassUUID`, `SubClassUUID`, `Level`
+  - `entity.PassiveContainer.Passives` - Array of EntityHandle references
+  - `entity.SpellBook.Spells` - Array of SpellData (88 bytes) with `SpellId`
+  - `entity.SpellContainer.Spells` - Array of SpellMeta (80 bytes)
+  - `entity.BoostsContainer.Boosts` - Array of BoostEntry with `Type`, `BoostCount`
+
+- **ArrayProxy Userdata** - New Lua userdata type for dynamic arrays with full metamethod support
+  - `__len` - Get array size with `#array`
+  - `__index` - Access elements with 1-based indexing `array[1]`
+  - `__pairs` / `__ipairs` - Standard Lua iteration
+  - `__tostring` - Debug output `Array[22](0x12345678)`
+
+- **New Element Types** for array marshaling:
+  - `ELEM_TYPE_CLASS_INFO` - ClassInfo struct (40 bytes: 2× GUID + Level)
+  - `ELEM_TYPE_BOOST_ENTRY` - BoostEntry struct (24 bytes: BoostType + nested Array)
+
+### Technical
+- `FIELD_TYPE_DYNAMIC_ARRAY` - New field type in ComponentPropertyDef
+- `ArrayElementType` enum categorizes element types for proper marshaling
+- Array memory layout: `buf_` (8 bytes) + `capacity_` (4 bytes) + `size_` (4 bytes)
+- Safe memory reads with bounds checking and lifetime validation
+- Element-specific field extraction (ClassUUID, SubClassUUID, Level, BoostType, etc.)
+
+### Usage Example
+```lua
+local player = Ext.Entity.Get(GetHostCharacter())
+
+-- Iterate tags
+for i, tag in ipairs(player.Tag.Tags) do
+    _P("Tag: " .. tag)  -- Prints GUID string
+end
+
+-- Access class info
+for i, class in ipairs(player.Classes.Classes) do
+    _P("Class: " .. class.ClassUUID .. " Level: " .. class.Level)
+end
+
+-- Check boost types
+for i, boost in ipairs(player.BoostsContainer.Boosts) do
+    _P("Boost Type " .. boost.Type .. " has " .. boost.BoostCount .. " entries")
+end
+```
+
+---
+
 ## [v0.34.2] - 2025-12-20
 
 **Parity:** ~68% | **Category:** StaticData | **Issues:** #40

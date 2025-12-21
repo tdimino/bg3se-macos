@@ -44,7 +44,7 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.34.2 | **Feature Parity:** ~68%
+**Version:** v0.35.0 | **Feature Parity:** ~70%
 
 | Feature | Status |
 |---------|--------|
@@ -52,7 +52,7 @@ SE mods work automatically—just install them like any other mod:
 | Lua Runtime | ✅ Lua 5.4 with Ext API |
 | Mod Loading | ✅ PAK file reading, auto-detection |
 | Ext.Osiris | ✅ Event listeners, custom functions (NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions) |
-| Ext.Entity | ✅ GUID lookup, 158 component layouts (109 tag components), GetByHandle |
+| Ext.Entity | ✅ GUID lookup, 158 components, **6 array-enabled** (Tags, Classes, Spells, Passives, Boosts) |
 | Ext.Stats | ✅ 15,774 stats, property read/write, **Sync complete (created + existing stats)** |
 | Ext.Events | ✅ 10 events with Prevent pattern |
 | Ext.Timer | ✅ WaitFor, Cancel, Pause, Resume |

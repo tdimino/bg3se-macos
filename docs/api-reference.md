@@ -40,6 +40,7 @@ _P(entity.Health.Hp)    -- Works!
 |------|-------------|
 | Entity | From `Ext.Entity.Get()` |
 | Component | From `entity.Health`, `entity:GetComponent()`, etc. |
+| ArrayProxy | From `entity.Tag.Tags`, `entity.SpellBook.Spells`, etc. |
 | StatsObject | From `Ext.Stats.Get()` |
 
 ### Detecting Expired Objects
@@ -172,6 +173,66 @@ if entity then
     for k, v in pairs(entity.Stats) do
         _P(k .. " = " .. tostring(v))
     end
+end
+```
+
+### Array Components (v0.35.0+)
+
+Components with `Array<T>` fields expose **ArrayProxy** userdata that supports standard Lua iteration.
+
+#### Supported Arrays
+
+| Component | Property | Element Type | Fields |
+|-----------|----------|--------------|--------|
+| `Tag` | `Tags` | GUID | String (UUID format) |
+| `Classes` | `Classes` | ClassInfo | `ClassUUID`, `SubClassUUID`, `Level` |
+| `SpellBook` | `Spells` | SpellData | `SpellId`, `__ptr`, `__index`, `__size` |
+| `SpellContainer` | `Spells` | SpellMeta | `__ptr`, `__index`, `__size` |
+| `PassiveContainer` | `Passives` | EntityHandle | String (hex format) |
+| `BoostsContainer` | `Boosts` | BoostEntry | `Type`, `BoostCount`, `__ptr` |
+
+#### ArrayProxy Metamethods
+
+| Operation | Example | Description |
+|-----------|---------|-------------|
+| Length | `#array` | Returns element count |
+| Index | `array[1]` | Access element (1-based) |
+| Iteration | `ipairs(array)` | Standard Lua iteration |
+| Pairs | `pairs(array)` | Key-value iteration |
+| ToString | `tostring(array)` | Debug: `Array[22](0x12345678)` |
+
+#### Examples
+
+```lua
+local entity = Ext.Entity.Get(GetHostCharacter())
+
+-- Iterate all tags (GUIDs)
+for i, tag in ipairs(entity.Tag.Tags) do
+    _P("Tag " .. i .. ": " .. tag)
+end
+
+-- Access class information
+for i, class in ipairs(entity.Classes.Classes) do
+    _P("Class: " .. class.ClassUUID)
+    _P("  Subclass: " .. class.SubClassUUID)
+    _P("  Level: " .. class.Level)
+end
+
+-- Check boost types
+for i, boost in ipairs(entity.BoostsContainer.Boosts) do
+    _P("Boost Type " .. boost.Type .. " has " .. boost.BoostCount .. " entries")
+end
+
+-- Get passive entity handles
+for i, handle in ipairs(entity.PassiveContainer.Passives) do
+    _P("Passive handle: " .. handle)
+end
+
+-- Iterate spells with metadata
+local spells = entity.SpellBook.Spells
+_P("Total spells: " .. #spells)
+for i, spell in ipairs(spells) do
+    _P("Spell " .. i .. ": ID=" .. tostring(spell.SpellId))
 end
 ```
 

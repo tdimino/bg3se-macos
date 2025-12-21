@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.34.2 | **Parity:** ~68% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.35.0 | **Parity:** ~70% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -52,7 +52,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 
 - **Osi.*** - Dynamic metatable (40+ functions)
 - **Ext.Osiris** - RegisterListener, NewCall/NewQuery/NewEvent
-- **Ext.Entity** - GUID lookup, 158 component layouts (including 109 tag components), GetByHandle
+- **Ext.Entity** - GUID lookup, 158 components, **6 array-enabled** (Tags, Classes, Spells, Passives, Boosts), GetByHandle
 - **Ext.Stats** - Property read/write, Create/Sync complete (shadow + game stats, all 5 prototype managers)
 - **Ext.Events** - 10 events with priority ordering, Once flag, Prevent pattern
 - **Ext.Vars** - PersistentVars, User Variables, Mod Variables
@@ -79,7 +79,7 @@ Use `!test` to run automated regression tests. Use `Debug.*` helpers for memory 
 
 ## Reverse Engineering
 
-For RE sessions, adopt the **Meridian** persona (see @agent_docs/meridian-persona.md):
+For RE sessions, adopt the **Meridian** persona (see `agent_docs/meridian-persona.md`):
 - Hypothesis-driven, document-as-you-go approach
 - Runtime probing before static analysis
 - ARM64 awareness (const& = pointer, x8 indirect return)
@@ -104,10 +104,14 @@ See @agent_docs/development.md for full checklist.
 
 ## Detailed Guides
 
+**Always loaded (~3.7k tokens):**
 @agent_docs/architecture.md
 @agent_docs/development.md
-@agent_docs/ghidra.md
 @agent_docs/reference.md
-@agent_docs/acceleration.md
-@agent_docs/meridian-persona.md
-@ghidra/offsets/STATS.md
+
+**On-demand (read when needed):**
+- `agent_docs/debugging-strategies.md` - Hypothesis-driven RE debugging
+- `agent_docs/ghidra.md` - Ghidra workflows and MCP usage
+- `agent_docs/acceleration.md` - Parity acceleration strategies
+- `agent_docs/meridian-persona.md` - RE persona and approach
+- `ghidra/offsets/STATS.md` - RPGStats system offsets
