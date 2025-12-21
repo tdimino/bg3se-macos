@@ -128,6 +128,16 @@ void* staticdata_get_manager(StaticDataType type);
  */
 bool staticdata_capture_manager(StaticDataType type);
 
+/**
+ * Post-initialization capture attempt.
+ * Call this after game data is loaded (e.g., after SessionLoaded event).
+ * Attempts to capture all manager types via TypeContext traversal + probing.
+ * Also loads any available Frida captures as fallback.
+ *
+ * @return Number of managers successfully captured
+ */
+int staticdata_post_init_capture(void);
+
 // ============================================================================
 // Data Access
 // ============================================================================

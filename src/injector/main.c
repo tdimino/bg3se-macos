@@ -1607,14 +1607,9 @@ static void load_mod_scripts(lua_State *L) {
 static void overlay_command_handler(const char *command) {
     if (!command) return;
 
-    // Execute the Lua command
-    bool success = console_execute_lua(command);
-
-    // Forward output to overlay (Ext.Print already goes to console_send_output,
-    // which we'll wire to overlay_append_output)
-    if (!success) {
-        overlay_append_output("Command failed - check console for details");
-    }
+    // IMPORTANT: Don't execute Lua from AppKit callback context.
+    // Queue the command and execute on the Lua-owning tick thread.
+    console_queue_lua_command(command);
 }
 
 /**
@@ -1872,6 +1867,10 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
 
         // Check stats system now that the game is loaded
         stats_manager_on_session_loaded();
+
+        // Capture static data managers now that game data is loaded
+        // This enables Ext.StaticData.GetAll() without Frida
+        staticdata_post_init_capture();
 
         // Fire StatsLoaded event (stats system is now ready)
         events_fire(L, EVENT_STATS_LOADED);
@@ -2191,6 +2190,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     // Poll for console commands and run tick systems
     if (L) {
         console_poll(L);
+        input_poll(L);
         timer_update(L);  // Process timer callbacks
         persist_tick(L);  // Check for dirty PersistentVars to auto-save
 

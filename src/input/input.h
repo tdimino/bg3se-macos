@@ -102,6 +102,16 @@ void input_shutdown(void);
 bool input_is_initialized(void);
 
 // ============================================================================
+// Event Dispatch (Thread-safe queue -> single-thread Lua dispatch)
+// ============================================================================
+
+/**
+ * Drain queued input events and fire corresponding Lua events.
+ * Call this from the Lua-owning thread/tick (e.g. Osiris Event hook).
+ */
+void input_poll(lua_State *L);
+
+// ============================================================================
 // Hotkey Registration
 // ============================================================================
 

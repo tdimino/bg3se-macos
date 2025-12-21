@@ -352,6 +352,20 @@ static int lua_staticdata_fridacaptureavailable(lua_State *L) {
     return 1;
 }
 
+/**
+ * Manually trigger manager capture attempt.
+ * Useful for debugging or if auto-capture at SessionLoaded didn't find managers.
+ *
+ * Uses TypeContext traversal + real manager probing + Frida capture fallback.
+ *
+ * @return number of managers captured
+ */
+static int lua_staticdata_triggercapture(lua_State *L) {
+    int captured = staticdata_post_init_capture();
+    lua_pushinteger(L, captured);
+    return 1;
+}
+
 // ============================================================================
 // Registration
 // ============================================================================
@@ -369,6 +383,7 @@ static const luaL_Reg staticdata_funcs[] = {
     {"LoadFridaCapture", lua_staticdata_loadfridacapture},
     {"FridaCaptureAvailable", lua_staticdata_fridacaptureavailable},
     {"DumpFeatMemory", lua_staticdata_dumpfeatmemory},
+    {"TriggerCapture", lua_staticdata_triggercapture},
     {NULL, NULL}
 };
 

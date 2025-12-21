@@ -23,10 +23,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/select.h>
 #include <lauxlib.h>
+#include <pthread.h>
 
 // ============================================================================
 // Configuration
@@ -69,6 +71,39 @@ typedef struct {
 static ConsoleCommand s_commands[MAX_CONSOLE_COMMANDS];
 static int s_command_count = 0;
 static lua_State *s_lua_state = NULL;
+
+// ============================================================================
+// Thread-safe Overlay Command Queue (drained from console_poll on Lua thread)
+// ============================================================================
+
+#define OVERLAY_COMMAND_QUEUE_CAPACITY 64
+
+static pthread_mutex_t s_overlay_cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char *s_overlay_cmd_queue[OVERLAY_COMMAND_QUEUE_CAPACITY];
+static uint32_t s_overlay_cmd_head = 0;
+static uint32_t s_overlay_cmd_tail = 0;
+
+/**
+ * Drain queued overlay commands and execute on the calling thread.
+ */
+static void drain_overlay_command_queue(void) {
+    while (1) {
+        char *cmd = NULL;
+
+        pthread_mutex_lock(&s_overlay_cmd_mutex);
+        if (s_overlay_cmd_head != s_overlay_cmd_tail) {
+            cmd = s_overlay_cmd_queue[s_overlay_cmd_head];
+            s_overlay_cmd_queue[s_overlay_cmd_head] = NULL;
+            s_overlay_cmd_head = (s_overlay_cmd_head + 1) % OVERLAY_COMMAND_QUEUE_CAPACITY;
+        }
+        pthread_mutex_unlock(&s_overlay_cmd_mutex);
+
+        if (!cmd) break;
+
+        (void)console_execute_lua(cmd);
+        free(cmd);
+    }
+}
 
 // ============================================================================
 // Multi-line Buffer Management
@@ -687,6 +722,9 @@ void console_poll(lua_State *L) {
     if (!s_initialized) console_init();
     s_lua_state = L;
 
+    // Execute any queued overlay commands on this Lua-owning tick thread.
+    drain_overlay_command_queue();
+
     // Poll socket clients (higher priority, real-time)
     socket_poll_clients(L);
 
@@ -700,6 +738,32 @@ void console_poll(lua_State *L) {
 
 void console_set_lua_state(lua_State *L) {
     s_lua_state = L;
+}
+
+void console_queue_lua_command(const char *command) {
+    if (!command) return;
+
+    char *copy = strdup(command);
+    if (!copy) {
+        LOG_CONSOLE_ERROR("console_queue_lua_command: strdup failed");
+        return;
+    }
+
+    pthread_mutex_lock(&s_overlay_cmd_mutex);
+
+    uint32_t next_tail = (s_overlay_cmd_tail + 1) % OVERLAY_COMMAND_QUEUE_CAPACITY;
+    if (next_tail == s_overlay_cmd_head) {
+        // Queue full: drop oldest
+        char *old = s_overlay_cmd_queue[s_overlay_cmd_head];
+        s_overlay_cmd_queue[s_overlay_cmd_head] = NULL;
+        s_overlay_cmd_head = (s_overlay_cmd_head + 1) % OVERLAY_COMMAND_QUEUE_CAPACITY;
+        if (old) free(old);
+    }
+
+    s_overlay_cmd_queue[s_overlay_cmd_tail] = copy;
+    s_overlay_cmd_tail = next_tail;
+
+    pthread_mutex_unlock(&s_overlay_cmd_mutex);
 }
 
 bool console_execute_lua(const char *command) {

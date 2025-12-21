@@ -126,6 +126,12 @@ int console_register_command(lua_State *L);
 // ============================================================================
 
 /**
+ * Queue a Lua command for execution on the Lua-owning tick thread.
+ * This is safe to call from other threads (e.g. AppKit UI callbacks).
+ */
+void console_queue_lua_command(const char *command);
+
+/**
  * Execute a Lua command directly.
  * Output is sent via console_send_output (and to overlay if registered).
  *

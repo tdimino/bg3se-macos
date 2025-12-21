@@ -44,7 +44,7 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.33.0 | **Feature Parity:** ~66%
+**Version:** v0.34.2 | **Feature Parity:** ~68%
 
 | Feature | Status |
 |---------|--------|
@@ -60,7 +60,7 @@ SE mods work automatically—just install them like any other mod:
 | Ext.Input | ✅ Hotkeys, key injection |
 | Ext.Math | ✅ Vector/matrix operations |
 | Ext.Enums | ✅ 14 enum/bitfield types |
-| Ext.StaticData | ✅ Feat type with **Name resolution**, multi-type config |
+| Ext.StaticData | ✅ **Auto-capture** (no Frida needed), Name resolution, TriggerCapture |
 | Ext.Template | ⚠️ Frida capture workflow (5/9 functions) |
 | Lifetime Scoping | ✅ Prevents stale object access |
 | Debug Console | ✅ Socket + file + in-game overlay |

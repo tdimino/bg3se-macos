@@ -10,6 +10,7 @@
 
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
+#import <pthread.h>
 
 #include "input.h"
 #include "../core/logging.h"
@@ -35,6 +36,80 @@ static int s_next_hotkey_handle = 1;
 // CGEventTap
 static CFMachPortRef s_event_tap = NULL;
 static CFRunLoopSourceRef s_run_loop_source = NULL;
+
+// ============================================================================
+// Thread-safe Key Event Queue (drained from Lua-owning tick thread)
+// ============================================================================
+
+#define INPUT_EVENT_QUEUE_CAPACITY 256
+
+typedef struct {
+    int keyCode;
+    bool pressed;
+    int modifiers;
+    char character[8];
+} QueuedKeyEvent;
+
+static pthread_mutex_t s_event_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+static QueuedKeyEvent s_event_queue[INPUT_EVENT_QUEUE_CAPACITY];
+static uint32_t s_event_queue_head = 0;
+static uint32_t s_event_queue_tail = 0;
+
+/**
+ * Enqueue a key event for later Lua dispatch.
+ */
+static void enqueue_key_event(int keyCode, bool pressed, int modifiers, const char *character) {
+    pthread_mutex_lock(&s_event_queue_mutex);
+
+    uint32_t next_tail = (s_event_queue_tail + 1) % INPUT_EVENT_QUEUE_CAPACITY;
+    if (next_tail == s_event_queue_head) {
+        // Queue full: drop oldest to preserve most recent input
+        s_event_queue_head = (s_event_queue_head + 1) % INPUT_EVENT_QUEUE_CAPACITY;
+    }
+
+    QueuedKeyEvent *dst = &s_event_queue[s_event_queue_tail];
+    dst->keyCode = keyCode;
+    dst->pressed = pressed;
+    dst->modifiers = modifiers;
+    dst->character[0] = '\0';
+    if (character && character[0]) {
+        strncpy(dst->character, character, sizeof(dst->character) - 1);
+        dst->character[sizeof(dst->character) - 1] = '\0';
+    }
+
+    s_event_queue_tail = next_tail;
+    pthread_mutex_unlock(&s_event_queue_mutex);
+}
+
+/**
+ * Drain queued key events and fire Lua events on the calling thread.
+ */
+void input_poll(lua_State *L) {
+    if (!L) return;
+    if (!s_initialized) return;
+
+    // Ensure we use the same Lua state pointer the rest of the system expects.
+    // This also avoids dispatching events if Lua was torn down.
+    s_lua_state = L;
+
+    // Drain without holding the lock during Lua calls.
+    while (1) {
+        QueuedKeyEvent ev;
+        bool have_event = false;
+
+        pthread_mutex_lock(&s_event_queue_mutex);
+        if (s_event_queue_head != s_event_queue_tail) {
+            ev = s_event_queue[s_event_queue_head];
+            s_event_queue_head = (s_event_queue_head + 1) % INPUT_EVENT_QUEUE_CAPACITY;
+            have_event = true;
+        }
+        pthread_mutex_unlock(&s_event_queue_mutex);
+
+        if (!have_event) break;
+
+        events_fire_key_input(L, ev.keyCode, ev.pressed, ev.modifiers, ev.character);
+    }
+}
 
 // ============================================================================
 // Forward Declarations
@@ -145,10 +220,9 @@ static CGEventRef event_tap_callback(CGEventTapProxy proxy, CGEventType type,
 
     // Fire Lua KeyInput event
     if (s_lua_state && (isDown || isUp)) {
-        events_fire_key_input(s_lua_state, keyCode, isDown, modifiers, charStr);
-
-        LOG_INPUT_DEBUG("Key %s: code=%d mods=0x%x char='%s'",
-                        isDown ? "Down" : "Up", keyCode, modifiers, charStr);
+        // IMPORTANT: Do not call into Lua from the event tap callback.
+        // Queue the event and let the Lua-owning tick thread drain it.
+        enqueue_key_event((int)keyCode, isDown, (int)modifiers, charStr);
     }
 
     return event;

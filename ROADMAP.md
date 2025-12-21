@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.34.0
+## Current Status: v0.34.2
 
-**Overall Feature Parity: ~67%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~68%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -52,7 +52,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
 | `Ext.Audio` | ✅ Full (17) | ❌ Not impl | **0%** | 10 |
 | `Ext.Localization` | ✅ Full (2) | ⚠️ GetLanguage + safe stubs (1/2) | **50%** | 10 |
-| `Ext.StaticData` | ✅ Full (5) | ✅ GetAll, Get, LoadFridaCapture + Name resolution | **70%** | 10 |
+| `Ext.StaticData` | ✅ Full (5) | ✅ GetAll, Get, **Auto-capture**, TriggerCapture, Name resolution | **85%** | 10 |
 | `Ext.Resource` | ✅ Full (2) | ❌ Not impl | **0%** | 10 |
 | `Ext.Template` | ✅ Full (9) | ⚠️ Frida capture + Lua API (5/9) | **50%** | 10 |
 | Console/REPL | ✅ Full | ✅ Socket + file + in-game overlay | **95%** | 5 |
@@ -1102,16 +1102,13 @@ Ext.Mod.GetModInfo(guid)
 ## Phase 10: Data Access & Audio
 
 ### 10.1 Ext.StaticData API
-**Status:** ✅ ~70% Complete - [Issue #40](https://github.com/tdimino/bg3se-macos/issues/40)
+**Status:** ✅ ~85% Complete - [Issue #40](https://github.com/tdimino/bg3se-macos/issues/40)
 
 Access to static game resource types (Feats, Races, Backgrounds, Origins, Gods, Classes).
 
 ```lua
--- Frida capture workflow (required once per game session)
-Ext.StaticData.LoadFridaCapture()        -- Load Feat manager (default)
-Ext.StaticData.LoadFridaCapture("Race")  -- Load specific type
-
--- Get all entries of a type (includes Name field!)
+-- Auto-capture at SessionLoaded - no Frida needed!
+-- Just use the API directly:
 local feats = Ext.StaticData.GetAll("Feat")
 for _, f in ipairs(feats) do
     print(f.Name, f.ResourceUUID)  -- "Alert", "f57bd72c-be64-4855-3a9e-7dbb657656e6"
@@ -1124,39 +1121,51 @@ print(feat.Name)  -- "AbilityScoreIncrease"
 -- Get count
 local count = Ext.StaticData.GetCount("Feat")  -- Returns 41
 
+-- Manual trigger (if auto-capture missed something)
+local captured = Ext.StaticData.TriggerCapture()
+print("Captured " .. captured .. " managers")
+
+-- Frida fallback (if auto-capture fails)
+Ext.StaticData.LoadFridaCapture()        -- Load Feat manager
+Ext.StaticData.LoadFridaCapture("Race")  -- Load specific type
+
 -- Debug helpers
 Ext.StaticData.DumpStatus()
 Ext.StaticData.DumpFeatMemory()  -- Diagnostic memory dump
 ```
 
 **Implementation Notes:**
-- **Frida capture workflow** - Runtime capture of manager pointer via Frida script
+- **Auto-capture at SessionLoaded** - TypeContext traversal + real manager probing
 - **FixedString resolution** - Name field at +0x18 resolved via GlobalStringTable
 - **Generic config infrastructure** - Per-type offsets for Race, Origin, God, Class
 - Safe memory reads prevent crashes when captured pointers become stale
 - Offsets verified via Ghidra: count at +0x7C, array at +0x80, FEAT_SIZE=0x128
 
-**What Works (Dec 15, 2025):**
+**What Works (Dec 17, 2025):**
+- ✅ **Auto-capture at SessionLoaded** - No Frida needed for basic access
 - ✅ `GetAll("Feat")` returns 41 feats with **Names and GUIDs**
 - ✅ `Get("Feat", guid)` retrieves single feat by GUID
-- ✅ `LoadFridaCapture([type])` loads manager pointers (type-aware)
+- ✅ `TriggerCapture()` manual trigger for debugging
+- ✅ `LoadFridaCapture([type])` as fallback (type-aware)
 - ✅ **FixedString Name resolution** - feat.Name returns actual names
 - ✅ Safe memory reads prevent crashes on stale pointers
 - ✅ Generic ManagerConfig infrastructure for all resource types
 
-**Workflow:**
-1. Run: `frida -p <PID> -l tools/frida/capture_featmanager_live.js`
-2. In-game: Navigate to feat selection (level-up/respec)
-3. In console: `Ext.StaticData.LoadFridaCapture()`
-4. Use `GetAll("Feat")` / `Get("Feat", guid)` - now includes Name!
+**Auto-Capture Flow:**
+1. SessionLoaded event fires
+2. `staticdata_post_init_capture()` runs automatically
+3. TypeContext traversal finds managers by name
+4. Real manager probing validates metadata pointers
+5. Frida captures loaded as fallback if available
 
 **Remaining Work:**
 - [x] Extract feat names from structure (FixedString resolution) ✅
 - [x] Generic config-based infrastructure for multiple types ✅
+- [x] Auto-capture without Frida ✅
 - [ ] Frida capture scripts for Race, Origin, God, Class types
-- [ ] Auto-capture without Frida (requires ARM64-safe hooking)
+- [ ] Verify auto-capture works for all resource types
 
-Resource types: Feat (✅ complete with names), Race (🔶 config ready), Background (🔶 no Name field), Origin (🔶), God (🔶), ClassDescription (🔶)
+Resource types: Feat (✅ complete with auto-capture), Race (🔶 config ready), Background (🔶 no Name field), Origin (🔶), God (🔶), ClassDescription (🔶)
 
 ### 10.2 Ext.Resource & Ext.Template API
 **Status:** ❌ Not Started - [Issue #41](https://github.com/tdimino/bg3se-macos/issues/41)
@@ -1291,6 +1300,8 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.34.2 | 2025-12-20 | **Issue #40 Fix** - GetAll returns all entries (41 feats), fixed probe logic |
+| v0.34.1 | 2025-12-17 | **StaticData Auto-Capture** - Eliminates Frida requirement, TriggerCapture API (#40) |
 | v0.34.0 | 2025-12-16 | **ARM64 Safe Hooking** - Complete infrastructure + discovery that FeatManager needs standard Dobby (#44, #40) |
 | v0.33.0 | 2025-12-15 | **StaticData Name Resolution** - FixedString names for feats, generic multi-type infrastructure (#40) |
 | v0.32.9 | 2025-12-15 | **Ext.Template API** - Template manager with Frida capture, OriginalTemplateComponent, 158 components (#41) |
@@ -1352,7 +1363,7 @@ We've built automation tools to accelerate reaching Windows BG3SE component pari
 | ~~#32 Stats Sync~~ | ~~Prototype Managers~~ | ✅ DONE | Shadow stats + game stats sync complete | None |
 | **#6 NetChannel** | NetChannel API | **30%** | Network stack analysis needed, but Lua wrappers portable | None |
 | **#35 Ext.UI** | Noesis UI | **25%** | Deep game UI integration required | None |
-| **#40 StaticData** | Ext.StaticData | **75%** | Hook-based capture working, Dobby safe for FeatManager | None ✅ |
+| **#40 StaticData** | Ext.StaticData | **85%** | **Auto-capture complete**, no Frida needed, TriggerCapture API | None ✅ |
 
 ### ARM64 Hooking Infrastructure (Dec 2025) ✅ RESOLVED
 

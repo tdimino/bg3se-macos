@@ -675,6 +675,13 @@ static NSColor* colorForLogLevel(const char* text) {
 - (void)controlTextDidEndEditing:(NSNotification *)notification {
     NSTextField *textField = notification.object;
     if (textField == _inputField) {
+        // Only submit when the user pressed Enter. Focus loss (e.g. clicking tabs)
+        // can also end editing and must NOT execute commands.
+        NSNumber *movement = notification.userInfo[@"NSTextMovement"];
+        if (!movement || movement.integerValue != NSReturnTextMovement) {
+            return;
+        }
+
         NSString *command = [_inputField.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (command.length > 0) {
             // Add to history

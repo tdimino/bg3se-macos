@@ -13,6 +13,48 @@ Each entry includes:
 
 ---
 
+## [v0.34.2] - 2025-12-20
+
+**Parity:** ~68% | **Category:** StaticData | **Issues:** #40
+
+### Fixed
+- **Ext.StaticData.GetAll() now returns all entries** - Previously returned only 1 item, now correctly returns all feats (41 entries)
+  - Root cause: `probe_for_real_manager()` searched within TypeContext metadata for wrong pattern
+  - Fix: Rely on GetFeats hook to capture real FeatManager with correct structure
+  - Real FeatManager uses flat array at +0x80 with count at +0x7C
+
+### Technical
+- Removed faulty probing logic from `capture_managers_via_typecontext()`
+- TypeContext metadata provides type registration, not data access
+- Real manager captured via hook when feat window is accessed
+- Verified: GetAll, GetCount, and Get by GUID all working correctly
+
+---
+
+## [v0.34.1] - 2025-12-17
+
+**Parity:** ~68% | **Category:** StaticData | **Issues:** #40
+
+### Added
+- **Auto-capture for Ext.StaticData** - Eliminates Frida requirement for basic StaticData access
+  - `staticdata_post_init_capture()` - Automatic manager discovery at SessionLoaded
+  - TypeContext traversal finds managers by name in ImmutableDataHeadmaster linked list
+  - Real manager probing validates metadata pointers at multiple offsets
+  - Frida capture as fallback if auto-capture fails
+- **Ext.StaticData.TriggerCapture()** - Manual capture trigger for debugging
+
+### Changed
+- `Ext.StaticData.GetAll("Feat")` now works at main menu without Frida
+- Post-init capture runs automatically after SessionLoaded event
+
+### Technical
+- Generic `looks_like_real_manager()` validates any manager type using ManagerConfig
+- Generic `probe_for_real_manager()` searches metadata at offsets 0x08-0x78
+- Safe memory reads via mach_vm_read prevent crashes on invalid pointers
+- 3-phase capture: TypeContext → Probe metadata → Frida fallback
+
+---
+
 ## [v0.34.0] - 2025-12-16
 
 **Parity:** ~67% | **Category:** Hooks, StaticData | **Issues:** #44, #40
@@ -33,6 +75,7 @@ Each entry includes:
 ### Fixed
 - **Issue #40 unblocked** - StaticData can now hook FeatManager without ARM64 corruption
 - Build errors: Added missing `#include <stddef.h>` and `#include <unistd.h>`
+- Overlay console stability: prevent crashes when clicking overlay tabs by centralizing Lua dispatch on the tick thread (queue key events + overlay commands) and only submitting commands on Enter (not focus loss)
 
 ### Technical
 - **Key Discovery**: FeatManager::GetFeats prologue is standard frame setup (STP x22,x21; STP x20,x19; STP x29,x30; ADD x29,sp,#32) - no ADRP patterns
