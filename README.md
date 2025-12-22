@@ -44,7 +44,7 @@ SE mods work automatically—just install them like any other mod:
 
 ## Status
 
-**Version:** v0.36.2 | **Feature Parity:** ~73%
+**Version:** v0.36.3 | **Feature Parity:** ~75%
 
 | Feature | Status |
 |---------|--------|
@@ -60,7 +60,7 @@ SE mods work automatically—just install them like any other mod:
 | Ext.Input | ✅ Hotkeys, key injection |
 | Ext.Math | ✅ Vector/matrix operations |
 | Ext.Enums | ✅ 14 enum/bitfield types |
-| Ext.StaticData | ✅ **Auto-capture** (no Frida needed), Name resolution, TriggerCapture |
+| Ext.StaticData | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription) via ForceCapture |
 | Ext.Resource | ✅ Get, GetAll, GetTypes, GetCount (34 resource types) |
 | Ext.Template | ✅ **Auto-capture**, iteration (Cache/LocalCache), GUID resolution |
 | Lifetime Scoping | ✅ Prevents stale object access |

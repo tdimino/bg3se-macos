@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.2
+## Current Status: v0.36.3
 
-**Overall Feature Parity: ~73%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~75%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -52,7 +52,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
 | `Ext.Audio` | ✅ Full (17) | ❌ Not impl | **0%** | 10 |
 | `Ext.Localization` | ✅ Full (2) | ⚠️ GetLanguage + safe stubs (1/2) | **50%** | 10 |
-| `Ext.StaticData` | ✅ Full (5) | ✅ GetAll, Get, **Auto-capture**, TriggerCapture, Name resolution | **85%** | 10 |
+| `Ext.StaticData` | ✅ Full (5) | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription), ForceCapture, HashLookup | **100%** | 10 |
 | `Ext.Resource` | ✅ Full (2) | ✅ Get, GetAll, GetTypes, GetCount, IsReady (5) | **100%** | 10 |
 | `Ext.Template` | ✅ Full (9) | ✅ 14 functions, **auto-capture**, Cache/LocalCache iteration | **100%** | 10 |
 | Console/REPL | ✅ Full | ✅ Socket + file + in-game overlay | **95%** | 5 |
@@ -1325,6 +1325,8 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.3 | 2025-12-22 | **StaticData All 9 Types** - ForceCapture + HashLookup for Race, God, FeatDescription (#45) |
+| v0.36.2 | 2025-12-21 | **Ext.Resource API** - 34 resource types (Visual, Material, Texture, etc.) (#41) |
 | v0.36.1 | 2025-12-21 | **Template Auto-Capture** - Direct global pointer reads, no hooks needed (#41) |
 | v0.35.0 | 2025-12-20 | **Dynamic Array Components** - 6 array-enabled components with ArrayProxy (#33) |
 | v0.34.2 | 2025-12-20 | **Issue #40 Fix** - GetAll returns all entries (41 feats), fixed probe logic |

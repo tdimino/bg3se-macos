@@ -652,6 +652,65 @@ Ext.Timer.Cancel(repeater)
 
 ---
 
+## Ext.Template
+
+Access game object templates (Character, Item, Scenery, etc.). Templates define the base properties for game objects before instantiation.
+
+| API | Status | Description |
+|-----|--------|-------------|
+| `Ext.Template.Get(guid)` | ✅ | Cascading search for template by GUID |
+| `Ext.Template.GetRootTemplate(guid)` | ✅ | Get template from GlobalTemplateBank |
+| `Ext.Template.GetCacheTemplate(guid)` | ✅ | Get template from CacheTemplateManager |
+| `Ext.Template.GetAllRootTemplates()` | ✅ | Get all templates from GlobalTemplateBank |
+| `Ext.Template.GetAllCacheTemplates()` | ✅ | Get all templates from CacheTemplateManager |
+| `Ext.Template.GetAllLocalCacheTemplates()` | ✅ | Get all templates from LocalCacheTemplates |
+| `Ext.Template.GetAllLocalTemplates()` | ✅ | Get all templates from LocalTemplateManager |
+| `Ext.Template.GetCount([managerType])` | ✅ | Get template count (Root, Cache, Local, LocalCache) |
+| `Ext.Template.GetType(template)` | ✅ | Get template type name |
+| `Ext.Template.IsReady()` | ✅ | Check if template manager is ready |
+| `Ext.Template.LoadFridaCapture()` | ✅ | Load captured templates from Frida |
+| `Ext.Template.HasFridaCapture()` | ✅ | Check if Frida capture exists |
+
+### Template Object Properties
+
+Templates returned from Get functions include these properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Guid` | string | Template GUID |
+| `TemplateId` | string | Resolved template ID |
+| `TemplateName` | string | Resolved template name |
+| `ParentTemplateId` | string | Parent template ID (for inheritance) |
+| `Handle` | number | Runtime template handle |
+| `Type` | string | Template type (Character, Item, Scenery, etc.) |
+| `RawType` | string | Raw type string from game |
+| `_ptr` | userdata | Raw pointer (for debugging) |
+
+### Example
+
+```lua
+-- Get a template by GUID
+local template = Ext.Template.Get("some-guid-here")
+if template then
+    _P("Template: " .. (template.TemplateName or "unknown"))
+    _P("Type: " .. template.Type)
+end
+
+-- List all root templates
+local templates = Ext.Template.GetAllRootTemplates()
+_P("Found " .. #templates .. " root templates")
+
+for i, t in ipairs(templates) do
+    if i <= 5 then
+        _P(t.Guid .. " -> " .. (t.TemplateName or "?"))
+    end
+end
+```
+
+**Note:** Template access requires Frida capture or runtime template manager discovery. Use `Ext.Template.IsReady()` to check availability.
+
+---
+
 ## Ext.Osiris
 
 Interface to the Osiris scripting engine.

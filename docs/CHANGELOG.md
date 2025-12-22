@@ -13,6 +13,58 @@ Each entry includes:
 
 ---
 
+## [v0.36.3] - 2025-12-22
+
+**Parity:** ~75% | **Category:** StaticData | **Issues:** #45
+
+### Added
+- **All 9 StaticData types now working** - Complete expansion from Feat-only to full coverage
+  - Background: 22 entries
+  - Class: 70 entries
+  - Origin: 27 entries
+  - Progression: 1004 entries
+  - ActionResource: 87 entries
+  - Feat: 41 entries
+  - Race: 156 entries
+  - God: 24 entries
+  - FeatDescription: 41 entries
+
+- **Ext.StaticData.ForceCapture()** - Triggers manager capture without character creation
+  - Calls Get<T> functions directly using captured ImmutableDataHeadmaster
+  - Also performs hash lookup for types without Get<T> hooks
+
+- **Ext.StaticData.HashLookup()** - Hash table lookup for remaining types
+  - Uses type index from TypeContext to look up managers in ImmutableDataHeadmaster
+  - Enables Race, God, FeatDescription, Feat capture
+
+### Technical
+- **Root cause identified**: TypeContext stores TYPE INDEX SLOTS (metadata), not actual manager instances
+- **Dual capture strategy**:
+  1. Get<T> hooks capture Background, Class, Origin, Progression, ActionResource automatically
+  2. Hash lookup captures Race, God, FeatDescription, Feat via type index
+- **ImmutableDataHeadmaster hash table structure** (from Ghidra decompilation):
+  - `+0x00`: buckets array (uint32_t*)
+  - `+0x08`: bucket_count (int32_t)
+  - `+0x10`: next chain array (uint32_t*)
+  - `+0x20`: keys array (int32_t*) - type indices
+  - `+0x2c`: size (int32_t)
+  - `+0x30`: values array (void**) - manager pointers
+- **Get<T> function offsets**:
+  - `Get<BackgroundManager>`: 0x02994834
+  - `Get<OriginManager>`: 0x0341c42c
+  - `Get<ClassDescriptions>`: 0x0262f184
+  - `Get<ProgressionManager>`: 0x03697f0c
+  - `Get<ActionResourceTypes>`: 0x011a4494
+
+### Files Modified
+- `src/staticdata/staticdata_manager.c` - Get<T> hooks, ForceCapture, hash lookup
+- `src/staticdata/staticdata_manager.h` - New function declarations
+- `src/lua/lua_staticdata.c` - ForceCapture and HashLookup Lua bindings
+- `ghidra/offsets/STATICDATA.md` - TypeContext vs Manager discovery documentation
+- `plans/fix-staticdata-memory-access.md` - Investigation and fix plan
+
+---
+
 ## [v0.36.2] - 2025-12-21
 
 **Parity:** ~73% | **Category:** Resource System | **Issues:** #41
