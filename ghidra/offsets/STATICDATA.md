@@ -636,3 +636,273 @@ print(f.Name)  -- "AbilityScoreIncrease"
 
 The TypeContext (`ImmutableDataHeadmaster`) provides **type registration metadata**, not actual data.
 The real FeatManager with feat data is session-scoped and must be captured via hook when accessed.
+
+## Issue #45 Investigation: StaticData Type Expansion (Dec 21, 2025)
+
+### Problem Statement
+
+After fixing manager names (Issue #40 part 2), all 9 managers are correctly matched in TypeContext:
+- ✅ `eoc::ClassDescriptions` (was incorrectly `eoc::ClassManager`)
+- ✅ `eoc::ActionResourceTypes` (was incorrectly `eoc::ActionResourceManager`)
+
+However, GetAll/Get APIs return garbage data:
+- Background: `GetAll` returns 259 items but 214 are null, valid ones have garbage GUIDs
+- Race: Similar issues with invalid counts and pointers
+
+### Ghidra Discovery: ModdableFilesLoader Structure (Dec 21, 2025)
+
+**Key Finding:** `BackgroundManager` **directly inherits** from `ModdableFilesLoader`:
+
+```cpp
+// From ~BackgroundManager decompilation @ 0x1011992f0
+void eoc::BackgroundManager::~BackgroundManager(BackgroundManager *this) {
+    ls::ModdableFilesLoader<ls::Guid,eoc::Background>::~ModdableFilesLoader(this);
+    return;
+}
+```
+
+**ModdableFilesLoader Destructor Analysis (@ 0x100c1e60c):**
+
+```c
+struct ModdableFilesLoader {
+    void*    vtable;              // +0x00: Virtual table pointer
+    int32_t  name_idx1;           // +0x08: FixedString index (released via gst::Map::Release)
+    int32_t  name_idx2;           // +0x0C: Another FixedString index
+    // HashMap<Guid, DynamicArray<Guid>> at +0x10 (for dependencies)
+    void*    ptr_0x40;            // +0x40: Some pointer (freed in destructor)
+    // HashTable<Guid> at +0x50 (for key lookup)
+    int32_t  count;               // +0x7C: Entry count (loop limit in destructor)
+    void*    values_array;        // +0x80: Array of entries (0x60 bytes each, have vtable at [0])
+    void*    ptr_0x90;            // +0x90: Another pointer (freed if +0x9F high bit set)
+    uint8_t  flags_0x9F;          // +0x9F: Flag byte
+};
+```
+
+**Destructor loop confirms offsets:**
+```c
+if (0 < *(int *)(this + 0x7c)) {
+    lVar2 = 0; lVar3 = 0;
+    do {
+        (*(code *)**(undefined8 **)(*(long *)(this + 0x80) + lVar2))();  // Call vtable[0]
+        lVar3 = lVar3 + 1;
+        lVar2 = lVar2 + 0x60;  // Each entry is 0x60 bytes
+    } while (lVar3 < *(int *)(this + 0x7c));
+}
+```
+
+**Internal structures freed by destructor:**
+- `+0x10`: `HashMap<Guid, DynamicArray<Guid>>` - dependency tracking
+- `+0x50`: `HashTable<Guid>` - key lookup index
+
+### Current Theory: TypeContext vs Manager Instance
+
+The TypeContext's `manager_ptr` field at TypeInfo+0x00 should point directly to the ModdableFilesLoader instance (since BackgroundManager IS-A ModdableFilesLoader).
+
+**But our runtime probe results don't match:**
+- +0x7C shows 259 for Background (plausible count)
+- +0x80 shows what looks like garbage or wrong offsets
+- Entries returned have invalid GUIDs like `00000001-0000-0000-0700-000000000000`
+
+### Possible Root Causes
+
+1. **TypeInfo+0x00 is not the manager instance**
+   - RegisterType stores something else at TypeInfo[0]
+   - Need to check RegisterType<BackgroundManager> decompilation
+
+2. **Offset differences between manager types**
+   - Different managers may have different base class layouts
+   - Our generic +0x7C/+0x80 assumption may not work for all types
+
+3. **Pointer array interpretation**
+   - +0x80 might be array of POINTERS (like Feats via TypeContext)
+   - But destructor shows entries are accessed as structs with vtables at index 0
+
+4. **Entry structure mismatch**
+   - Each entry is 0x60 bytes per destructor, but our configs assume different sizes
+   - Background config uses 0x80, not 0x60
+
+### RegisterType<BackgroundManager> Decompilation (@ 0x100c67964)
+
+```c
+// Stores param_1 (the manager pointer) at TypeInfo[0]
+puVar3 = PTR_typeInfo_1083f55b8;
+*(int **)puVar3 = param_1;  // param_1 is an int*, stores at puVar3+0
+```
+
+This confirms: TypeInfo[0] = manager pointer. So we ARE getting the right pointer.
+
+### Next Steps to Investigate
+
+1. **Probe the exact bytes at manager+0x70 to manager+0x90** for Background
+   - The destructor shows HashTable at +0x50 and count/array at +0x7C/+0x80
+   - Need to verify these offsets match at runtime
+
+2. **Check if +0x80 contains pointers or structs**
+   - Destructor dereferences `*(long *)(this + 0x80)` then adds offsets
+   - This suggests +0x80 is a pointer to an array, not the array itself
+
+3. **Entry structure validation**
+   - First 8 bytes should be vtable pointer
+   - Entries should be 0x60 bytes apart
+   - GUID should be at some offset within entry
+
+4. **Compare with Windows BG3SE HashMap layout**
+   - Windows uses `Resources.keys()` and `Resources.values()`
+   - Need to find equivalent HashMap access in ModdableFilesLoader
+
+### Files to Update After Resolution
+
+- `src/staticdata/staticdata_manager.c` - Fix offsets and access logic
+- `src/staticdata/staticdata_manager.h` - Update any structures if needed
+- This file (STATICDATA.md) - Document final solution
+
+## CRITICAL DISCOVERY: TypeContext Stores Metadata, NOT Manager Instances (Dec 22, 2025)
+
+### The Root Cause
+
+**Runtime probing revealed that TypeInfo.manager_ptr does NOT point to ModdableFilesLoader manager instances.**
+
+The TypeContext (`ImmutableDataHeadmaster`) stores **type registration metadata** (type indices and name strings), NOT actual manager pointers. Our TypeContext traversal was capturing the wrong data structure entirely.
+
+### What TypeInfo.manager_ptr Actually Contains
+
+When we traverse the TypeInfo linked list, the `manager_ptr` field points to a **TYPE INDEX SLOT**, not a manager:
+
+```c
+struct TypeIndexSlot {  // What TypeInfo.manager_ptr ACTUALLY points to
+    int32_t type_index;    // +0x00: Small integer (7, 63, 99, etc.) - NOT a vtable!
+    int32_t unknown1;      // +0x04: Always 0
+    int32_t unknown2;      // +0x08: 1
+    int32_t unknown3;      // +0x0C: 0
+    // ... pattern of small integers continues
+    // +0x38, +0x60, +0x88: Heap pointers to ASCII type name strings
+};
+```
+
+**Runtime probe of BackgroundManager's "slot_ptr" at 0x10d156968:**
+
+```text
+SLOT: +0x00: ptr=0x7 u32=7/0           <- TYPE INDEX, not vtable!
+SLOT: +0x08: ptr=0x1 u32=1/0
+SLOT: +0x10: ptr=0x27 u32=39/0
+SLOT: +0x18: ptr=0x1 u32=1/0
+SLOT: +0x20: ptr=0x30 u32=48/0
+SLOT: +0x28: ptr=0x1 u32=1/0
+SLOT: +0x30: ptr=0x60000082c3c0        <- Heap pointer
+SLOT: +0x38: ptr=0x60000082c940        <- Heap pointer (contains ASCII type names!)
+...
+```
+
+**The value at +0x00 is 7** (a small integer), NOT a vtable pointer like 0x100xxxxxx. This is a TYPE INDEX used by the ImmutableDataHeadmaster's internal hash table.
+
+### TypeInfo Linked List Structure (Actual)
+
+```c
+struct TypeInfo {
+    void*    slot_ptr;        // +0x00: Pointer to TYPE INDEX SLOT (not manager!)
+    char*    type_name;       // +0x08: C string like "eoc::BackgroundManager"
+    uint32_t name_length;     // +0x10: String length
+    uint32_t padding;         // +0x14
+    void*    next_typeinfo;   // +0x18: Next in linked list
+};
+```
+
+The TypeInfo linked list correctly contains type names, but slot_ptr points to metadata, not managers.
+
+### How Real Managers Are Accessed
+
+From Ghidra decompilation of `ImmutableDataHeadmaster::Get<BackgroundManager>()`:
+
+```c
+// Pseudo-code from Get<T>() decompilation
+void* Get(void* this, int type_index) {
+    // Hash table lookup to find slot_index
+    int slot_index = hash_lookup(this, type_index);
+
+    // Managers array at m_State+0x30
+    void** managers = *(void***)(this + 0x30);
+
+    // Return manager at slot
+    return managers[slot_index];
+}
+```
+
+**But runtime probing shows `m_State+0x30 = 0x8`**, which is not a valid pointer.
+
+This suggests:
+1. The hash table structure is more complex than the decompilation shows
+2. Or the m_State pointer we have is wrong
+3. Or there's additional indirection we're missing
+
+### The Hash Structure at m_State
+
+Probing `m_State` (ImmutableDataHeadmaster instance) at 0x114c06d40:
+
+```text
++0x00: ptr=0x114c07160         <- Hash buckets pointer
++0x08: ptr=0x10d0ed0f8         <- TypeInfo list head
++0x10: u32=0
++0x18: u32=0
++0x20: u32=0
++0x28: ptr=0x7261657764616548  <- ASCII "Headwear" (little-endian!)
++0x30: ptr=0x8                 <- NOT managers array (just integer 8)
++0x38: ptr=0x10c3c7692         <- Another structure
+```
+
+### Why Our Current Code Fails
+
+Our `staticdata_get_by_index()` function:
+
+1. Gets `slot_ptr` from TypeInfo traversal ✓ (but this is wrong data!)
+2. Reads count at `slot_ptr + 0x7C` → Gets garbage (slot is ~0x40 bytes, not 0x80+)
+3. Reads array at `slot_ptr + 0x80` → Gets garbage
+4. Iterates entries → Crashes or returns garbage GUIDs
+
+### Required Fix
+
+**Option A: Hash Table Lookup (Correct but Complex)**
+
+Implement proper `ImmutableDataHeadmaster::Get<T>()` by:
+1. Understanding the hash structure at m_State
+2. Computing hash for type name
+3. Looking up in hash table to get manager pointer
+4. Using that pointer with ModdableFilesLoader offsets
+
+**Option B: Direct Manager Hooks (Simpler)**
+
+Hook type-specific accessor functions that receive the real manager:
+- `BackgroundManager::GetBackground()`
+- `RaceManager::GetRace()`
+- etc.
+
+These functions receive the actual ModdableFilesLoader instance, which has:
+- Count at +0x7C
+- Values array at +0x80
+- Each entry 0x60 bytes (per destructor analysis)
+
+**Option C: Environment Chain (Session-Dependent)**
+
+Capture managers via Environment structure during character creation:
+- `Environment+0x130` → FeatManager (confirmed working)
+- Other offsets for other managers (need to discover)
+
+### Current Implementation Status
+
+| Type | TypeContext Match | Real Manager | GetAll Works |
+|------|-------------------|--------------|--------------|
+| Feat | ✓ eoc::FeatManager | ✓ (via hook) | ✓ 41 items |
+| Background | ✓ eoc::BackgroundManager | ✗ (TypeContext only) | ✗ garbage |
+| Race | ✓ eoc::RaceManager | ✗ | ✗ |
+| Class | ✓ eoc::ClassDescriptions | ✗ | ✗ |
+| Origin | ✓ eoc::OriginManager | ✗ | ✗ |
+| God | ✓ eoc::GodManager | ✗ | ✗ |
+| Progression | ✓ eoc::ProgressionManager | ✗ | ✗ |
+| ActionResource | ✓ eoc::ActionResourceTypes | ✗ | ✗ |
+| FeatDescription | ✓ eoc::FeatDescriptionManager | ✗ | ✗ |
+
+### Next Steps
+
+1. **Research hash table structure** - Decompile hash lookup functions in Ghidra
+2. **Find managers array** - May need to probe different offsets or follow pointer chains
+3. **Implement proper lookup** - Either hash table or hook-based capture
+4. **Verify with all 9 types** - Ensure consistent access pattern works for all

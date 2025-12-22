@@ -138,6 +138,24 @@ bool staticdata_capture_manager(StaticDataType type);
  */
 int staticdata_post_init_capture(void);
 
+/**
+ * Force capture managers by calling Get<T> functions directly.
+ * Uses captured ImmutableDataHeadmaster to trigger manager capture
+ * for types where hooks are installed but haven't fired yet.
+ *
+ * @return Number of managers newly captured
+ */
+int staticdata_force_capture(void);
+
+/**
+ * Force capture managers via hash lookup in ImmutableDataHeadmaster.
+ * This works for types without Get<T> hooks (Race, God, FeatDescription).
+ * Requires ImmutableDataHeadmaster and TypeContext to be captured first.
+ *
+ * @return Number of managers newly captured via hash lookup
+ */
+int staticdata_hash_lookup_capture(void);
+
 // ============================================================================
 // Data Access
 // ============================================================================
@@ -268,6 +286,27 @@ bool staticdata_frida_capture_available_type(StaticDataType type);
  * Also loads Frida capture if available.
  */
 void staticdata_try_typecontext_capture(void);
+
+/**
+ * Raw manager info for debugging.
+ */
+typedef struct {
+    uintptr_t manager_ptr;    // Raw manager pointer
+    uintptr_t array_ptr;      // Array pointer at configured offset
+    int32_t   count;          // Count at configured offset
+    int       count_offset;   // Offset used for count (0x7C)
+    int       array_offset;   // Offset used for array (0x80)
+    bool      is_session;     // true = session manager (hook), false = TypeContext
+} StaticDataRawInfo;
+
+/**
+ * Get raw manager info for debugging.
+ *
+ * @param type Static data type
+ * @param out Output struct
+ * @return true if manager found
+ */
+bool staticdata_get_raw_info(StaticDataType type, StaticDataRawInfo* out);
 
 /**
  * Dump static data manager status to log.

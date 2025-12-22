@@ -29,7 +29,7 @@ Research and tools for reaching Windows BG3SE parity faster.
 | `esv::` namespace (server) | 596 |
 | `ecl::` namespace (client) | 429 |
 | `ls::` namespace (base) | 233 |
-| Currently implemented | 52 (~2.6%) |
+| Currently implemented | 158 (~8%) |
 
 ### Automation Tools
 
@@ -375,31 +375,31 @@ osgrep "Lua breakpoint implementation"
 
 | Issue | Feature | Acceleration | Key Technique |
 |-------|---------|--------------|---------------|
-| #33 Components | Component Layouts | **80%** | Existing tools: `extract_typeids.py` + `generate_component_stubs.py` |
+| #33 Components | Component Layouts | **80%** | ✅ 158 components (43 with properties, 115 tag). Verified working Dec 2025 |
 | #39 Localization | Ext.Localization | **75%** | Simple string table lookup, minimal API surface |
 | #36 IMGUI | Ext.IMGUI | **70%** | Official ImGui Metal backend exists |
-| #40 StaticData | Ext.StaticData | **70%** | Symbol `eoc__gGuidResourceManager` is exported |
+| #40 StaticData | Ext.StaticData | **70%** | ✅ CLOSED - Hook-based capture working (Dec 2025) |
 | #41 Resource | Ext.Resource/Template | **65%** | Same pattern as StaticData |
 | #42 Debugger | VS Code Debugger | **60%** | DAP protocol has reference implementations |
 | #15 Client State | Client Lua State | **50%** | Mirror server pattern, hook game state |
 | #37 Level | Ext.Level (Physics) | **50%** | Find physics engine, port LevelLib.inl |
 | #38 Audio | Ext.Audio | **45%** | Wwise SDK has documented API |
-| #32 Stats Sync | Prototype Managers | **40%** | Frida for singleton discovery, Ghidra findings exist |
+| #32 Stats Sync | Prototype Managers | **40%** | ✅ CLOSED - All 5 managers working (Dec 2025) |
 | #6 NetChannel | NetChannel API | **30%** | Network stack analysis needed, but Lua wrappers portable |
 | #35 Ext.UI | Noesis UI | **25%** | Deep game UI integration required |
 
 ## Prioritized Implementation Order
 
 ### Tier 1: High Acceleration (70-80%) - Do First
-1. **#33 Components** - Tools ready, incremental progress
+1. ~~**#33 Components**~~ - ✅ 158 components verified working
 2. **#39 Localization** - Quick win, small API (~2 hours)
 3. **#36 IMGUI** - Official Metal backend, standalone implementation
-4. **#40 StaticData** - Exported symbol, clear Windows pattern
+4. ~~**#40 StaticData**~~ - ✅ CLOSED (Issue #40 fixed Dec 2025)
 
 ### Tier 2: Medium Acceleration (40-60%) - Second Priority
 5. **#42 Debugger** - DAP reference implementations available
 6. **#15 Client State** - Mirror existing server state pattern
-7. **#32 Stats Sync** - Ghidra findings for `GetPassivePrototype` at `0x102655c14`
+7. ~~**#32 Stats Sync**~~ - ✅ CLOSED (all 5 prototype managers working)
 
 ### Tier 3: Lower Acceleration (25-30%) - Complex
 8. **#6 NetChannel** - Complex, but Lua wrappers (`NetChannel.lua`, `NetworkManager.lua`) portable
@@ -458,11 +458,15 @@ ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer, renderEncode
 ## Recommended Next Steps
 
 1. **#39 Localization** - Quick win (~2 hours), high acceleration
-2. **#40 StaticData** - dlsym `eoc__gGuidResourceManager`, port StaticData.inl
-3. **#36 IMGUI** - Include ImGui + Metal backend, hook render loop
-4. **#33 Components** - Continue incremental component additions
-5. **Create Frida scripts** for runtime singleton discovery (Stats Sync, Client State)
-6. **Document NetChannel message format** - Long-term research task
+2. **#36 IMGUI** - Include ImGui + Metal backend, hook render loop
+3. **#41 Ext.Resource/Template** - Same pattern as #40 StaticData
+4. **#15 Client State** - Mirror server pattern, unlock ecl:: components
+5. **Document NetChannel message format** - Long-term research task
+
+### Recently Completed
+- ✅ **#40 StaticData** - Hook-based capture working (Dec 2025)
+- ✅ **#32 Stats Sync** - All 5 prototype managers working (Dec 2025)
+- ✅ **#33 Components** - 158 components verified (Dec 2025)
 
 ---
 
@@ -501,7 +505,7 @@ DEFINE_TAG_COMPONENT(eoc::inventory, IsContainer, IsContainer)
 |--------|-------|
 | Target TypeIds | 1,950+ |
 | Currently extracted (macOS) | 701 |
-| Currently implemented | 52 |
+| Currently implemented | 158 |
 | Tag components (zero fields) | 115 |
 | Regular components (need offsets) | ~485+ |
 
@@ -522,7 +526,7 @@ nm -gU "BG3" | c++filt | grep "TypeId.*ComponentName"
 # 3. Batch-add tag components (zero offset verification needed)
 ```
 
-**Immediate yield:** 115 tag components → 167 total components
+**Status:** ✅ COMPLETE - 115 tag components already added (158 total)
 
 #### Strategy 2: Prerequisite Issues (#44, #15)
 
@@ -592,7 +596,7 @@ Maximum-effort port of Windows automation to emit macOS format:
 
 | Phase | Action | Coverage |
 |-------|--------|----------|
-| 1 | Batch-add 115 tag components | 52 → 167 (~8.5%) |
+| 1 | ~~Batch-add 115 tag components~~ | ✅ DONE (158 total) |
 | 2 | Implement Frida dump harness | Enables verification |
 | 3 | Add high-priority combat/inventory components | 167 → 200 (~10%) |
 | 4 | LLM-assisted analysis for remaining | 200 → 400 (~20%) |

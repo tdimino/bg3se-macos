@@ -26,6 +26,14 @@
 // ImmutableDataHeadmaster m_State pointer address (for TypeContext traversal)
 #define OFFSET_MSTATE_PTR             0x083c4a68  // PTR_m_State - pointer to m_State
 
+// Get<T> function addresses (for real manager capture - Dec 22, 2025)
+// These functions return the real manager pointers from ImmutableDataHeadmaster
+#define OFFSET_GET_BACKGROUND         0x02994834  // Get<eoc::BackgroundManager>
+#define OFFSET_GET_ORIGIN             0x0341c42c  // Get<eoc::OriginManager>
+#define OFFSET_GET_CLASS              0x0262f184  // Get<eoc::ClassDescriptions>
+#define OFFSET_GET_PROGRESSION        0x03697f0c  // Get<eoc::ProgressionManager>
+#define OFFSET_GET_ACTIONRESOURCE     0x011a4494  // Get<eoc::ActionResourceTypes>
+
 // FeatManager structure offsets
 //
 // TypeContext Metadata (GuidResourceBank HashMap - Dec 20, 2025 discovery):
@@ -125,15 +133,16 @@ static const char* s_type_names[STATICDATA_COUNT] = {
 };
 
 // Manager type names as they appear in TypeContext (for name-based capture)
+// Names sourced from Windows BG3SE GuidResources.h EngineClass definitions
 static const char* s_manager_type_names[STATICDATA_COUNT] = {
     "eoc::FeatManager",
     "eoc::RaceManager",
     "eoc::BackgroundManager",
     "eoc::OriginManager",
     "eoc::GodManager",
-    "eoc::ClassManager",
+    "eoc::ClassDescriptions",           // Was ClassManager - corrected per GuidResources.h
     "eoc::ProgressionManager",
-    "eoc::ActionResourceManager",
+    "eoc::ActionResourceTypes",         // Was ActionResourceManager - corrected per GuidResources.h
     "eoc::FeatDescriptionManager"
 };
 
@@ -373,8 +382,9 @@ static int capture_managers_via_typecontext(void) {
             // Safely read type name string (up to 128 chars)
             char name[128] = {0};
             if (safe_memory_read_string((mach_vm_address_t)type_name_ptr, name, sizeof(name))) {
-                // Log first 20 entries and any containing "Feat" or "Manager"
-                if (count < 20 || strstr(name, "Feat") || strstr(name, "Manager")) {
+                // Log first 20 entries and any containing "Feat", "Manager", "Class", "Action", or "Descriptions"
+                if (count < 20 || strstr(name, "Feat") || strstr(name, "Manager") ||
+                    strstr(name, "Class") || strstr(name, "Action") || strstr(name, "Descriptions")) {
                     log_message("[StaticData] TypeInfo[%d]: %s @ %p", count, name, manager_ptr);
                 }
 
@@ -383,7 +393,8 @@ static int capture_managers_via_typecontext(void) {
                     // Only capture if not already captured
                     if (!g_staticdata.managers[i] && strcmp(name, s_manager_type_names[i]) == 0) {
                         g_staticdata.managers[i] = manager_ptr;
-                        log_message("[StaticData] Captured %s metadata: %p", s_type_names[i], manager_ptr);
+                        log_message("[StaticData] *** MATCHED *** %s = %s @ %p",
+                                    s_type_names[i], s_manager_type_names[i], manager_ptr);
 
                         // NOTE: We do NOT probe for real managers anymore.
                         // Dec 20, 2025 discovery: TypeContext metadata IS a GuidResourceBank
@@ -527,6 +538,435 @@ static void hook_GetAllFeats(void* environment) {
 }
 
 // ============================================================================
+// Get<T> Hooks (Dec 22, 2025 - Real Manager Capture)
+// ============================================================================
+
+/**
+ * Hook typedef for Get<T> functions.
+ * Signature: Manager* Get(ImmutableDataHeadmaster* this)
+ * ARM64: x0 = this, returns manager in x0
+ */
+typedef void* (*GetManager_t)(void* headmaster);
+
+// Original function pointers
+static GetManager_t g_orig_GetBackground = NULL;
+static GetManager_t g_orig_GetOrigin = NULL;
+static GetManager_t g_orig_GetClass = NULL;
+static GetManager_t g_orig_GetProgression = NULL;
+static GetManager_t g_orig_GetActionResource = NULL;
+
+// ImmutableDataHeadmaster pointer (captured from Get<T> hooks)
+static void* g_immutable_data_headmaster = NULL;
+
+/**
+ * Hook for Get<eoc::BackgroundManager>
+ */
+static void* hook_GetBackground(void* headmaster) {
+    // Capture ImmutableDataHeadmaster pointer
+    if (headmaster && !g_immutable_data_headmaster) {
+        g_immutable_data_headmaster = headmaster;
+        log_message("[StaticData] Captured ImmutableDataHeadmaster: %p", headmaster);
+    }
+
+    void* result = g_orig_GetBackground ? g_orig_GetBackground(headmaster) : NULL;
+
+    // Capture real manager
+    if (result && !g_staticdata.real_managers[STATICDATA_BACKGROUND]) {
+        g_staticdata.real_managers[STATICDATA_BACKGROUND] = result;
+        log_message("[StaticData] *** GET<T> HOOK *** Captured real BackgroundManager: %p", result);
+
+        // Verify structure
+        int32_t count = 0;
+        void* array = NULL;
+        if (safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count) &&
+            safe_memory_read_pointer((mach_vm_address_t)result + 0x80, &array)) {
+            log_message("[StaticData] BackgroundManager: count@+0x7C=%d, array@+0x80=%p", count, array);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Hook for Get<eoc::OriginManager>
+ */
+static void* hook_GetOrigin(void* headmaster) {
+    if (headmaster && !g_immutable_data_headmaster) {
+        g_immutable_data_headmaster = headmaster;
+    }
+
+    void* result = g_orig_GetOrigin ? g_orig_GetOrigin(headmaster) : NULL;
+
+    if (result && !g_staticdata.real_managers[STATICDATA_ORIGIN]) {
+        g_staticdata.real_managers[STATICDATA_ORIGIN] = result;
+        log_message("[StaticData] *** GET<T> HOOK *** Captured real OriginManager: %p", result);
+
+        int32_t count = 0;
+        if (safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count)) {
+            log_message("[StaticData] OriginManager: count@+0x7C=%d", count);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Hook for Get<eoc::ClassDescriptions>
+ */
+static void* hook_GetClass(void* headmaster) {
+    if (headmaster && !g_immutable_data_headmaster) {
+        g_immutable_data_headmaster = headmaster;
+    }
+
+    void* result = g_orig_GetClass ? g_orig_GetClass(headmaster) : NULL;
+
+    if (result && !g_staticdata.real_managers[STATICDATA_CLASS]) {
+        g_staticdata.real_managers[STATICDATA_CLASS] = result;
+        log_message("[StaticData] *** GET<T> HOOK *** Captured real ClassDescriptions: %p", result);
+
+        int32_t count = 0;
+        if (safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count)) {
+            log_message("[StaticData] ClassDescriptions: count@+0x7C=%d", count);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Hook for Get<eoc::ProgressionManager>
+ */
+static void* hook_GetProgression(void* headmaster) {
+    if (headmaster && !g_immutable_data_headmaster) {
+        g_immutable_data_headmaster = headmaster;
+    }
+
+    void* result = g_orig_GetProgression ? g_orig_GetProgression(headmaster) : NULL;
+
+    if (result && !g_staticdata.real_managers[STATICDATA_PROGRESSION]) {
+        g_staticdata.real_managers[STATICDATA_PROGRESSION] = result;
+        log_message("[StaticData] *** GET<T> HOOK *** Captured real ProgressionManager: %p", result);
+
+        int32_t count = 0;
+        if (safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count)) {
+            log_message("[StaticData] ProgressionManager: count@+0x7C=%d", count);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Hook for Get<eoc::ActionResourceTypes>
+ */
+static void* hook_GetActionResource(void* headmaster) {
+    if (headmaster && !g_immutable_data_headmaster) {
+        g_immutable_data_headmaster = headmaster;
+    }
+
+    void* result = g_orig_GetActionResource ? g_orig_GetActionResource(headmaster) : NULL;
+
+    if (result && !g_staticdata.real_managers[STATICDATA_ACTION_RESOURCE]) {
+        g_staticdata.real_managers[STATICDATA_ACTION_RESOURCE] = result;
+        log_message("[StaticData] *** GET<T> HOOK *** Captured real ActionResourceTypes: %p", result);
+
+        int32_t count = 0;
+        if (safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count)) {
+            log_message("[StaticData] ActionResourceTypes: count@+0x7C=%d", count);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Install hooks for Get<T> functions.
+ * Uses standard Dobby hooks (Get<T> functions are small and typically safe).
+ */
+static void install_get_manager_hooks(void* main_binary_base) {
+    log_message("[StaticData] Installing Get<T> hooks for real manager capture...");
+
+    // Background
+    void* target = (uint8_t*)main_binary_base + OFFSET_GET_BACKGROUND;
+    if (DobbyHook(target, (void*)hook_GetBackground, (void**)&g_orig_GetBackground) == 0) {
+        log_message("[StaticData] Installed Get<BackgroundManager> hook at %p", target);
+    } else {
+        log_message("[StaticData] WARNING: Failed to hook Get<BackgroundManager>");
+    }
+
+    // Origin
+    target = (uint8_t*)main_binary_base + OFFSET_GET_ORIGIN;
+    if (DobbyHook(target, (void*)hook_GetOrigin, (void**)&g_orig_GetOrigin) == 0) {
+        log_message("[StaticData] Installed Get<OriginManager> hook at %p", target);
+    } else {
+        log_message("[StaticData] WARNING: Failed to hook Get<OriginManager>");
+    }
+
+    // Class
+    target = (uint8_t*)main_binary_base + OFFSET_GET_CLASS;
+    if (DobbyHook(target, (void*)hook_GetClass, (void**)&g_orig_GetClass) == 0) {
+        log_message("[StaticData] Installed Get<ClassDescriptions> hook at %p", target);
+    } else {
+        log_message("[StaticData] WARNING: Failed to hook Get<ClassDescriptions>");
+    }
+
+    // Progression
+    target = (uint8_t*)main_binary_base + OFFSET_GET_PROGRESSION;
+    if (DobbyHook(target, (void*)hook_GetProgression, (void**)&g_orig_GetProgression) == 0) {
+        log_message("[StaticData] Installed Get<ProgressionManager> hook at %p", target);
+    } else {
+        log_message("[StaticData] WARNING: Failed to hook Get<ProgressionManager>");
+    }
+
+    // ActionResource
+    target = (uint8_t*)main_binary_base + OFFSET_GET_ACTIONRESOURCE;
+    if (DobbyHook(target, (void*)hook_GetActionResource, (void**)&g_orig_GetActionResource) == 0) {
+        log_message("[StaticData] Installed Get<ActionResourceTypes> hook at %p", target);
+    } else {
+        log_message("[StaticData] WARNING: Failed to hook Get<ActionResourceTypes>");
+    }
+
+    log_message("[StaticData] Get<T> hooks installation complete");
+}
+
+/**
+ * Force capture managers by calling Get<T> functions directly.
+ * Uses captured ImmutableDataHeadmaster to trigger manager capture
+ * for types where hooks are installed but haven't fired yet.
+ * Returns number of managers newly captured.
+ */
+int staticdata_force_capture(void) {
+    if (!g_immutable_data_headmaster) {
+        log_message("[StaticData] Cannot force capture - no ImmutableDataHeadmaster captured yet");
+        return 0;
+    }
+
+    int captured = 0;
+    log_message("[StaticData] Force capturing managers via ImmutableDataHeadmaster %p",
+                g_immutable_data_headmaster);
+
+    // Background - call original if not captured
+    if (!g_staticdata.real_managers[STATICDATA_BACKGROUND] && g_orig_GetBackground) {
+        void* result = g_orig_GetBackground(g_immutable_data_headmaster);
+        if (result) {
+            g_staticdata.real_managers[STATICDATA_BACKGROUND] = result;
+            int32_t count = 0;
+            safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count);
+            log_message("[StaticData] Force captured BackgroundManager: %p (count=%d)", result, count);
+            captured++;
+        }
+    }
+
+    // Origin - call original if not captured
+    if (!g_staticdata.real_managers[STATICDATA_ORIGIN] && g_orig_GetOrigin) {
+        void* result = g_orig_GetOrigin(g_immutable_data_headmaster);
+        if (result) {
+            g_staticdata.real_managers[STATICDATA_ORIGIN] = result;
+            int32_t count = 0;
+            safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count);
+            log_message("[StaticData] Force captured OriginManager: %p (count=%d)", result, count);
+            captured++;
+        }
+    }
+
+    // Class - call original if not captured
+    if (!g_staticdata.real_managers[STATICDATA_CLASS] && g_orig_GetClass) {
+        void* result = g_orig_GetClass(g_immutable_data_headmaster);
+        if (result) {
+            g_staticdata.real_managers[STATICDATA_CLASS] = result;
+            int32_t count = 0;
+            safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count);
+            log_message("[StaticData] Force captured ClassDescriptions: %p (count=%d)", result, count);
+            captured++;
+        }
+    }
+
+    // Progression - call original if not captured
+    if (!g_staticdata.real_managers[STATICDATA_PROGRESSION] && g_orig_GetProgression) {
+        void* result = g_orig_GetProgression(g_immutable_data_headmaster);
+        if (result) {
+            g_staticdata.real_managers[STATICDATA_PROGRESSION] = result;
+            int32_t count = 0;
+            safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count);
+            log_message("[StaticData] Force captured ProgressionManager: %p (count=%d)", result, count);
+            captured++;
+        }
+    }
+
+    // ActionResource - call original if not captured
+    if (!g_staticdata.real_managers[STATICDATA_ACTION_RESOURCE] && g_orig_GetActionResource) {
+        void* result = g_orig_GetActionResource(g_immutable_data_headmaster);
+        if (result) {
+            g_staticdata.real_managers[STATICDATA_ACTION_RESOURCE] = result;
+            int32_t count = 0;
+            safe_memory_read_i32((mach_vm_address_t)result + 0x7C, &count);
+            log_message("[StaticData] Force captured ActionResourceTypes: %p (count=%d)", result, count);
+            captured++;
+        }
+    }
+
+    log_message("[StaticData] Force capture complete: %d managers newly captured", captured);
+    return captured;
+}
+
+/**
+ * Look up a manager in ImmutableDataHeadmaster using type index from TypeContext.
+ *
+ * ImmutableDataHeadmaster hash table structure (from Get<T> decompilation):
+ *   +0x00: buckets array (uint32_t*) - initial bucket indices
+ *   +0x08: bucket_count (int32_t) - number of buckets
+ *   +0x10: next array (uint32_t*) - chain for collision resolution
+ *   +0x20: keys array (int32_t*) - type indices
+ *   +0x2c: size (int32_t) - number of entries
+ *   +0x30: values array (void**) - manager pointers
+ *
+ * TypeContext slot structure (what managers[] contains):
+ *   +0x00: type_index (int32_t) - used for hash lookup
+ *   +0x08: flags/padding
+ *   +0x38: type name string pointer
+ *
+ * @param type_index The type index to look up
+ * @return Manager pointer, or NULL if not found
+ */
+static void* lookup_manager_by_type_index(int32_t type_index) {
+    if (!g_immutable_data_headmaster || type_index < 0) {
+        return NULL;
+    }
+
+    void* headmaster = g_immutable_data_headmaster;
+
+    // Read hash table structure
+    void* buckets = NULL;
+    int32_t bucket_count = 0;
+    void* next_chain = NULL;
+    void* keys = NULL;
+    int32_t size = 0;
+    void* values = NULL;
+
+    if (!safe_memory_read_pointer((mach_vm_address_t)headmaster + 0x00, &buckets) ||
+        !safe_memory_read_i32((mach_vm_address_t)headmaster + 0x08, &bucket_count) ||
+        !safe_memory_read_pointer((mach_vm_address_t)headmaster + 0x10, &next_chain) ||
+        !safe_memory_read_pointer((mach_vm_address_t)headmaster + 0x20, &keys) ||
+        !safe_memory_read_i32((mach_vm_address_t)headmaster + 0x2c, &size) ||
+        !safe_memory_read_pointer((mach_vm_address_t)headmaster + 0x30, &values)) {
+        log_message("[StaticData] Hash lookup: failed to read headmaster structure");
+        return NULL;
+    }
+
+    if (!buckets || bucket_count <= 0 || !keys || !values) {
+        log_message("[StaticData] Hash lookup: invalid headmaster structure");
+        return NULL;
+    }
+
+    // Compute bucket index: type_index % bucket_count
+    int32_t bucket_idx = type_index % bucket_count;
+    if (bucket_idx < 0) bucket_idx += bucket_count;  // Handle negative modulo
+
+    // Read initial index from bucket
+    uint32_t idx = 0;
+    if (!safe_memory_read_u32((mach_vm_address_t)buckets + bucket_idx * 4, &idx)) {
+        return NULL;
+    }
+
+    // Walk the chain
+    while ((int32_t)idx >= 0) {
+        // Read key at this index
+        int32_t key = 0;
+        if (!safe_memory_read_i32((mach_vm_address_t)keys + idx * 4, &key)) {
+            break;
+        }
+
+        if (key == type_index) {
+            // Found it - read value
+            void* manager = NULL;
+            if (safe_memory_read_pointer((mach_vm_address_t)values + idx * 8, &manager)) {
+                return manager;
+            }
+            break;
+        }
+
+        // Follow next chain
+        if (!next_chain) break;
+        if (!safe_memory_read_u32((mach_vm_address_t)next_chain + idx * 4, &idx)) {
+            break;
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * Force capture managers that don't have Get<T> hooks by using hash lookup.
+ * This works for Race, God, FeatDescription which don't have templated Get functions.
+ *
+ * Prerequisites:
+ *   - ImmutableDataHeadmaster must be captured (via any Get<T> hook)
+ *   - TypeContext must be captured (provides type indices)
+ *
+ * @return Number of managers newly captured via hash lookup
+ */
+int staticdata_hash_lookup_capture(void) {
+    if (!g_immutable_data_headmaster) {
+        log_message("[StaticData] Hash lookup: no ImmutableDataHeadmaster captured yet");
+        return 0;
+    }
+
+    int captured = 0;
+    log_message("[StaticData] Attempting hash lookup capture for remaining types...");
+
+    // Types without Get<T> hooks: Race, God, FeatDescription, (Feat if hook didn't fire)
+    StaticDataType hash_types[] = {
+        STATICDATA_RACE,
+        STATICDATA_GOD,
+        STATICDATA_FEAT_DESCRIPTION,
+        STATICDATA_FEAT  // Also try Feat in case hook didn't fire
+    };
+
+    for (int i = 0; i < sizeof(hash_types)/sizeof(hash_types[0]); i++) {
+        StaticDataType type = hash_types[i];
+
+        // Skip if already captured
+        if (g_staticdata.real_managers[type]) {
+            continue;
+        }
+
+        // Need TypeContext metadata to get type index
+        void* slot_ptr = g_staticdata.managers[type];
+        if (!slot_ptr) {
+            log_message("[StaticData] Hash lookup: no TypeContext for %s", s_type_names[type]);
+            continue;
+        }
+
+        // Read type index from slot_ptr+0x00
+        int32_t type_index = 0;
+        if (!safe_memory_read_i32((mach_vm_address_t)slot_ptr, &type_index)) {
+            log_message("[StaticData] Hash lookup: failed to read type_index for %s", s_type_names[type]);
+            continue;
+        }
+
+        log_message("[StaticData] Hash lookup: %s has type_index=%d", s_type_names[type], type_index);
+
+        // Look up in hash table
+        void* manager = lookup_manager_by_type_index(type_index);
+        if (manager) {
+            g_staticdata.real_managers[type] = manager;
+
+            // Verify structure
+            int32_t count = 0;
+            safe_memory_read_i32((mach_vm_address_t)manager + 0x7C, &count);
+            log_message("[StaticData] Hash lookup captured %s: %p (count=%d)",
+                        s_type_names[type], manager, count);
+            captured++;
+        } else {
+            log_message("[StaticData] Hash lookup: %s not found in hash table", s_type_names[type]);
+        }
+    }
+
+    log_message("[StaticData] Hash lookup complete: %d managers newly captured", captured);
+    return captured;
+}
+
+// ============================================================================
 // ARM64 Safe Hook Installation (Issue #44)
 // ============================================================================
 
@@ -601,6 +1041,7 @@ bool staticdata_manager_init(void *main_binary_base) {
 
     // Clear manager pointers
     memset(g_staticdata.managers, 0, sizeof(g_staticdata.managers));
+    memset(g_staticdata.real_managers, 0, sizeof(g_staticdata.real_managers));
 
     // Try to install ARM64-safe hook for FeatManager::GetFeats
     // This uses the skip-and-redirect strategy from Issue #44
@@ -611,6 +1052,10 @@ bool staticdata_manager_init(void *main_binary_base) {
     } else {
         log_message("[StaticData] FeatManager hook: Using TypeContext capture (hook not installed)");
     }
+
+    // Install Get<T> hooks for other manager types (Dec 22, 2025)
+    // These capture real manager pointers from ImmutableDataHeadmaster
+    install_get_manager_hooks(main_binary_base);
 
     g_staticdata.initialized = true;
     log_message("[StaticData] Static data manager initialized");
@@ -1428,6 +1873,37 @@ void staticdata_dump_status(void) {
             log_message("  %s: not captured", s_type_names[i]);
         }
     }
+}
+
+bool staticdata_get_raw_info(StaticDataType type, StaticDataRawInfo* out) {
+    if (!out || type < 0 || type >= STATICDATA_COUNT) {
+        return false;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    void* meta = g_staticdata.managers[type];
+    void* real = g_staticdata.real_managers[type];
+
+    if (real) {
+        out->manager_ptr = (uintptr_t)real;
+        out->is_session = true;
+        safe_memory_read_i32((mach_vm_address_t)real + FEATMANAGER_REAL_COUNT_OFFSET, &out->count);
+        safe_memory_read_pointer((mach_vm_address_t)real + FEATMANAGER_REAL_ARRAY_OFFSET, (void**)&out->array_ptr);
+        out->count_offset = FEATMANAGER_REAL_COUNT_OFFSET;
+        out->array_offset = FEATMANAGER_REAL_ARRAY_OFFSET;
+        return true;
+    } else if (meta) {
+        out->manager_ptr = (uintptr_t)meta;
+        out->is_session = false;
+        safe_memory_read_i32((mach_vm_address_t)meta + FEATMANAGER_META_COUNT_OFFSET, &out->count);
+        safe_memory_read_pointer((mach_vm_address_t)meta + FEATMANAGER_META_VALUES_OFFSET, (void**)&out->array_ptr);
+        out->count_offset = FEATMANAGER_META_COUNT_OFFSET;
+        out->array_offset = FEATMANAGER_META_VALUES_OFFSET;
+        return true;
+    }
+
+    return false;
 }
 
 void staticdata_dump_entries(StaticDataType type, int max_entries) {

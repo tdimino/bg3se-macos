@@ -353,6 +353,49 @@ static int lua_staticdata_fridacaptureavailable(lua_State *L) {
 }
 
 /**
+ * Get raw manager info for debugging.
+ *
+ * @param type Type name string
+ * @return Table with {ptr, array_ptr, count, count_offset, array_offset, is_session}
+ */
+static int lua_staticdata_proberaw(lua_State *L) {
+    const char* type_name = luaL_checkstring(L, 1);
+
+    int type = staticdata_type_from_name(type_name);
+    if (type < 0) {
+        return luaL_error(L, "Unknown static data type: %s", type_name);
+    }
+
+    StaticDataRawInfo info;
+    if (!staticdata_get_raw_info((StaticDataType)type, &info)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+
+    lua_pushinteger(L, (lua_Integer)info.manager_ptr);
+    lua_setfield(L, -2, "ptr");
+
+    lua_pushinteger(L, (lua_Integer)info.array_ptr);
+    lua_setfield(L, -2, "array_ptr");
+
+    lua_pushinteger(L, info.count);
+    lua_setfield(L, -2, "count");
+
+    lua_pushinteger(L, info.count_offset);
+    lua_setfield(L, -2, "count_offset");
+
+    lua_pushinteger(L, info.array_offset);
+    lua_setfield(L, -2, "array_offset");
+
+    lua_pushboolean(L, info.is_session);
+    lua_setfield(L, -2, "is_session");
+
+    return 1;
+}
+
+/**
  * Manually trigger manager capture attempt.
  * Useful for debugging or if auto-capture at SessionLoaded didn't find managers.
  *
@@ -362,6 +405,35 @@ static int lua_staticdata_fridacaptureavailable(lua_State *L) {
  */
 static int lua_staticdata_triggercapture(lua_State *L) {
     int captured = staticdata_post_init_capture();
+    lua_pushinteger(L, captured);
+    return 1;
+}
+
+/**
+ * Force capture managers by directly calling Get<T> functions.
+ * Uses captured ImmutableDataHeadmaster (requires at least one manager captured first).
+ *
+ * This is useful for capturing Origin/Progression without entering character creation.
+ * Also attempts hash lookup for types without Get<T> hooks (Race, God, FeatDescription).
+ *
+ * @return number of managers newly captured
+ */
+static int lua_staticdata_forcecapture(lua_State *L) {
+    int captured = staticdata_force_capture();
+    // Also try hash lookup for types without Get<T> hooks
+    captured += staticdata_hash_lookup_capture();
+    lua_pushinteger(L, captured);
+    return 1;
+}
+
+/**
+ * Force capture managers via hash lookup only.
+ * For types without Get<T> hooks: Race, God, FeatDescription, Feat.
+ *
+ * @return number of managers newly captured via hash lookup
+ */
+static int lua_staticdata_hashlookup(lua_State *L) {
+    int captured = staticdata_hash_lookup_capture();
     lua_pushinteger(L, captured);
     return 1;
 }
@@ -379,11 +451,14 @@ static const luaL_Reg staticdata_funcs[] = {
     {"DumpStatus", lua_staticdata_dumpstatus},
     {"DumpEntries", lua_staticdata_dumpentries},
     {"Probe", lua_staticdata_probe},
+    {"ProbeRaw", lua_staticdata_proberaw},
     {"TryTypeContext", lua_staticdata_trytypecontext},
     {"LoadFridaCapture", lua_staticdata_loadfridacapture},
     {"FridaCaptureAvailable", lua_staticdata_fridacaptureavailable},
     {"DumpFeatMemory", lua_staticdata_dumpfeatmemory},
     {"TriggerCapture", lua_staticdata_triggercapture},
+    {"ForceCapture", lua_staticdata_forcecapture},
+    {"HashLookup", lua_staticdata_hashlookup},
     {NULL, NULL}
 };
 
