@@ -27,6 +27,15 @@ typedef enum {
     EVENT_KEY_INPUT,           // Keyboard input event
     EVENT_DO_CONSOLE_COMMAND,  // Console command interception
     EVENT_LUA_CONSOLE_INPUT,   // Raw Lua console input
+    // Engine events (Issue #51) - Polled from one-frame components
+    EVENT_TURN_STARTED,        // Combat turn started
+    EVENT_TURN_ENDED,          // Combat turn ended
+    EVENT_COMBAT_STARTED,      // Combat initiated
+    EVENT_COMBAT_ENDED,        // Combat resolved
+    EVENT_STATUS_APPLIED,      // Status effect applied
+    EVENT_STATUS_REMOVED,      // Status effect removed
+    EVENT_EQUIPMENT_CHANGED,   // Equipment slot changed
+    EVENT_LEVEL_UP,            // Character level increased
     EVENT_MAX
 } BG3SEEventType;
 
@@ -131,5 +140,40 @@ bool events_fire_do_console_command(lua_State *L, const char *command);
  * @return true if execution should be prevented (a handler set e.Prevent = true)
  */
 bool events_fire_lua_console_input(lua_State *L, const char *input);
+
+/**
+ * Poll for one-frame event components and fire corresponding events.
+ * Should be called once per tick after the main tick event.
+ *
+ * This function checks for entities with event marker components like:
+ * - esv::TurnStartedEventOneFrameComponent
+ * - esv::combat::LeftEventOneFrameComponent
+ * - esv::status::ApplyEventOneFrameComponent
+ * etc.
+ *
+ * @param L Lua state
+ */
+void events_poll_oneframe_components(lua_State *L);
+
+/**
+ * Fire the TurnStarted event with combat data.
+ * Handlers receive {Entity = handle, Round = int} table.
+ *
+ * @param L      Lua state
+ * @param entity The entity whose turn started (as EntityHandle uint64)
+ * @param round  Current combat round
+ */
+void events_fire_turn_started(lua_State *L, uint64_t entity, int round);
+
+/**
+ * Fire the StatusApplied event with status data.
+ * Handlers receive {Entity = handle, StatusId = string, Source = handle} table.
+ *
+ * @param L        Lua state
+ * @param entity   The entity receiving the status
+ * @param statusId The status ID (FixedString)
+ * @param source   The source entity
+ */
+void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statusId, uint64_t source);
 
 #endif /* LUA_EVENTS_H */

@@ -13,6 +13,34 @@ Each entry includes:
 
 ---
 
+## [v0.36.9] - 2025-12-24
+
+**Parity:** ~78% | **Category:** Events System | **Issues:** #51
+
+### Added
+- **Engine Events Expansion** - 8 new one-frame component events
+  - `TurnStarted` - Combat turn started (with Entity, Round data)
+  - `TurnEnded` - Combat turn ended
+  - `CombatStarted` - Combat initiated
+  - `CombatEnded` - Combat resolved
+  - `StatusApplied` - Status effect applied (with Entity, StatusId, Source)
+  - `StatusRemoved` - Status effect removed
+  - `EquipmentChanged` - Equipment slot changed
+  - `LevelUp` - Character level increased
+
+- **Event Polling System** - Tick-based polling of one-frame components
+  - `events_poll_oneframe_components()` - Called every frame after tick
+  - Queries entities with event marker components
+  - Only polls when handlers are registered (performance optimization)
+
+### Technical
+- Events use Windows BG3SE one-frame component pattern
+- Components polled: `esv::TurnStartedEventOneFrameComponent`, `esv::TurnEndedEventOneFrameComponent`, etc.
+- Handler data includes relevant entity handles and event metadata
+- Full event list now: 18 events (10 existing + 8 new engine events)
+
+---
+
 ## [v0.36.8] - 2025-12-24
 
 **Parity:** ~77% | **Category:** Component System | **Issues:** #52

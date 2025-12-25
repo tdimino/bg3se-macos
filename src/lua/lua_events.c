@@ -63,7 +63,16 @@ static const char *g_event_names[EVENT_MAX] = {
     "GameStateChanged",
     "KeyInput",
     "DoConsoleCommand",
-    "LuaConsoleInput"
+    "LuaConsoleInput",
+    // Engine events (Issue #51)
+    "TurnStarted",
+    "TurnEnded",
+    "CombatStarted",
+    "CombatEnded",
+    "StatusApplied",
+    "StatusRemoved",
+    "EquipmentChanged",
+    "LevelUp"
 };
 
 // ============================================================================
@@ -753,4 +762,331 @@ void lua_events_register(lua_State *L, int ext_table_index) {
     lua_setfield(L, ext_table_index, "OnNextTick");
 
     LOG_EVENTS_INFO("Ext.Events namespace registered with %d event types", EVENT_MAX);
+}
+
+// ============================================================================
+// Engine Events - Fire Functions (Issue #51)
+// ============================================================================
+
+void events_fire_turn_started(lua_State *L, uint64_t entity, int round) {
+    if (!L) return;
+
+    int count = g_handler_counts[EVENT_TURN_STARTED];
+    if (count == 0) return;
+
+    LOG_EVENTS_DEBUG("Firing TurnStarted (entity=0x%llx, round=%d, %d handlers)",
+                (unsigned long long)entity, round, count);
+
+    g_dispatch_depth[EVENT_TURN_STARTED]++;
+
+    for (int i = 0; i < g_handler_counts[EVENT_TURN_STARTED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_TURN_STARTED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) {
+            continue;
+        }
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        // Create event data table
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)entity);
+        lua_setfield(L, -2, "Entity");
+        lua_pushinteger(L, round);
+        lua_setfield(L, -2, "Round");
+
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            const char *err = lua_tostring(L, -1);
+            LOG_EVENTS_ERROR("TurnStarted handler error (id=%llu): %s",
+                       h->handler_id, err ? err : "unknown");
+            lua_pop(L, 1);
+        }
+
+        if (h->once) {
+            if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+                g_deferred_unsubs[g_deferred_unsub_count++] =
+                    (DeferredUnsubscribe){EVENT_TURN_STARTED, h->handler_id};
+            }
+        }
+    }
+
+    g_dispatch_depth[EVENT_TURN_STARTED]--;
+
+    if (g_dispatch_depth[EVENT_TURN_STARTED] == 0) {
+        process_deferred_unsubscribes(L, EVENT_TURN_STARTED);
+    }
+}
+
+void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statusId, uint64_t source) {
+    if (!L) return;
+
+    int count = g_handler_counts[EVENT_STATUS_APPLIED];
+    if (count == 0) return;
+
+    LOG_EVENTS_DEBUG("Firing StatusApplied (entity=0x%llx, status=%s, source=0x%llx, %d handlers)",
+                (unsigned long long)entity, statusId ? statusId : "nil",
+                (unsigned long long)source, count);
+
+    g_dispatch_depth[EVENT_STATUS_APPLIED]++;
+
+    for (int i = 0; i < g_handler_counts[EVENT_STATUS_APPLIED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_STATUS_APPLIED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) {
+            continue;
+        }
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        // Create event data table
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)entity);
+        lua_setfield(L, -2, "Entity");
+        lua_pushstring(L, statusId ? statusId : "");
+        lua_setfield(L, -2, "StatusId");
+        lua_pushinteger(L, (lua_Integer)source);
+        lua_setfield(L, -2, "Source");
+
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            const char *err = lua_tostring(L, -1);
+            LOG_EVENTS_ERROR("StatusApplied handler error (id=%llu): %s",
+                       h->handler_id, err ? err : "unknown");
+            lua_pop(L, 1);
+        }
+
+        if (h->once) {
+            if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+                g_deferred_unsubs[g_deferred_unsub_count++] =
+                    (DeferredUnsubscribe){EVENT_STATUS_APPLIED, h->handler_id};
+            }
+        }
+    }
+
+    g_dispatch_depth[EVENT_STATUS_APPLIED]--;
+
+    if (g_dispatch_depth[EVENT_STATUS_APPLIED] == 0) {
+        process_deferred_unsubscribes(L, EVENT_STATUS_APPLIED);
+    }
+}
+
+// ============================================================================
+// One-Frame Component Polling (Issue #51)
+// ============================================================================
+
+// Forward declaration - implemented in entity_system.c
+extern int lua_entity_get_all_with_component(lua_State *L);
+
+// Helper: Poll for entities with a specific component and call handler for each
+static void poll_oneframe_component(lua_State *L, const char *componentName,
+                                    void (*handler)(lua_State*, uint64_t)) {
+    lua_getglobal(L, "Ext");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+
+    lua_getfield(L, -1, "Entity");
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); return; }
+
+    lua_getfield(L, -1, "GetAllEntitiesWithComponent");
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 3); return; }
+
+    lua_pushstring(L, componentName);
+    if (lua_pcall(L, 1, 1, 0) == LUA_OK && lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            if (lua_isinteger(L, -1)) {
+                uint64_t entity = (uint64_t)lua_tointeger(L, -1);
+                handler(L, entity);
+            }
+            lua_pop(L, 1);  // Pop value, keep key
+        }
+    }
+    lua_pop(L, 3);  // Pop result + Entity + Ext
+}
+
+// Individual event handlers for each one-frame component type
+static void handle_turn_started(lua_State *L, uint64_t entity) {
+    events_fire_turn_started(L, entity, 0);  // Round extracted from component if needed
+}
+
+static void handle_turn_ended(lua_State *L, uint64_t entity) {
+    // Fire TurnEnded event
+    if (g_handler_counts[EVENT_TURN_ENDED] == 0) return;
+
+    g_dispatch_depth[EVENT_TURN_ENDED]++;
+    for (int i = 0; i < g_handler_counts[EVENT_TURN_ENDED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_TURN_ENDED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (lua_isfunction(L, -1)) {
+            lua_newtable(L);
+            lua_pushinteger(L, (lua_Integer)entity);
+            lua_setfield(L, -2, "Entity");
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_TURN_ENDED, h->handler_id};
+        }
+    }
+    g_dispatch_depth[EVENT_TURN_ENDED]--;
+    if (g_dispatch_depth[EVENT_TURN_ENDED] == 0) process_deferred_unsubscribes(L, EVENT_TURN_ENDED);
+}
+
+static void handle_combat_started(lua_State *L, uint64_t entity) {
+    if (g_handler_counts[EVENT_COMBAT_STARTED] == 0) return;
+
+    g_dispatch_depth[EVENT_COMBAT_STARTED]++;
+    for (int i = 0; i < g_handler_counts[EVENT_COMBAT_STARTED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_COMBAT_STARTED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (lua_isfunction(L, -1)) {
+            lua_newtable(L);
+            lua_pushinteger(L, (lua_Integer)entity);
+            lua_setfield(L, -2, "CombatId");
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_COMBAT_STARTED, h->handler_id};
+        }
+    }
+    g_dispatch_depth[EVENT_COMBAT_STARTED]--;
+    if (g_dispatch_depth[EVENT_COMBAT_STARTED] == 0) process_deferred_unsubscribes(L, EVENT_COMBAT_STARTED);
+}
+
+static void handle_combat_left(lua_State *L, uint64_t entity) {
+    if (g_handler_counts[EVENT_COMBAT_ENDED] == 0) return;
+
+    g_dispatch_depth[EVENT_COMBAT_ENDED]++;
+    for (int i = 0; i < g_handler_counts[EVENT_COMBAT_ENDED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_COMBAT_ENDED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (lua_isfunction(L, -1)) {
+            lua_newtable(L);
+            lua_pushinteger(L, (lua_Integer)entity);
+            lua_setfield(L, -2, "Entity");
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_COMBAT_ENDED, h->handler_id};
+        }
+    }
+    g_dispatch_depth[EVENT_COMBAT_ENDED]--;
+    if (g_dispatch_depth[EVENT_COMBAT_ENDED] == 0) process_deferred_unsubscribes(L, EVENT_COMBAT_ENDED);
+}
+
+static void handle_equipment_changed(lua_State *L, uint64_t entity) {
+    if (g_handler_counts[EVENT_EQUIPMENT_CHANGED] == 0) return;
+
+    g_dispatch_depth[EVENT_EQUIPMENT_CHANGED]++;
+    for (int i = 0; i < g_handler_counts[EVENT_EQUIPMENT_CHANGED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_EQUIPMENT_CHANGED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (lua_isfunction(L, -1)) {
+            lua_newtable(L);
+            lua_pushinteger(L, (lua_Integer)entity);
+            lua_setfield(L, -2, "Entity");
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_EQUIPMENT_CHANGED, h->handler_id};
+        }
+    }
+    g_dispatch_depth[EVENT_EQUIPMENT_CHANGED]--;
+    if (g_dispatch_depth[EVENT_EQUIPMENT_CHANGED] == 0) process_deferred_unsubscribes(L, EVENT_EQUIPMENT_CHANGED);
+}
+
+static void handle_level_up(lua_State *L, uint64_t entity) {
+    if (g_handler_counts[EVENT_LEVEL_UP] == 0) return;
+
+    g_dispatch_depth[EVENT_LEVEL_UP]++;
+    for (int i = 0; i < g_handler_counts[EVENT_LEVEL_UP]; i++) {
+        EventHandler *h = &g_handlers[EVENT_LEVEL_UP][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (lua_isfunction(L, -1)) {
+            lua_newtable(L);
+            lua_pushinteger(L, (lua_Integer)entity);
+            lua_setfield(L, -2, "Entity");
+            // TODO: Extract PreviousLevel and NewLevel from component
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_LEVEL_UP, h->handler_id};
+        }
+    }
+    g_dispatch_depth[EVENT_LEVEL_UP]--;
+    if (g_dispatch_depth[EVENT_LEVEL_UP] == 0) process_deferred_unsubscribes(L, EVENT_LEVEL_UP);
+}
+
+void events_poll_oneframe_components(lua_State *L) {
+    if (!L) return;
+
+    // Only poll if we have subscribers to any engine events
+    int total_handlers = 0;
+    for (int i = EVENT_TURN_STARTED; i <= EVENT_LEVEL_UP; i++) {
+        total_handlers += g_handler_counts[i];
+    }
+    if (total_handlers == 0) return;
+
+    // Combat turn events
+    if (g_handler_counts[EVENT_TURN_STARTED] > 0) {
+        poll_oneframe_component(L, "esv::TurnStartedEventOneFrameComponent", handle_turn_started);
+    }
+    if (g_handler_counts[EVENT_TURN_ENDED] > 0) {
+        poll_oneframe_component(L, "esv::TurnEndedEventOneFrameComponent", handle_turn_ended);
+    }
+
+    // Combat start/end events
+    if (g_handler_counts[EVENT_COMBAT_STARTED] > 0) {
+        poll_oneframe_component(L, "esv::combat::CombatStartedEventOneFrameComponent", handle_combat_started);
+    }
+    if (g_handler_counts[EVENT_COMBAT_ENDED] > 0) {
+        poll_oneframe_component(L, "esv::combat::LeftEventOneFrameComponent", handle_combat_left);
+    }
+
+    // Equipment changed
+    if (g_handler_counts[EVENT_EQUIPMENT_CHANGED] > 0) {
+        poll_oneframe_component(L, "esv::stats::EquipmentSlotChangedEventOneFrameComponent", handle_equipment_changed);
+    }
+
+    // Level up
+    if (g_handler_counts[EVENT_LEVEL_UP] > 0) {
+        poll_oneframe_component(L, "esv::stats::LevelChangedOneFrameComponent", handle_level_up);
+    }
+
+    // Status events - poll for status apply component
+    // Note: StatusApplied/StatusRemoved need esv::status::ApplyEventOneFrameComponent
+    // These components may need to be registered first
 }

@@ -2236,6 +2236,9 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
         timer_tick(delta_ms);
 
         events_fire_tick(L, delta_seconds);
+
+        // Poll for one-frame event components (Issue #51)
+        events_poll_oneframe_components(L);
     }
 
     // Capture COsiris pointer if we haven't already

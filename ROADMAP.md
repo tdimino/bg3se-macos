@@ -4,7 +4,7 @@ This document tracks the development roadmap for achieving feature parity with W
 
 ## Current Status: v0.36.9
 
-**Overall Feature Parity: ~77%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~78%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -38,7 +38,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.IO` | ✅ Full (4) | ✅ LoadFile, SaveFile, AddPathOverride, GetPathOverride (4) | **100%** | 1 |
 | `Ext.Entity` | ✅ Full (26) | ⚠️ Get, GetByHandle, components, enumeration (16) | **62%** | 2 |
 | `Ext.Stats` | ✅ Full (52) | ✅ Get, GetAll, Create, Sync (all), property read/write (18) | **35%** | 3 |
-| `Ext.Events` | ✅ Full (~30) | ⚠️ 10 events + Subscribe/Unsubscribe/Prevent | **33%** | 2.5 |
+| `Ext.Events` | ✅ Full (~30) | ✅ 18 events (10 lifecycle + 8 engine) + Subscribe/Unsubscribe/Prevent | **60%** | 2.5 |
 | `Ext.Timer` | ✅ Full (13) | ✅ WaitFor, WaitForRealtime, Cancel, Pause, Resume, IsPaused, MonotonicTime, MicrosecTime, ClockEpoch, ClockTime, GameTime, DeltaTime, Ticks, IsGamePaused, +6 persistent (20) | **100%** | 2.3 |
 | `Ext.Debug` | ✅ Full (8) | ✅ Memory introspection (11 macOS-specific) | **100%** | 2.3 |
 | `Ext.Vars` | ✅ Full (8) | ✅ User + Mod Variables (12) | **100%** | 2.6 |
@@ -417,11 +417,11 @@ Ext.Vars.ReloadPersistentVars()   -- Force reload from disk
 **Note:** macOS uses file-based persistence instead of savegame hooks (which would require extensive reverse engineering).
 
 ### 2.5 Ext.Events API (Engine Events)
-**Status:** ✅ Complete (v0.30.0) - 10 events including console interception with Prevent pattern
+**Status:** ⚠️ 60% Parity (v0.36.9) - 18 events (10 lifecycle + 8 engine events via one-frame polling)
 
 From API.md: "Subscribing to engine events can be done through the `Ext.Events` table."
 
-**Implemented API (v0.30.0):**
+**Implemented API (v0.36.9):**
 ```lua
 -- Subscribe with options
 local handlerId = Ext.Events.SessionLoaded:Subscribe(function(e)
@@ -434,49 +434,64 @@ end, {
 -- Unsubscribe by handler ID
 Ext.Events.SessionLoaded:Unsubscribe(handlerId)
 
--- Helper for next tick (fires once)
-Ext.OnNextTick(function()
-    -- Runs on next game loop iteration
+-- Engine events (v0.36.9) - polled from one-frame ECS components
+Ext.Events.TurnStarted:Subscribe(function(e)
+    _P("Turn started for entity: " .. tostring(e.Entity) .. " round: " .. e.Round)
 end)
 
--- Tick event with delta time
-Ext.Events.Tick:Subscribe(function(e)
-    local dt = e.DeltaTime  -- Seconds since last tick
+Ext.Events.StatusApplied:Subscribe(function(e)
+    _P("Status " .. e.StatusId .. " applied to " .. tostring(e.Entity))
 end)
 
--- GameStateChanged event (v0.14.0)
-Ext.Events.GameStateChanged:Subscribe(function(e)
-    _P("State: " .. e.FromState .. " -> " .. e.ToState)
-    -- States: 2=Init, 7=LoadSession, 13=Running, etc.
-end)
-
--- DoConsoleCommand event with Prevent pattern (v0.30.0)
-Ext.Events.DoConsoleCommand:Subscribe(function(e)
-    _P("Command: " .. e.Command)
-    if e.Command:match("^!secret") then
-        e.Prevent = true  -- Block command execution
-    end
-end)
-
--- LuaConsoleInput event (v0.30.0)
-Ext.Events.LuaConsoleInput:Subscribe(function(e)
-    _P("Lua input: " .. #e.Input .. " chars")
+Ext.Events.CombatStarted:Subscribe(function(e)
+    _P("Combat started!")
 end)
 ```
 
-**Available Events:**
+**Lifecycle Events (10):**
 | Event | When | Event Data | Status |
 |-------|------|------------|--------|
 | `SessionLoading` | Session setup started | {} | ✅ Implemented |
 | `SessionLoaded` | Session ready | {} | ✅ Implemented |
 | `ResetCompleted` | After `reset` command | {} | ✅ Implemented |
-| `Tick` | Every game loop (~30hz) | {DeltaTime} | ✅ Implemented (v0.13.0) |
-| `StatsLoaded` | After stats entries loaded | {} | ✅ Implemented (v0.13.0) |
-| `ModuleLoadStarted` | Before mod scripts load | {} | ✅ Implemented (v0.13.0) |
-| `GameStateChanged` | State transitions | {FromState, ToState} | ✅ Implemented (v0.14.0) |
+| `Tick` | Every game loop (~30hz) | {DeltaTime} | ✅ Implemented |
+| `StatsLoaded` | After stats entries loaded | {} | ✅ Implemented |
+| `ModuleLoadStarted` | Before mod scripts load | {} | ✅ Implemented |
+| `GameStateChanged` | State transitions | {FromState, ToState} | ✅ Implemented |
 | `KeyInput` | Keyboard input | {Key, Pressed, Modifiers, Character} | ✅ Implemented |
-| `DoConsoleCommand` | Console ! command | {Command, Prevent} | ✅ Implemented (v0.30.0) |
-| `LuaConsoleInput` | Raw Lua console input | {Input, Prevent} | ✅ Implemented (v0.30.0) |
+| `DoConsoleCommand` | Console ! command | {Command, Prevent} | ✅ Implemented |
+| `LuaConsoleInput` | Raw Lua console input | {Input, Prevent} | ✅ Implemented |
+
+**Engine Events via One-Frame Polling (8) - v0.36.9:**
+| Event | When | Event Data | Component Polled |
+|-------|------|------------|------------------|
+| `TurnStarted` | Combat turn begins | {Entity, Round} | esv::TurnStartedEventOneFrameComponent |
+| `TurnEnded` | Combat turn ends | {Entity} | esv::TurnEndedEventOneFrameComponent |
+| `CombatStarted` | Combat initiated | {Entity} | esv::combat::CombatStartedEventOneFrameComponent |
+| `CombatEnded` | Combat resolved | {Entity} | esv::combat::LeftEventOneFrameComponent |
+| `StatusApplied` | Status effect applied | {Entity, StatusId, Source} | esv::status::ApplyEventOneFrameComponent |
+| `StatusRemoved` | Status effect removed | {Entity} | esv::status::RemoveEventOneFrameComponent |
+| `EquipmentChanged` | Equipment slot changed | {Entity} | esv::stats::EquipmentSlotChangedEventOneFrameComponent |
+| `LevelUp` | Character level increased | {Entity} | esv::stats::LevelChangedOneFrameComponent |
+
+**Missing Events (~12) - See Issue #51:**
+| Event | Type | Priority | Notes |
+|-------|------|----------|-------|
+| `ExecuteFunctor` | Hook | HIGH | Stats functor execution - needed for damage mods |
+| `BeforeDealDamage` | Hook | HIGH | Pre-damage modification |
+| `DealDamage` | Hook | HIGH | Damage dealt |
+| `MouseButton` | Client | LOW | Mouse clicks |
+| `MouseWheel` | Client | LOW | Scroll wheel |
+| `ControllerButton` | Client | LOW | Gamepad buttons |
+| `Shutdown` | Lifecycle | LOW | Game exit |
+| `NetMessage` | Network | LOW | Cross-client comms |
+
+**Additional One-Frame Components Available for Future Polling:**
+- Death: `DownedEvent`, `DiedEvent`, `ResurrectedEvent`
+- Spells: `SpellCastEvent`, `SpellsLearnedEvent`, `ConcentrationChanged`
+- Combat: `CombatantKilledEvent`, `HitResultEvent`, `ProjectileImpactEvent`
+- Stats: `AbilityCheckEvent`, `SkillCheckEvent`, `SavingThrowRolledEvent`
+- Boosts: `BoostChangedEvent`
 
 **Advanced Features:**
 - Priority-based handler ordering (lower = called first)
@@ -486,7 +501,7 @@ end)
 - Protected calls to prevent cascade failures
 - `!events` console command to inspect handler counts
 - **Prevent pattern** - handlers can set `e.Prevent = true` to block default execution
-- Combat/status events available via `Ext.Osiris.RegisterListener()` (TurnStarted, StatusApplied, etc.)
+- **One-frame polling** - only polls when handlers are registered (performance optimization)
 
 ### 2.6 User & Mod Variables
 **Status:** ✅ Complete (v0.28.0) - User variables + Mod variables working

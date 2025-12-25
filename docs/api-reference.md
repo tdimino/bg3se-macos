@@ -385,6 +385,14 @@ Event subscription system for game lifecycle events.
 | `Ext.Events.KeyInput` | ✅ | {Key, Pressed, Modifiers, Character} | Keyboard input |
 | `Ext.Events.DoConsoleCommand` | ✅ | {Command, Prevent} | Console `!` command interception |
 | `Ext.Events.LuaConsoleInput` | ✅ | {Input, Prevent} | Raw Lua console input interception |
+| `Ext.Events.TurnStarted` | ✅ | {Entity, Round} | Combat turn started |
+| `Ext.Events.TurnEnded` | ✅ | {Entity} | Combat turn ended |
+| `Ext.Events.CombatStarted` | ✅ | {Entity} | Combat initiated |
+| `Ext.Events.CombatEnded` | ✅ | {Entity} | Combat resolved |
+| `Ext.Events.StatusApplied` | ✅ | {Entity, StatusId, Source} | Status effect applied |
+| `Ext.Events.StatusRemoved` | ✅ | {Entity} | Status effect removed |
+| `Ext.Events.EquipmentChanged` | ✅ | {Entity} | Equipment slot changed |
+| `Ext.Events.LevelUp` | ✅ | {Entity} | Character level increased |
 
 ### Subscribing to Events
 
