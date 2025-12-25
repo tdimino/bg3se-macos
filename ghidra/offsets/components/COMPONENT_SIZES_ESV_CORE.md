@@ -121,10 +121,11 @@ Extracted via Ghidra MCP decompilation of `AddComponent<T>` functions.
 | esv::TurnBasedComponent | 0x48 | 72 |  |
 | esv::TurnOrderComponent | 0x80 | 128 |  |
 | esv::TurnOrderSkippedComponent | 0x1 | 1 |  |
-| esv::TurnStartedEventOneFrameComponent | 0x10 | 16 | OneFrame, has invoke |
+| esv::TurnEndedEventOneFrameComponent | 0x10 | 16 | OneFrame, TypeId: 0x1083f1810 |
+| esv::TurnStartedEventOneFrameComponent | 0x10 | 16 | OneFrame, TypeId: 0x1083f1848 |
 | esv::UseComponent | 0x28 | 40 |  |
 | esv::UseSocketComponent | 0x10 | 16 |  |
 | esv::UserReservedComponent | 0x18 | 24 |  |
 | esv::VariableManagerComponent | 0x01 | 1 | Tag - variable manager |
 
-**Total: 122 components**
+**Total: 123 components**

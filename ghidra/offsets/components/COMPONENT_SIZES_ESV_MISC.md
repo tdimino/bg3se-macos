@@ -147,6 +147,7 @@ Extracted via Ghidra MCP decompilation of `AddComponent<T>` functions.
 | esv::spell:: | 3 |  |  |
 | esv::spell::NewSpellsAddedEventOneFrameComponent | ptr (8) |  |  |
 | esv::spell::OnDamageSpellsComponent | 0x10 | 16 | On-damage spells |
+| esv::stats::LevelChangedOneFrameComponent | 0x10 | 16 | OneFrame, TypeId: 0x1083f2050 |
 | esv::stats::proficiency::ProficiencyGroupStatsComponent | 4 (0x4) | Struct analysis | FixedString = 4 bytes |
 | esv::steering:: | 2 |  |  |
 | esv::surface::SurfaceComponent | esv::surface | Referenced in queries only |  |
@@ -198,4 +199,4 @@ Extracted via Ghidra MCP decompilation of `AddComponent<T>` functions.
 | esv::zone::SpellComponent | 128 | 0x80 | GetComponent @ 0x10500a3bc |
 | esv::zone::StateComponent | 0x01 | 1 | Zone state |
 
-**Total: 193 components**
+**Total: 194 components**

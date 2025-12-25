@@ -2060,6 +2060,7 @@ Merged from all available sources:
 | StartTrigger | 8 | - | - | ghidra |
 | StatesComponent | 24 | - | - | ghidra |
 | StatsChangeunequiplockrequestoneframecomponent | - | - | 0x1089079f8 | typeid |
+| StatsLevelchangedoneframecomponent | 16 | - | 0x1083f2050 | ghidra |
 | StatsProficiencyBaseproficiencycomponent | - | 16 | 0x1088e5820 | windows |
 | StatsProficiencyIntrinsicwielderchangescomponent | - | - | 0x10890afc8 | typeid |
 | StatsProficiencyProficiencygroupstatscomponent | 4 | 4 | 0x1088e57e8 | ghidra |
@@ -2145,7 +2146,8 @@ Merged from all available sources:
 | TurnBasedComponent | 72 | - | - | ghidra |
 | TurnOrderComponent | 128 | - | - | ghidra |
 | TurnOrderTimedOutOneFrameComponent (tag) | - | 1 | - | windows |
-| TurnStartedEventOneFrameComponent | 16 | - | - | ghidra |
+| TurnEndedEventOneFrameComponent | 16 | - | 0x1083f1810 | ghidra |
+| TurnStartedEventOneFrameComponent | 16 | - | 0x1083f1848 | ghidra |
 | TurnSurfaceteamsingletoncomponent | 112 | 112 | 0x10890e9c8 | ghidra |
 | TurnSurfacetrackingcomponent | 48 | 48 | 0x10890aa30 | ghidra |
 | Turnorderskippedcomponent (tag) | 1 | 1 | 0x10890ead8 | ghidra |

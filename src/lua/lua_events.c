@@ -995,6 +995,61 @@ static void handle_combat_left(lua_State *L, uint64_t entity) {
     if (g_dispatch_depth[EVENT_COMBAT_ENDED] == 0) process_deferred_unsubscribes(L, EVENT_COMBAT_ENDED);
 }
 
+static void handle_status_applied(lua_State *L, uint64_t entity) {
+    if (g_handler_counts[EVENT_STATUS_APPLIED] == 0) return;
+
+    g_dispatch_depth[EVENT_STATUS_APPLIED]++;
+    for (int i = 0; i < g_handler_counts[EVENT_STATUS_APPLIED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_STATUS_APPLIED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (lua_isfunction(L, -1)) {
+            lua_newtable(L);
+            lua_pushinteger(L, (lua_Integer)entity);
+            lua_setfield(L, -2, "Entity");
+            // TODO: Extract StatusId from component data
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_STATUS_APPLIED, h->handler_id};
+        }
+    }
+    g_dispatch_depth[EVENT_STATUS_APPLIED]--;
+    if (g_dispatch_depth[EVENT_STATUS_APPLIED] == 0) process_deferred_unsubscribes(L, EVENT_STATUS_APPLIED);
+}
+
+static void handle_status_removed(lua_State *L, uint64_t entity) {
+    if (g_handler_counts[EVENT_STATUS_REMOVED] == 0) return;
+
+    g_dispatch_depth[EVENT_STATUS_REMOVED]++;
+    for (int i = 0; i < g_handler_counts[EVENT_STATUS_REMOVED]; i++) {
+        EventHandler *h = &g_handlers[EVENT_STATUS_REMOVED][i];
+        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
+        if (lua_isfunction(L, -1)) {
+            lua_newtable(L);
+            lua_pushinteger(L, (lua_Integer)entity);
+            lua_setfield(L, -2, "Entity");
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
+            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_STATUS_REMOVED, h->handler_id};
+        }
+    }
+    g_dispatch_depth[EVENT_STATUS_REMOVED]--;
+    if (g_dispatch_depth[EVENT_STATUS_REMOVED] == 0) process_deferred_unsubscribes(L, EVENT_STATUS_REMOVED);
+}
+
 static void handle_equipment_changed(lua_State *L, uint64_t entity) {
     if (g_handler_counts[EVENT_EQUIPMENT_CHANGED] == 0) return;
 
@@ -1060,7 +1115,7 @@ void events_poll_oneframe_components(lua_State *L) {
     }
     if (total_handlers == 0) return;
 
-    // Combat turn events
+    // Combat turn events - now registered via Ghidra discovery
     if (g_handler_counts[EVENT_TURN_STARTED] > 0) {
         poll_oneframe_component(L, "esv::TurnStartedEventOneFrameComponent", handle_turn_started);
     }
@@ -1068,25 +1123,32 @@ void events_poll_oneframe_components(lua_State *L) {
         poll_oneframe_component(L, "esv::TurnEndedEventOneFrameComponent", handle_turn_ended);
     }
 
-    // Combat start/end events
+    // Combat join event (fires when entity joins combat)
     if (g_handler_counts[EVENT_COMBAT_STARTED] > 0) {
-        poll_oneframe_component(L, "esv::combat::CombatStartedEventOneFrameComponent", handle_combat_started);
+        poll_oneframe_component(L, "esv::combat::JoinEventOneFrameComponent", handle_combat_started);
     }
+
+    // Combat flee success (fires when entity leaves combat via flee)
     if (g_handler_counts[EVENT_COMBAT_ENDED] > 0) {
-        poll_oneframe_component(L, "esv::combat::LeftEventOneFrameComponent", handle_combat_left);
+        poll_oneframe_component(L, "esv::combat::FleeSuccessOneFrameComponent", handle_combat_left);
     }
 
-    // Equipment changed
+    // Equipment events - use equipped/unequipped events
     if (g_handler_counts[EVENT_EQUIPMENT_CHANGED] > 0) {
-        poll_oneframe_component(L, "esv::stats::EquipmentSlotChangedEventOneFrameComponent", handle_equipment_changed);
+        poll_oneframe_component(L, "esv::item::EquippedEventOneFrameComponent", handle_equipment_changed);
+        poll_oneframe_component(L, "esv::item::UnequippedEventOneFrameComponent", handle_equipment_changed);
     }
 
-    // Level up
+    // Status events - use activation/deactivation events
+    if (g_handler_counts[EVENT_STATUS_APPLIED] > 0) {
+        poll_oneframe_component(L, "esv::status::ActivationEventOneFrameComponent", handle_status_applied);
+    }
+    if (g_handler_counts[EVENT_STATUS_REMOVED] > 0) {
+        poll_oneframe_component(L, "esv::status::DeactivationEventOneFrameComponent", handle_status_removed);
+    }
+
+    // Level up event - now registered via Ghidra discovery
     if (g_handler_counts[EVENT_LEVEL_UP] > 0) {
         poll_oneframe_component(L, "esv::stats::LevelChangedOneFrameComponent", handle_level_up);
     }
-
-    // Status events - poll for status apply component
-    // Note: StatusApplied/StatusRemoved need esv::status::ApplyEventOneFrameComponent
-    // These components may need to be registered first
 }

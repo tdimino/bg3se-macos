@@ -38,6 +38,10 @@ Each entry includes:
 - Components polled: `esv::TurnStartedEventOneFrameComponent`, `esv::TurnEndedEventOneFrameComponent`, etc.
 - Handler data includes relevant entity handles and event metadata
 - Full event list now: 18 events (10 existing + 8 new engine events)
+- **Ghidra TypeId Discovery** - Found missing TypeId addresses via RegisterType decompilation:
+  - `esv::TurnStartedEventOneFrameComponent` → `0x1083f1848`
+  - `esv::TurnEndedEventOneFrameComponent` → `0x1083f1810`
+  - `esv::stats::LevelChangedOneFrameComponent` → `0x1083f2050`
 
 ---
 
