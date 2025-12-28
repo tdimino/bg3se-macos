@@ -34,10 +34,36 @@ git submodule update --init --recursive
 mkdir -p build && cd build
 cmake ..
 cmake --build .
-
-# Set Steam launch options for BG3:
-/path/to/bg3se-macos/scripts/bg3w.sh %command%
 ```
+
+### Verify Build Succeeded
+
+```bash
+# Check output exists (should be ~3MB universal binary)
+ls -la build/lib/libbg3se.dylib
+
+# Verify architecture (should show arm64 and x86_64)
+file build/lib/libbg3se.dylib
+```
+
+### Configure Steam Launch Options
+
+1. Right-click **Baldur's Gate 3** in Steam → **Properties**
+2. Under **General** → **Launch Options**, enter:
+   ```
+   /full/path/to/bg3se-macos/scripts/bg3w.sh %command%
+   ```
+   Replace `/full/path/to` with the actual path where you cloned the repo.
+
+### Troubleshooting Build Issues
+
+| Problem | Solution |
+|---------|----------|
+| `cmake: command not found` | Install CMake: `brew install cmake` |
+| `CMake Error: could not find compiler` | Install Xcode tools: `xcode-select --install` |
+| Missing Dobby/Lua/lz4 errors | Initialize submodules: `git submodule update --init --recursive` |
+| Build succeeds but no dylib | Check `build/lib/` directory; ensure `cmake --build .` completed |
+| `build.sh` does nothing | Use CMake directly (build.sh is deprecated) |
 
 ### Using SE Mods
 
