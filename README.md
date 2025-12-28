@@ -23,9 +23,17 @@ A native macOS implementation of the BG3 Script Extender, working toward full fe
 ### Build & Install
 
 ```bash
-# Build
+# Clone with submodules
+git clone --recursive https://github.com/tdimino/bg3se-macos.git
 cd bg3se-macos
-./scripts/build.sh
+
+# If you already cloned without --recursive:
+git submodule update --init --recursive
+
+# Build with CMake
+mkdir -p build && cd build
+cmake ..
+cmake --build .
 
 # Set Steam launch options for BG3:
 /path/to/bg3se-macos/scripts/bg3w.sh %command%

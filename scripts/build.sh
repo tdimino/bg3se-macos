@@ -16,6 +16,24 @@ echo "=========================================="
 echo "Building BG3SE-macOS"
 echo "=========================================="
 
+# Check for git submodules
+if [ ! -f "${LIB_DIR}/Dobby/CMakeLists.txt" ]; then
+    echo ""
+    echo "ERROR: Dobby submodule not initialized!"
+    echo ""
+    echo "Run: git submodule update --init --recursive"
+    echo ""
+    echo "Or clone with: git clone --recursive https://github.com/tdimino/bg3se-macos.git"
+    exit 1
+fi
+
+# NOTE: This script is deprecated. Use CMake instead:
+#   mkdir -p build && cd build && cmake .. && cmake --build .
+echo ""
+echo "NOTE: Consider using CMake for a full build:"
+echo "  mkdir -p build && cd build && cmake .. && cmake --build ."
+echo ""
+
 # Create build directory
 mkdir -p "${BUILD_DIR}/lib"
 mkdir -p "${BUILD_DIR}/obj"
