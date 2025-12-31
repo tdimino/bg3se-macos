@@ -104,6 +104,12 @@ extern "C" {
 // Overlay console
 #include "overlay.h"
 
+// ImGui Metal backend
+#include "imgui_metal_backend.h"
+
+// ImGui Lua bindings
+#include "lua_imgui.h"
+
 // Enum system
 #include "enum_registry.h"
 
@@ -717,6 +723,9 @@ static void register_ext_api(lua_State *L) {
 
     // Ext.Resource namespace (game resources)
     lua_resource_register(L, -1);
+
+    // Ext.IMGUI namespace (debug overlay)
+    lua_imgui_register(L, -1);
 
     // Set Ext as global
     lua_setglobal(L, "Ext");
@@ -2253,6 +2262,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     if (L) {
         console_poll(L);
         input_poll(L);
+        lua_imgui_set_lua_state(L);  // Set Lua state for IMGUI event callbacks
         timer_update(L);  // Process timer callbacks
         timer_update_persistent(L);  // Process persistent timer callbacks
         persist_tick(L);  // Check for dirty PersistentVars to auto-save
@@ -2806,6 +2816,11 @@ static void bg3se_init(void) {
     _dyld_register_func_for_add_image(image_added_callback);
 
     LOG_HOOKS_INFO("Image load callback registered");
+
+    // NOTE: ImGui Metal backend is initialized lazily via Ext.IMGUI.Show()
+    // Calling imgui_metal_init() here during dylib constructor causes crashes
+    // because the game's Metal rendering isn't ready yet.
+
     LOG_CORE_INFO("=== Initialization complete ===");
 }
 
@@ -2830,6 +2845,9 @@ static void bg3se_cleanup(void) {
     // Log function cache summary
     LOG_OSIRIS_INFO("Osiris functions: %d cached, %d unique IDs observed",
                 osi_func_get_cache_count(), osi_func_get_seen_count());
+
+    // Shutdown ImGui Metal backend
+    imgui_metal_shutdown();
 
     // Shutdown Lua
     shutdown_lua();

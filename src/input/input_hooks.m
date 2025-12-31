@@ -15,6 +15,7 @@
 #include "input.h"
 #include "../core/logging.h"
 #include "../lua/lua_events.h"
+#include "../imgui/imgui_metal_backend.h"
 
 // ============================================================================
 // Static State
@@ -138,7 +139,42 @@ static CGEventRef event_tap_callback(CGEventTapProxy proxy, CGEventType type,
         return event;
     }
 
-    // Only handle keyboard events
+    // Forward mouse events to ImGui
+    // Note: SDL-based games may not trigger NSEvent local monitors, so we
+    // forward events directly from CGEventTap
+    CGPoint screenLoc = CGEventGetLocation(event);
+
+    switch (type) {
+        case kCGEventLeftMouseDown:
+            imgui_metal_process_mouse((float)screenLoc.x, (float)screenLoc.y, 0, true);
+            break;
+        case kCGEventLeftMouseUp:
+            imgui_metal_process_mouse((float)screenLoc.x, (float)screenLoc.y, 0, false);
+            break;
+        case kCGEventRightMouseDown:
+            imgui_metal_process_mouse((float)screenLoc.x, (float)screenLoc.y, 1, true);
+            break;
+        case kCGEventRightMouseUp:
+            imgui_metal_process_mouse((float)screenLoc.x, (float)screenLoc.y, 1, false);
+            break;
+        case kCGEventMouseMoved:
+        case kCGEventLeftMouseDragged:
+        case kCGEventRightMouseDragged:
+            // CGEventTap is the ONLY reliable input source for SDL games
+            // NSView swizzling doesn't receive events from SDL
+            imgui_metal_process_mouse_move((float)screenLoc.x, (float)screenLoc.y);
+            break;
+        case kCGEventScrollWheel: {
+            double deltaX = CGEventGetDoubleValueField(event, kCGScrollWheelEventDeltaAxis2);
+            double deltaY = CGEventGetDoubleValueField(event, kCGScrollWheelEventDeltaAxis1);
+            imgui_metal_process_scroll((float)deltaX, (float)deltaY);
+            break;
+        }
+        default:
+            break;
+    }
+
+    // Only handle keyboard events beyond this point
     if (type != kCGEventKeyDown && type != kCGEventKeyUp &&
         type != kCGEventFlagsChanged) {
         return event;
@@ -202,6 +238,10 @@ static CGEventRef event_tap_callback(CGEventTapProxy proxy, CGEventType type,
             s_key_states[keyCode] = false;
         }
     }
+
+    // Forward keyboard events to ImGui
+    // Note: In listen-only mode, we can't consume events - they always pass to game
+    imgui_metal_process_key(keyCode, isDown, modifiers);
 
     // Check for hotkeys on key down
     if (isDown && check_hotkeys(keyCode, modifiers)) {
@@ -285,11 +325,22 @@ bool input_init(void) {
 
     LOG_INPUT_INFO("Initializing input system (CGEventTap)...");
 
-    // Create event tap for keyboard events
+    // Create event tap for keyboard and mouse events
     CGEventMask eventMask = (1 << kCGEventKeyDown) |
                             (1 << kCGEventKeyUp) |
-                            (1 << kCGEventFlagsChanged);
+                            (1 << kCGEventFlagsChanged) |
+                            (1 << kCGEventLeftMouseDown) |
+                            (1 << kCGEventLeftMouseUp) |
+                            (1 << kCGEventRightMouseDown) |
+                            (1 << kCGEventRightMouseUp) |
+                            (1 << kCGEventMouseMoved) |
+                            (1 << kCGEventLeftMouseDragged) |
+                            (1 << kCGEventRightMouseDragged) |
+                            (1 << kCGEventScrollWheel);
 
+    // Note: Using kCGEventTapOptionListenOnly - doesn't require Accessibility permissions
+    // but means we can't consume events (F10 will also go to game)
+    // TODO: Consider using a different hotkey that doesn't conflict with game
     s_event_tap = CGEventTapCreate(kCGSessionEventTap,
                                    kCGHeadInsertEventTap,
                                    kCGEventTapOptionListenOnly,

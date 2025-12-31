@@ -64,6 +64,8 @@ file build/lib/libbg3se.dylib
 | Missing Dobby/Lua/lz4 errors | Initialize submodules: `git submodule update --init --recursive` |
 | Build succeeds but no dylib | Check `build/lib/` directory; ensure `cmake --build .` completed |
 | `build.sh` does nothing | Use CMake directly (build.sh is deprecated) |
+| `CMake Error: source directory does not exist` | Stale cache after moving repo. Delete `build/` and rebuild: `rm -rf build && mkdir build && cd build && cmake .. && cmake --build .` |
+| Code changes don't appear in game | Stale CMake cache. Delete `build/` directory and rebuild from scratch |
 
 ### Using SE Mods
 
@@ -76,9 +78,21 @@ SE mods work automatically—just install them like any other mod:
 
 **BG3SE-macOS reads scripts directly from PAK files—no extraction needed!**
 
+### Officially Supported Mods
+
+These mods have been tested and confirmed working with BG3SE-macOS:
+
+| Mod | Author | Status | Notes |
+|-----|--------|--------|-------|
+| [More Reactive Companions](https://www.nexusmods.com/baldursgate3/mods/5447) | LightningLarryL | ✅ Working | Party banter, companion reactions |
+
+> **Note:** Many SE mods will work out of the box. This list tracks mods we've explicitly tested. See **[docs/supported-mods.md](docs/supported-mods.md)** for the full compatibility list, testing notes, and how to report mod compatibility.
+
+**Help expand this list!** If you've tested a mod, please [open an issue](https://github.com/tdimino/bg3se-macos/issues/new?template=mod-compatibility.md) or PR to add it.
+
 ## Status
 
-**Version:** v0.36.17 | **Feature Parity:** ~82%
+**Version:** v0.36.20 | **Feature Parity:** ~85%
 
 | Feature | Status |
 |---------|--------|
@@ -110,6 +124,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed progress.
 
 | Document | Description |
 |----------|-------------|
+| **[docs/supported-mods.md](docs/supported-mods.md)** | Tested mod compatibility list |
 | **[docs/getting-started.md](docs/getting-started.md)** | Installation, building, first launch |
 | **[docs/api-reference.md](docs/api-reference.md)** | Complete Ext.* and Osi.* API docs |
 | **[docs/architecture.md](docs/architecture.md)** | Technical deep-dive: injection, hooks, ARM64 |
@@ -258,7 +273,7 @@ This project would not be possible without **[Norbyte](https://github.com/Norbyt
 - [Dobby](https://github.com/jmpews/Dobby) - Inline hooking framework for ARM64/x86_64
 - [fishhook](https://github.com/facebook/fishhook) - Symbol rebinding library
 - [LZ4](https://github.com/lz4/lz4) - Fast compression for PAK file reading
-- Test mod: [More Reactive Companions](https://www.nexusmods.com/baldursgate3/mods/5447) by LightningLarryL
+- [Dear ImGui](https://github.com/ocornut/imgui) - Debug overlay UI framework
 
 ## License
 
@@ -280,3 +295,16 @@ Donations help fund continued development, testing across game updates, and expa
 ### P.S.
 
 I'd also like to extend my thanks to the OP and commentators of this BG3SE issue: **["[Feature Bounty - $350] MacOS Supported Version of BG3 SE"](https://github.com/Norbyte/bg3se/issues/162)**. You kicked off this quest :)
+
+---
+
+## Inscriptions
+
+> *"πολλοὶ μὲν ναρθηκοφόροι, παῦροι δέ τε βάκχοι."*
+> — "Many are the wand-bearers, but few the Bacchoi." (Plato)
+
+> *"ἀπιστίῃ διαφυγγάνει μὴ γιγνώσκεσθαι."*
+> — "Divine things escape recognition through disbelief." (Herakleitos)
+
+> *"μνάσεσθαί τινά φαμι καὶ ὕστερον ἀμμέων."*
+> — "Someone, I tell you, will remember us." (Sappho)

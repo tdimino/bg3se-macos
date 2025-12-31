@@ -13,6 +13,79 @@ Each entry includes:
 
 ---
 
+## [v0.36.20] - 2025-12-31
+
+**Parity:** ~85% | **Category:** ImGui Widget System | **Issues:** #36
+
+### Added
+- **Ext.IMGUI Widget System** - Full handle-based object system for creating ImGui widgets from Lua
+  - `Ext.IMGUI.NewWindow(label)` - Create windows with Open, Closeable, Visible properties
+  - `win:AddText(label)` - Text widgets with optional Color property
+  - `win:AddButton(label)` - Button widgets with Size property
+  - `win:AddCheckbox(label, checked)` - Checkbox widgets with Checked property
+  - `win:AddSeparator()`, `win:AddSpacing()` - Layout widgets
+  - `win:AddGroup(label)` - Container groups for organizing widgets
+  - `widget:Destroy()` - Explicit cleanup method
+- **Handle-Based Object Pool** - 4096 max objects with generation counters to prevent stale reference bugs
+- **Lua Userdata Metatables** - `__index`/`__newindex` for property access, `__gc` for cleanup
+- **Event Callback Support** - `OnClick`, `OnChange`, `OnClose` can be assigned Lua functions
+
+### Technical
+- New files: `src/imgui/imgui_objects.h`, `src/imgui/imgui_objects.c`
+- Modified: `src/lua/lua_imgui.c` (userdata system, widget methods)
+- Modified: `src/imgui/imgui_metal_backend.mm` (widget rendering integration)
+- Parent-child widget hierarchy with automatic cleanup
+- Debug window now shows Lua window count
+
+---
+
+## [v0.36.19] - 2025-12-31
+
+**Parity:** ~83% | **Category:** ImGui Input | **Issues:** #36
+
+### Fixed
+- **ImGui Mouse Input Complete** - Full mouse input now working (hover, click, drag)
+  - **Root cause:** `ImGui_ImplOSX_NewFrame()` was overwriting CGEventTap mouse coordinates
+  - **Fix:** Skip OSX backend NewFrame, use only CGEventTap for mouse position
+  - Cache CGEventTap mouse position and apply directly to `io.MousePos` before `NewFrame()`
+  - Hover detection (`WantCaptureMouse`) now works correctly
+  - Button clicks register properly
+
+### Technical
+- Removed call to `ImGui_ImplOSX_NewFrame(view)` which was interfering with input
+- Added `s_cgevent_mouse` cache to store last known CGEventTap coordinates
+- Apply cached mouse position directly via `io.MousePos = ImVec2(x, y)` before `NewFrame()`
+- Added debug display: DisplaySize, WinPos, Size in overlay for troubleshooting
+
+---
+
+## [v0.36.18] - 2025-12-30
+
+**Parity:** ~83% | **Category:** ImGui Input | **Issues:** #36
+
+### Fixed
+- **ImGui Mouse Input** - Fixed coordinate conversion for macOS Cocoa games
+  - Removed broken fullscreen special case that passed CG coords directly
+  - Implemented proper 4-step Cocoa coordinate conversion (CG → Screen → Window → View)
+  - Restored position update in click handler (was missing, causing stale positions)
+  - CGEventTap mouse moves now forwarded to ImGui backend
+  - Works correctly in both fullscreen and windowed modes
+
+### Technical
+- **Key Discovery:** BG3 macOS uses native Cocoa/AppKit, NOT SDL (unlike Windows)
+  - Windows BG3SE hooks `SDL_PollEvent` via Detours - this approach doesn't apply
+  - macOS requires CGEventTap + proper Cocoa coordinate system conversion
+- Modified `convert_screen_to_window()` in `imgui_metal_backend.mm`:
+  - Step 1: CG (top-left origin) → Cocoa screen (bottom-left origin)
+  - Step 2: Screen coords → Window coords via `convertPointFromScreen:`
+  - Step 3: Window coords → View coords via `convertPoint:fromView:`
+  - Step 4: Flip Y for ImGui if view not flipped
+- Added debug logging every 120th conversion to verify coordinate chain
+- Updated `plans/fix-imgui-mouse-input.md` with complete implementation details
+- Updated `agent_docs/architecture.md` with ImGui overlay system documentation
+
+---
+
 ## [v0.36.17] - 2025-12-28
 
 **Parity:** ~83% | **Category:** IDE Integration | **Issues:** #7
