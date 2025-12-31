@@ -89,9 +89,16 @@ CGEventTap (system-level)
                    (4-step: CG → Screen → Window → View)
                             │
                             ▼
-                   ImGui Input API
-                   (AddMousePosEvent, AddMouseButtonEvent)
+                   Mouse Position Cache (s_cgevent_mouse)
+                            │
+                            ▼
+                   Direct io.MousePos Assignment
+                   (bypasses ImGui_ImplOSX_NewFrame)
 ```
+
+**Critical Fix (v0.36.19):** We skip `ImGui_ImplOSX_NewFrame()` because it calls
+`[NSEvent mouseLocation]` internally, which overwrites our CGEventTap coordinates.
+Instead, we cache the converted position and apply it directly to `io.MousePos`.
 
 ### Coordinate Conversion (CGEventTap → ImGui)
 CGEventTap provides Quartz coordinates (origin at top-left of main display).
@@ -100,6 +107,10 @@ Must convert through Cocoa APIs:
 2. Screen → Window: `convertPointFromScreen:`
 3. Window → View: `convertPoint:fromView:`
 4. Flip Y if view not flipped: `viewHeight - y`
+
+The converted coordinates are cached in `s_cgevent_mouse` and applied directly
+to `io.MousePos` before `ImGui::NewFrame()`. This bypasses the OSX backend's
+mouse position update which doesn't work for BG3's fullscreen Metal window.
 
 ### Key Files
 - `src/imgui/imgui_metal_backend.mm` - Metal rendering, coordinate conversion

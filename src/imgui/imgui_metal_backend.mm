@@ -18,6 +18,7 @@
 
 #include "imgui_metal_backend.h"
 #include "imgui_input_hooks.h"
+#include "imgui_objects.h"
 #include "imgui.h"
 #include "imgui_impl_metal.h"
 #include "imgui_impl_osx.h"
@@ -68,6 +69,17 @@ static struct {
     0,                                  // frame_count
     false                               // needs_font_rebuild
 };
+
+// ============================================================================
+// CGEventTap Mouse Position Cache
+// ============================================================================
+// We store the last known mouse position from CGEventTap because
+// ImGui_ImplOSX_NewFrame() overwrites io.MousePos with Cocoa's mouse location,
+// which doesn't work for SDL games. After OSX backend runs, we re-apply our position.
+static struct {
+    float x, y;
+    bool valid;
+} s_cgevent_mouse = {0, 0, false};
 
 // ============================================================================
 // Forward Declarations
@@ -333,6 +345,133 @@ static void imgui_metal_setup_context(void) {
 }
 
 // ============================================================================
+// Widget Rendering
+// ============================================================================
+
+// Forward declaration for recursive rendering
+static void render_widget(ImguiObject *obj);
+
+// Render a single widget based on its type
+static void render_widget(ImguiObject *obj) {
+    if (!obj || !obj->styled.visible) {
+        return;
+    }
+
+    // Handle SameLine
+    if (obj->styled.same_line) {
+        ImGui::SameLine();
+    }
+
+    // Render based on type
+    switch (obj->type) {
+        case IMGUI_OBJ_TEXT:
+            if (obj->data.text.has_color) {
+                ImGui::TextColored(
+                    ImVec4(obj->data.text.color.x, obj->data.text.color.y,
+                           obj->data.text.color.z, obj->data.text.color.w),
+                    "%s", obj->styled.label);
+            } else {
+                ImGui::Text("%s", obj->styled.label);
+            }
+            break;
+
+        case IMGUI_OBJ_BUTTON:
+            {
+                ImVec2 size(0, 0);
+                if (obj->data.button.has_size) {
+                    size = ImVec2(obj->data.button.size.x, obj->data.button.size.y);
+                }
+                if (ImGui::Button(obj->styled.label, size)) {
+                    // TODO: Fire OnClick event
+                    LOG_IMGUI_DEBUG("Button '%s' clicked", obj->styled.label);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_CHECKBOX:
+            {
+                bool checked = obj->data.checkbox.checked;
+                if (ImGui::Checkbox(obj->styled.label, &checked)) {
+                    obj->data.checkbox.checked = checked;
+                    // TODO: Fire OnChange event
+                    LOG_IMGUI_DEBUG("Checkbox '%s' changed to %d", obj->styled.label, checked);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_SEPARATOR:
+            ImGui::Separator();
+            break;
+
+        case IMGUI_OBJ_SPACING:
+            ImGui::Spacing();
+            break;
+
+        case IMGUI_OBJ_NEW_LINE:
+            ImGui::NewLine();
+            break;
+
+        case IMGUI_OBJ_DUMMY:
+            ImGui::Dummy(ImVec2(obj->data.dummy.width, obj->data.dummy.height));
+            break;
+
+        case IMGUI_OBJ_GROUP:
+            // Group is a container - render children
+            ImGui::BeginGroup();
+            if (obj->children && obj->child_count > 0) {
+                for (int i = 0; i < obj->child_count; i++) {
+                    ImguiObject *child = imgui_object_get(obj->children[i]);
+                    render_widget(child);
+                }
+            }
+            ImGui::EndGroup();
+            break;
+
+        default:
+            // Unknown type - skip
+            break;
+    }
+}
+
+// Render a window and its children
+static void render_window(ImguiObject *win) {
+    if (!win || win->type != IMGUI_OBJ_WINDOW || !win->styled.visible) {
+        return;
+    }
+
+    if (!win->data.window.open) {
+        return;
+    }
+
+    // Build window flags
+    ImGuiWindowFlags flags = (ImGuiWindowFlags)win->data.window.flags;
+
+    // Closeable handling
+    bool *p_open = win->data.window.closeable ? &win->data.window.open : NULL;
+
+    // Begin window
+    bool window_open = ImGui::Begin(win->styled.label, p_open, flags);
+
+    if (window_open) {
+        // Render all children
+        if (win->children && win->child_count > 0) {
+            for (int i = 0; i < win->child_count; i++) {
+                ImguiObject *child = imgui_object_get(win->children[i]);
+                render_widget(child);
+            }
+        }
+    }
+
+    ImGui::End();
+
+    // Handle window close event
+    if (p_open && !win->data.window.open) {
+        // TODO: Fire OnClose event
+        LOG_IMGUI_DEBUG("Window '%s' closed", win->styled.label);
+    }
+}
+
+// ============================================================================
 // Rendering
 // ============================================================================
 
@@ -368,35 +507,65 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
 
             // Start ImGui frame (needs texture set above for pixel format)
             ImGui_ImplMetal_NewFrame(s_state.renderPassDescriptor);
-            if (s_state.gameWindow) {
-                NSView *view = [s_state.gameWindow contentView];
-                if (view) {
-                    ImGui_ImplOSX_NewFrame(view);
+            // NOTE: We skip ImGui_ImplOSX_NewFrame because:
+            // 1. It overwrites mouse position with Cocoa APIs (doesn't work for SDL)
+            // 2. We handle mouse input via CGEventTap instead
+            // 3. It may be causing coordinate system mismatches
+
+            // CRITICAL: Apply CGEventTap mouse position
+            // The OSX backend overwrites io.MousePos with Cocoa's mouse location,
+            // which doesn't work for SDL games. Our CGEventTap position is correct.
+            // We set MousePos directly because AddMousePosEvent queues for next frame.
+            {
+                ImGuiIO& io = ImGui::GetIO();
+                if (s_cgevent_mouse.valid) {
+                    io.MousePos = ImVec2(s_cgevent_mouse.x, s_cgevent_mouse.y);
+                    // Log occasionally to verify
+                    static int applyCount = 0;
+                    if (++applyCount % 120 == 0) {
+                        LOG_IMGUI_DEBUG("Applied CGEventTap pos: (%.0f, %.0f)",
+                            s_cgevent_mouse.x, s_cgevent_mouse.y);
+                    }
                 }
             }
+
             ImGui::NewFrame();
 
             // ===========================================
-            // ImGui content will be drawn here by Lua callbacks
-            // For now, just show a demo window for testing
+            // Render all windows from object system
             // ===========================================
 
-            // Demo: Show a simple test window - make it very prominent for testing
+            // Render Lua-created windows
+            int window_count = 0;
+            ImguiHandle *windows = imgui_get_all_windows(&window_count);
+            if (windows && window_count > 0) {
+                for (int i = 0; i < window_count; i++) {
+                    ImguiObject *win = imgui_object_get(windows[i]);
+                    render_window(win);
+                }
+            }
+
+            // Also show built-in debug window for testing
             ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowBgAlpha(1.0f);  // Fully opaque background
 
-            if (ImGui::Begin("BG3SE Debug", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove)) {
+            if (ImGui::Begin("BG3SE Debug", nullptr, ImGuiWindowFlags_NoCollapse)) {
                 ImGui::TextColored(ImVec4(1,1,0,1), "=== IMGUI OVERLAY TEST ===");
                 ImGui::Text("Frame: %llu", s_state.frame_count);
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(0,1,0,1), "If you can see this, ImGui is working!");
                 ImGui::Text("Device: %s", [[s_state.device name] UTF8String]);
 
-                // Debug: Show mouse position FIRST so we know where things are
+                // Debug: Show mouse position and window bounds
                 ImGuiIO& dbgIo = ImGui::GetIO();
                 ImGui::Text("Mouse: (%.0f, %.0f)", dbgIo.MousePos.x, dbgIo.MousePos.y);
                 ImGui::Text("WantCapture: %d  MouseDown: %d", dbgIo.WantCaptureMouse, dbgIo.MouseDown[0]);
+                ImGui::Text("DisplaySize: %.0fx%.0f", dbgIo.DisplaySize.x, dbgIo.DisplaySize.y);
+
+                // Show Lua window count
+                ImGui::Separator();
+                ImGui::Text("Lua Windows: %d", window_count);
 
                 // Test button
                 ImGui::Separator();
@@ -764,14 +933,19 @@ void imgui_metal_process_mouse_move(float x, float y) {
         return;
     }
 
+    // Cache the position - will be re-applied after ImGui_ImplOSX_NewFrame
+    s_cgevent_mouse.x = windowX;
+    s_cgevent_mouse.y = windowY;
+    s_cgevent_mouse.valid = true;
+
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(windowX, windowY);
 
     // Log every 60th move to avoid spam
     static int moveCount = 0;
     if (++moveCount % 60 == 0) {
-        LOG_IMGUI_DEBUG("MouseMove: CG(%.0f,%.0f) -> View(%.0f,%.0f), MousePos=(%.0f,%.0f)",
-            x, y, windowX, windowY, io.MousePos.x, io.MousePos.y);
+        LOG_IMGUI_DEBUG("MouseMove: CG(%.0f,%.0f) -> View(%.0f,%.0f)",
+            x, y, windowX, windowY);
     }
 }
 

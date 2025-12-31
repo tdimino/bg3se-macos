@@ -125,6 +125,7 @@ add_library(bg3se SHARED
     # ImGui Metal backend (our wrapper)
     src/imgui/imgui_metal_backend.mm
     src/imgui/imgui_input_hooks.mm
+    src/imgui/imgui_objects.c
 )
 
 target_compile_options(bg3se PRIVATE

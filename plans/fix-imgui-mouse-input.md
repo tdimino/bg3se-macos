@@ -134,9 +134,35 @@ This helps verify the conversion chain is working correctly.
 - Apple CGEventTap documentation
 - Apple Cocoa coordinate system documentation
 
-## Status: IMPLEMENTED
+## Status: COMPLETE (v0.36.19)
 
 - [x] Fixed coordinate conversion for all window modes
 - [x] Restored position update in click handler
 - [x] CGEventTap mouse moves enabled
-- [ ] Pending user testing to verify fix
+- [x] User testing verified - hover and click both work!
+
+### Final Fix (Dec 31, 2025)
+
+The ultimate solution was simpler than expected: **skip `ImGui_ImplOSX_NewFrame()` entirely**.
+
+The problem was that `ImGui_ImplOSX_NewFrame()` internally calls Cocoa's `[NSEvent mouseLocation]` API to update mouse position. This overwrote our carefully converted CGEventTap coordinates with coordinates that didn't work for BG3's fullscreen Metal window.
+
+**Solution:**
+```cpp
+// In render frame:
+ImGui_ImplMetal_NewFrame(renderPassDescriptor);
+// NOTE: We skip ImGui_ImplOSX_NewFrame because:
+// 1. It overwrites mouse position with Cocoa APIs (doesn't work for BG3)
+// 2. We handle mouse input via CGEventTap instead
+// 3. It may cause coordinate system mismatches
+
+// CRITICAL: Apply CGEventTap mouse position directly
+ImGuiIO& io = ImGui::GetIO();
+if (s_cgevent_mouse.valid) {
+    io.MousePos = ImVec2(s_cgevent_mouse.x, s_cgevent_mouse.y);
+}
+
+ImGui::NewFrame();
+```
+
+This gives us complete control over mouse position via CGEventTap, and the 4-step coordinate conversion (CG → Screen → Window → View) now works perfectly.
