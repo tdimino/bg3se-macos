@@ -13,6 +13,33 @@ Each entry includes:
 
 ---
 
+## [v0.36.18] - 2025-12-30
+
+**Parity:** ~83% | **Category:** ImGui Input | **Issues:** #36
+
+### Fixed
+- **ImGui Mouse Input** - Fixed coordinate conversion for macOS Cocoa games
+  - Removed broken fullscreen special case that passed CG coords directly
+  - Implemented proper 4-step Cocoa coordinate conversion (CG → Screen → Window → View)
+  - Restored position update in click handler (was missing, causing stale positions)
+  - CGEventTap mouse moves now forwarded to ImGui backend
+  - Works correctly in both fullscreen and windowed modes
+
+### Technical
+- **Key Discovery:** BG3 macOS uses native Cocoa/AppKit, NOT SDL (unlike Windows)
+  - Windows BG3SE hooks `SDL_PollEvent` via Detours - this approach doesn't apply
+  - macOS requires CGEventTap + proper Cocoa coordinate system conversion
+- Modified `convert_screen_to_window()` in `imgui_metal_backend.mm`:
+  - Step 1: CG (top-left origin) → Cocoa screen (bottom-left origin)
+  - Step 2: Screen coords → Window coords via `convertPointFromScreen:`
+  - Step 3: Window coords → View coords via `convertPoint:fromView:`
+  - Step 4: Flip Y for ImGui if view not flipped
+- Added debug logging every 120th conversion to verify coordinate chain
+- Updated `plans/fix-imgui-mouse-input.md` with complete implementation details
+- Updated `agent_docs/architecture.md` with ImGui overlay system documentation
+
+---
+
 ## [v0.36.17] - 2025-12-28
 
 **Parity:** ~83% | **Category:** IDE Integration | **Issues:** #7

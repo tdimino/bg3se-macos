@@ -70,6 +70,7 @@ typedef enum {
     LOG_MODULE_PERSIST,      // PersistentVars
     LOG_MODULE_GAME,         // Game state tracking
     LOG_MODULE_INPUT,        // Input system, Ext.Input
+    LOG_MODULE_IMGUI,        // ImGui overlay system
     LOG_MODULE_MAX
 } LogModule;
 
@@ -426,6 +427,12 @@ LogModule log_module_from_string(const char* str);
 #define LOG_INPUT_INFO(fmt, ...)  LOGM_INFO(LOG_MODULE_INPUT, fmt __VA_OPT__(,) __VA_ARGS__)
 #define LOG_INPUT_WARN(fmt, ...)  LOGM_WARN(LOG_MODULE_INPUT, fmt __VA_OPT__(,) __VA_ARGS__)
 #define LOG_INPUT_ERROR(fmt, ...) LOGM_ERROR(LOG_MODULE_INPUT, fmt __VA_OPT__(,) __VA_ARGS__)
+
+// ImGui module
+#define LOG_IMGUI_DEBUG(fmt, ...) LOGM_DEBUG(LOG_MODULE_IMGUI, fmt __VA_OPT__(,) __VA_ARGS__)
+#define LOG_IMGUI_INFO(fmt, ...)  LOGM_INFO(LOG_MODULE_IMGUI, fmt __VA_OPT__(,) __VA_ARGS__)
+#define LOG_IMGUI_WARN(fmt, ...)  LOGM_WARN(LOG_MODULE_IMGUI, fmt __VA_OPT__(,) __VA_ARGS__)
+#define LOG_IMGUI_ERROR(fmt, ...) LOGM_ERROR(LOG_MODULE_IMGUI, fmt __VA_OPT__(,) __VA_ARGS__)
 
 #ifdef __cplusplus
 }

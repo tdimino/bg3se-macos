@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(bg3se-macos VERSION 0.1.0 LANGUAGES C CXX OBJC)
+project(bg3se-macos VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
 
 # Set C/C++ standards
 # Using C23 for __VA_OPT__ support in variadic macros (logging.h)
@@ -18,11 +18,16 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Main injection dylib
 # ============================================
 
+# ImGui library
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/lib/imgui)
+
 # Include paths
 include_directories(
     ${CMAKE_SOURCE_DIR}/lib
     ${CMAKE_SOURCE_DIR}/lib/Dobby/include
     ${CMAKE_SOURCE_DIR}/lib/lua/src
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/src/console
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/entity
@@ -46,6 +51,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/localization
     ${CMAKE_SOURCE_DIR}/src/hooks
     ${CMAKE_SOURCE_DIR}/src/io
+    ${CMAKE_SOURCE_DIR}/src/imgui
 )
 
 add_library(bg3se SHARED
@@ -103,10 +109,22 @@ add_library(bg3se SHARED
     src/lua/lua_template.c
     src/resource/resource_manager.c
     src/lua/lua_resource.c
+    src/lua/lua_imgui.c
     src/hooks/arm64_decode.c
     src/hooks/arm64_hook.c
     src/io/path_override.c
     lib/lz4/lz4.c
+    # ImGui core
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    # ImGui backends
+    ${IMGUI_DIR}/backends/imgui_impl_metal.mm
+    ${IMGUI_DIR}/backends/imgui_impl_osx.mm
+    # ImGui Metal backend (our wrapper)
+    src/imgui/imgui_metal_backend.mm
+    src/imgui/imgui_input_hooks.mm
 )
 
 target_compile_options(bg3se PRIVATE
@@ -122,6 +140,9 @@ target_link_libraries(bg3se PRIVATE
     "-framework CoreFoundation"
     "-framework AppKit"
     "-framework QuartzCore"
+    "-framework Metal"
+    "-framework MetalKit"
+    "-framework GameController"
     ${CMAKE_SOURCE_DIR}/lib/Dobby/libdobby-universal.a
     ${CMAKE_SOURCE_DIR}/lib/lua/liblua-universal.a
     z  # zlib for compression

@@ -14,7 +14,13 @@ src/
 │   ├── guid_lookup.c/h    # GUID parsing, HashMap operations
 │   └── arm64_call.c/h     # ARM64 ABI wrappers (x8 indirect return)
 ├── hooks/          # Legacy hook stubs (actual hooks in main.c)
+├── imgui/          # Dear ImGui overlay system
+│   ├── imgui_metal_backend.mm  # Metal rendering, coord conversion
+│   ├── imgui_input_hooks.mm    # NSView method swizzling
+│   └── lua_imgui.c             # Ext.IMGUI Lua bindings
 ├── injector/       # Main injection logic (main.c)
+├── input/          # System-level input capture
+│   └── input_hooks.m           # CGEventTap for keyboard/mouse
 ├── lua/            # Lua API modules (lua_ext, lua_json, lua_osiris, lua_stats, lua_events, lua_logging)
 ├── mod/            # Mod detection and loading
 ├── osiris/         # Osiris types, functions, pattern scanning
@@ -60,6 +66,46 @@ void module_init(void) { ... }
 - libOsiris.dylib contains the Osiris scripting engine
 - Some symbols stripped - pattern scanning is the fallback
 - EntityWorld/EoCServer singletons not exported - must capture via hooks
+- **BG3 macOS uses native Cocoa/AppKit, NOT SDL** (unlike Windows)
+
+## ImGui Overlay System
+
+The debug overlay uses Dear ImGui with Metal rendering and CGEventTap input.
+
+### Key Difference from Windows BG3SE
+- **Windows**: Hooks `SDL_PollEvent` via Detours, uses `ImGui_ImplSDL2`
+- **macOS**: Uses CGEventTap + NSView swizzling, uses `ImGui_ImplOSX` + `ImGui_ImplMetal`
+
+### Input Architecture
+```
+CGEventTap (system-level)
+    │
+    ├── Keyboard events → F11 toggle, key forwarding
+    │
+    └── Mouse events → Quartz screen coords
+                            │
+                            ▼
+                   Cocoa Coordinate Conversion
+                   (4-step: CG → Screen → Window → View)
+                            │
+                            ▼
+                   ImGui Input API
+                   (AddMousePosEvent, AddMouseButtonEvent)
+```
+
+### Coordinate Conversion (CGEventTap → ImGui)
+CGEventTap provides Quartz coordinates (origin at top-left of main display).
+Must convert through Cocoa APIs:
+1. CG (top-left) → Cocoa screen (bottom-left): `screenHeight - y`
+2. Screen → Window: `convertPointFromScreen:`
+3. Window → View: `convertPoint:fromView:`
+4. Flip Y if view not flipped: `viewHeight - y`
+
+### Key Files
+- `src/imgui/imgui_metal_backend.mm` - Metal rendering, coordinate conversion
+- `src/imgui/imgui_input_hooks.mm` - NSView method swizzling (fallback)
+- `src/input/input_hooks.m` - CGEventTap for keyboard/mouse
+- `lib/imgui/backends/imgui_impl_osx.mm` - Official ImGui OSX backend
 
 ## ARM64 ABI Critical Pattern
 

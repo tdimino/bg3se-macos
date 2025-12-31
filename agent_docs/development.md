@@ -7,6 +7,28 @@ cd build && cmake .. && cmake --build .
 # Output: build/lib/libbg3se.dylib
 ```
 
+### After Moving the Repository
+
+If you move the repository to a new directory, **you must regenerate the CMake cache**:
+
+```bash
+# Delete stale cache and rebuild
+cd /path/to/new/location
+rm -rf build
+mkdir build && cd build
+cmake .. && cmake --build .
+```
+
+**Why?** CMake caches absolute paths in `build/CMakeCache.txt`. A stale cache pointing to the old directory will cause:
+- Silent build failures
+- Code changes not being compiled
+- Outdated dylib being deployed
+
+**Symptoms of stale cache:**
+- `CMake Error: The source directory "..." does not exist`
+- Changes to source files don't appear in the running game
+- Build completes but behavior doesn't match code
+
 ## Testing
 
 ```bash
