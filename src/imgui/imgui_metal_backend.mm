@@ -19,6 +19,7 @@
 #include "imgui_metal_backend.h"
 #include "imgui_input_hooks.h"
 #include "imgui_objects.h"
+#include "lua_imgui.h"
 #include "imgui.h"
 #include "imgui_impl_metal.h"
 #include "imgui_impl_osx.h"
@@ -351,11 +352,50 @@ static void imgui_metal_setup_context(void) {
 // Forward declaration for recursive rendering
 static void render_widget(ImguiObject *obj);
 
+// Push style overrides for an object
+void imgui_object_push_style(ImguiObject* obj) {
+    if (!obj) return;
+
+    // Push style vars
+    for (int i = 0; i < obj->style_overrides.style_count; i++) {
+        int var = obj->style_overrides.style_vars[i];
+        float val1 = obj->style_overrides.style_values[i * 2];
+        float val2 = obj->style_overrides.style_values[i * 2 + 1];
+
+        // Some style vars are float, some are ImVec2
+        // For simplicity, use ImVec2 for all (ImGui handles it)
+        ImGui::PushStyleVar((ImGuiStyleVar)var, ImVec2(val1, val2));
+    }
+
+    // Push style colors
+    for (int i = 0; i < obj->style_overrides.color_count; i++) {
+        int color = obj->style_overrides.color_vars[i];
+        ImguiVec4 val = obj->style_overrides.color_values[i];
+        ImGui::PushStyleColor((ImGuiCol)color, ImVec4(val.x, val.y, val.z, val.w));
+    }
+}
+
+// Pop style overrides for an object
+void imgui_object_pop_style(ImguiObject* obj) {
+    if (!obj) return;
+
+    // Pop in reverse order (colors first, then vars)
+    if (obj->style_overrides.color_count > 0) {
+        ImGui::PopStyleColor(obj->style_overrides.color_count);
+    }
+    if (obj->style_overrides.style_count > 0) {
+        ImGui::PopStyleVar(obj->style_overrides.style_count);
+    }
+}
+
 // Render a single widget based on its type
 static void render_widget(ImguiObject *obj) {
     if (!obj || !obj->styled.visible) {
         return;
     }
+
+    // Push style overrides before rendering
+    imgui_object_push_style(obj);
 
     // Handle SameLine
     if (obj->styled.same_line) {
@@ -382,8 +422,8 @@ static void render_widget(ImguiObject *obj) {
                     size = ImVec2(obj->data.button.size.x, obj->data.button.size.y);
                 }
                 if (ImGui::Button(obj->styled.label, size)) {
-                    // TODO: Fire OnClick event
                     LOG_IMGUI_DEBUG("Button '%s' clicked", obj->styled.label);
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CLICK);
                 }
             }
             break;
@@ -393,8 +433,8 @@ static void render_widget(ImguiObject *obj) {
                 bool checked = obj->data.checkbox.checked;
                 if (ImGui::Checkbox(obj->styled.label, &checked)) {
                     obj->data.checkbox.checked = checked;
-                    // TODO: Fire OnChange event
                     LOG_IMGUI_DEBUG("Checkbox '%s' changed to %d", obj->styled.label, checked);
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, (int)checked);
                 }
             }
             break;
@@ -431,6 +471,9 @@ static void render_widget(ImguiObject *obj) {
             // Unknown type - skip
             break;
     }
+
+    // Pop style overrides after rendering
+    imgui_object_pop_style(obj);
 }
 
 // Render a window and its children
@@ -466,8 +509,8 @@ static void render_window(ImguiObject *win) {
 
     // Handle window close event
     if (p_open && !win->data.window.open) {
-        // TODO: Fire OnClose event
         LOG_IMGUI_DEBUG("Window '%s' closed", win->styled.label);
+        lua_imgui_fire_event(win->handle, IMGUI_EVENT_ON_CLOSE);
     }
 }
 

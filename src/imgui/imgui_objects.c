@@ -9,10 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
 
 // Global object pool
 static ImguiObjectPool g_pool = {0};
 static bool g_initialized = false;
+static pthread_mutex_t g_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Type name lookup
 static const char* g_type_names[] = {
@@ -62,6 +64,7 @@ static const char* g_type_names[] = {
 // Forward declarations
 static void clear_object(ImguiObject* obj);
 static void destroy_object_recursive(ImguiHandle handle);
+static void imgui_register_window_internal(ImguiHandle handle);
 
 void imgui_objects_init(void) {
     if (g_initialized) return;
@@ -352,7 +355,10 @@ ImguiHandle imgui_object_create(ImguiObjectType type, const char* label) {
         imgui_objects_init();
     }
 
+    pthread_mutex_lock(&g_pool_mutex);
+
     if (g_pool.free_count == 0) {
+        pthread_mutex_unlock(&g_pool_mutex);
         LOG_IMGUI_ERROR("Object pool exhausted (max %d)", MAX_IMGUI_OBJECTS);
         return IMGUI_INVALID_HANDLE;
     }
@@ -384,10 +390,12 @@ ImguiHandle imgui_object_create(ImguiObjectType type, const char* label) {
 
     g_pool.active_count++;
 
-    // If it's a window, register it
+    // If it's a window, register it (while still holding lock)
     if (type == IMGUI_OBJ_WINDOW) {
-        imgui_register_window(obj->handle);
+        imgui_register_window_internal(obj->handle);
     }
+
+    pthread_mutex_unlock(&g_pool_mutex);
 
     LOG_IMGUI_DEBUG("Created %s '%s' (handle=0x%llx, idx=%d, gen=%u)",
         imgui_object_type_name(type), label ? label : "", obj->handle, index, generation);
@@ -572,11 +580,15 @@ ImguiHandle* imgui_object_get_children(ImguiHandle parent, int* count) {
 }
 
 ImguiHandle* imgui_get_all_windows(int* count) {
+    pthread_mutex_lock(&g_pool_mutex);
     if (count) *count = g_pool.window_count;
-    return g_pool.windows;
+    ImguiHandle* result = g_pool.windows;
+    pthread_mutex_unlock(&g_pool_mutex);
+    return result;
 }
 
-void imgui_register_window(ImguiHandle handle) {
+// Internal version without locking (called while lock is held)
+static void imgui_register_window_internal(ImguiHandle handle) {
     // Grow window array if needed
     if (g_pool.window_count >= g_pool.window_capacity) {
         int new_cap = g_pool.window_capacity * 2;
@@ -590,6 +602,12 @@ void imgui_register_window(ImguiHandle handle) {
 
     g_pool.windows[g_pool.window_count++] = handle;
     LOG_IMGUI_DEBUG("Registered window 0x%llx (total: %d)", handle, g_pool.window_count);
+}
+
+void imgui_register_window(ImguiHandle handle) {
+    pthread_mutex_lock(&g_pool_mutex);
+    imgui_register_window_internal(handle);
+    pthread_mutex_unlock(&g_pool_mutex);
 }
 
 void imgui_unregister_window(ImguiHandle handle) {

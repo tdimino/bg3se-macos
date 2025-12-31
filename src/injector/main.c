@@ -2262,6 +2262,7 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     if (L) {
         console_poll(L);
         input_poll(L);
+        lua_imgui_set_lua_state(L);  // Set Lua state for IMGUI event callbacks
         timer_update(L);  // Process timer callbacks
         timer_update_persistent(L);  // Process persistent timer callbacks
         persist_tick(L);  // Check for dirty PersistentVars to auto-save

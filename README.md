@@ -92,7 +92,7 @@ These mods have been tested and confirmed working with BG3SE-macOS:
 
 ## Status
 
-**Version:** v0.36.19 | **Feature Parity:** ~82%
+**Version:** v0.36.20 | **Feature Parity:** ~85%
 
 | Feature | Status |
 |---------|--------|

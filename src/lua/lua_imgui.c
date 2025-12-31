@@ -24,6 +24,7 @@
 #include "logging.h"
 #include "lauxlib.h"
 #include <string.h>
+#include <stdarg.h>
 
 // ============================================================================
 // Lua Userdata Types
@@ -465,22 +466,32 @@ static int imgui_window_newindex(lua_State *L) {
 
     // Event callbacks (stored as Lua refs)
     if (strcmp(key, "OnClose") == 0) {
+        // Release old ref if exists
+        int old_ref = imgui_object_get_event(ud->handle, IMGUI_EVENT_ON_CLOSE);
+        if (old_ref != -1 && old_ref != LUA_NOREF && old_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+        }
         if (lua_isfunction(L, 3)) {
             lua_pushvalue(L, 3);
             int ref = luaL_ref(L, LUA_REGISTRYINDEX);
             imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CLOSE, ref);
         } else if (lua_isnil(L, 3)) {
-            imgui_object_clear_event(ud->handle, IMGUI_EVENT_ON_CLOSE);
+            imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CLOSE, -1);
         }
         return 0;
     }
     if (strcmp(key, "OnClick") == 0) {
+        // Release old ref if exists
+        int old_ref = imgui_object_get_event(ud->handle, IMGUI_EVENT_ON_CLICK);
+        if (old_ref != -1 && old_ref != LUA_NOREF && old_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+        }
         if (lua_isfunction(L, 3)) {
             lua_pushvalue(L, 3);
             int ref = luaL_ref(L, LUA_REGISTRYINDEX);
             imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CLICK, ref);
         } else if (lua_isnil(L, 3)) {
-            imgui_object_clear_event(ud->handle, IMGUI_EVENT_ON_CLICK);
+            imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CLICK, -1);
         }
         return 0;
     }
@@ -777,22 +788,32 @@ static int imgui_widget_newindex(lua_State *L) {
 
     // Event callbacks
     if (strcmp(key, "OnClick") == 0) {
+        // Release old ref if exists
+        int old_ref = imgui_object_get_event(ud->handle, IMGUI_EVENT_ON_CLICK);
+        if (old_ref != -1 && old_ref != LUA_NOREF && old_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+        }
         if (lua_isfunction(L, 3)) {
             lua_pushvalue(L, 3);
             int ref = luaL_ref(L, LUA_REGISTRYINDEX);
             imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CLICK, ref);
         } else if (lua_isnil(L, 3)) {
-            imgui_object_clear_event(ud->handle, IMGUI_EVENT_ON_CLICK);
+            imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CLICK, -1);
         }
         return 0;
     }
     if (strcmp(key, "OnChange") == 0) {
+        // Release old ref if exists
+        int old_ref = imgui_object_get_event(ud->handle, IMGUI_EVENT_ON_CHANGE);
+        if (old_ref != -1 && old_ref != LUA_NOREF && old_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+        }
         if (lua_isfunction(L, 3)) {
             lua_pushvalue(L, 3);
             int ref = luaL_ref(L, LUA_REGISTRYINDEX);
             imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CHANGE, ref);
         } else if (lua_isnil(L, 3)) {
-            imgui_object_clear_event(ud->handle, IMGUI_EVENT_ON_CHANGE);
+            imgui_object_set_event(ud->handle, IMGUI_EVENT_ON_CHANGE, -1);
         }
         return 0;
     }
@@ -875,8 +896,7 @@ static int lua_imgui_new_window(lua_State *L) {
         obj->styled.visible = true;
     }
 
-    // Register as a top-level window for rendering
-    imgui_register_window(handle);
+    // Note: imgui_object_create() already registers windows internally
 
     LOG_IMGUI_INFO("Created window '%s' with handle 0x%llx",
                    label, (unsigned long long)handle);
@@ -963,4 +983,89 @@ void lua_imgui_register(lua_State *L, int ext_idx) {
 
     LOG_IMGUI_INFO("Registered Ext.IMGUI with %d functions",
                    (int)(sizeof(imgui_functions) / sizeof(imgui_functions[0]) - 1));
+}
+
+// ============================================================================
+// Event Firing System
+// ============================================================================
+
+// Lua state for event callbacks (set during console_poll or game tick)
+static lua_State *s_imgui_lua_state = NULL;
+
+void lua_imgui_set_lua_state(lua_State *L) {
+    s_imgui_lua_state = L;
+}
+
+lua_State *lua_imgui_get_lua_state(void) {
+    return s_imgui_lua_state;
+}
+
+void lua_imgui_fire_event(ImguiHandle handle, ImguiEventType event, ...) {
+    if (!s_imgui_lua_state) {
+        LOG_IMGUI_DEBUG("No Lua state set, skipping event fire");
+        return;
+    }
+
+    // Get the callback reference for this event
+    int callback_ref = imgui_object_get_event(handle, event);
+    if (callback_ref == -1 || callback_ref == LUA_NOREF || callback_ref == LUA_REFNIL) {
+        // No callback registered for this event
+        return;
+    }
+
+    lua_State *L = s_imgui_lua_state;
+
+    // Get the callback function from registry
+    lua_rawgeti(L, LUA_REGISTRYINDEX, callback_ref);
+    if (!lua_isfunction(L, -1)) {
+        LOG_IMGUI_WARN("Event callback is not a function (ref=%d)", callback_ref);
+        lua_pop(L, 1);
+        return;
+    }
+
+    // Push handle as first argument (userdata)
+    ImguiObject *obj = imgui_object_get(handle);
+    if (obj) {
+        imgui_push_handle(L, handle, obj->type);
+    } else {
+        lua_pushnil(L);
+    }
+
+    // Push event-specific arguments
+    int nargs = 1;  // Handle is always first arg
+    va_list args;
+    va_start(args, event);
+
+    switch (event) {
+        case IMGUI_EVENT_ON_CLICK:
+        case IMGUI_EVENT_ON_CLOSE:
+            // No additional arguments
+            break;
+
+        case IMGUI_EVENT_ON_CHANGE: {
+            // For checkbox: push the new boolean value
+            int new_value = va_arg(args, int);
+            lua_pushboolean(L, new_value);
+            nargs++;
+            break;
+        }
+
+        default:
+            break;
+    }
+
+    va_end(args);
+
+    // Call the callback with protected call
+    const char *event_name = (event == IMGUI_EVENT_ON_CLICK) ? "OnClick" :
+                             (event == IMGUI_EVENT_ON_CLOSE) ? "OnClose" :
+                             (event == IMGUI_EVENT_ON_CHANGE) ? "OnChange" : "Unknown";
+
+    if (lua_pcall(L, nargs, 0, 0) != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        LOG_IMGUI_ERROR("Error in %s callback: %s", event_name, err ? err : "(unknown error)");
+        lua_pop(L, 1);
+    } else {
+        LOG_IMGUI_DEBUG("Fired %s event for handle 0x%llx", event_name, (unsigned long long)handle);
+    }
 }
