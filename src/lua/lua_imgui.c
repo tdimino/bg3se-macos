@@ -25,6 +25,7 @@
 #include "lauxlib.h"
 #include <string.h>
 #include <stdarg.h>
+#include <stdlib.h>
 
 // ============================================================================
 // Lua Userdata Types
@@ -330,14 +331,34 @@ static int imgui_window_add_checkbox(lua_State *L);
 static int imgui_window_add_separator(lua_State *L);
 static int imgui_window_add_spacing(lua_State *L);
 static int imgui_window_add_group(lua_State *L);
+static int imgui_window_add_inputtext(lua_State *L);
+static int imgui_window_add_combo(lua_State *L);
+static int imgui_window_add_slider(lua_State *L);
+static int imgui_window_add_sliderint(lua_State *L);
+static int imgui_window_add_collapsingheader(lua_State *L);
+static int imgui_window_add_bullettext(lua_State *L);
+static int imgui_window_add_separatortext(lua_State *L);
+static int imgui_window_add_progressbar(lua_State *L);
+static int imgui_window_add_radiobutton(lua_State *L);
+static int imgui_window_add_coloredit(lua_State *L);
 static int imgui_widget_destroy(lua_State *L);
 static int imgui_widget_set_visible(lua_State *L);
 
 // Method table for window objects
 static const luaL_Reg window_methods[] = {
     {"AddText", imgui_window_add_text},
+    {"AddBulletText", imgui_window_add_bullettext},
+    {"AddSeparatorText", imgui_window_add_separatortext},
     {"AddButton", imgui_window_add_button},
     {"AddCheckbox", imgui_window_add_checkbox},
+    {"AddRadioButton", imgui_window_add_radiobutton},
+    {"AddInputText", imgui_window_add_inputtext},
+    {"AddCombo", imgui_window_add_combo},
+    {"AddSlider", imgui_window_add_slider},
+    {"AddSliderInt", imgui_window_add_sliderint},
+    {"AddColorEdit", imgui_window_add_coloredit},
+    {"AddProgressBar", imgui_window_add_progressbar},
+    {"AddCollapsingHeader", imgui_window_add_collapsingheader},
     {"AddSeparator", imgui_window_add_separator},
     {"AddSpacing", imgui_window_add_spacing},
     {"AddGroup", imgui_window_add_group},
@@ -645,6 +666,251 @@ static int imgui_window_add_group(lua_State *L) {
     }
 
     imgui_push_handle(L, child, IMGUI_OBJ_GROUP);
+    return 1;
+}
+
+/**
+ * window:AddInputText(label, [default_value]) -> input text widget
+ */
+static int imgui_window_add_inputtext(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    const char *default_value = luaL_optstring(L, 3, "");
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_INPUT_TEXT, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create input text widget");
+    }
+
+    // Set default value
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj && default_value[0]) {
+        strncpy(obj->data.input_text.text, default_value, sizeof(obj->data.input_text.text) - 1);
+        obj->data.input_text.text[sizeof(obj->data.input_text.text) - 1] = '\0';
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_INPUT_TEXT);
+    return 1;
+}
+
+/**
+ * window:AddCombo(label, options, [selected_index]) -> combo widget
+ * options is a table of strings
+ */
+static int imgui_window_add_combo(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    int selected = (int)luaL_optinteger(L, 4, 1) - 1;  // Lua 1-indexed to C 0-indexed
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_COMBO, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create combo widget");
+    }
+
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        // Count options
+        int count = (int)lua_rawlen(L, 3);
+        if (count > 0) {
+            obj->data.combo.options = (char**)malloc(sizeof(char*) * count);
+            obj->data.combo.option_count = count;
+
+            for (int i = 0; i < count; i++) {
+                lua_rawgeti(L, 3, i + 1);
+                const char *opt = lua_tostring(L, -1);
+                obj->data.combo.options[i] = opt ? strdup(opt) : strdup("");
+                lua_pop(L, 1);
+            }
+        }
+        obj->data.combo.selected_index = (selected >= 0 && selected < count) ? selected : 0;
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_COMBO);
+    return 1;
+}
+
+/**
+ * window:AddSlider(label, value, min, max) -> slider widget
+ */
+static int imgui_window_add_slider(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    float value = (float)luaL_optnumber(L, 3, 0.0);
+    float min_val = (float)luaL_optnumber(L, 4, 0.0);
+    float max_val = (float)luaL_optnumber(L, 5, 1.0);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_SLIDER_SCALAR, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create slider widget");
+    }
+
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        obj->data.slider.value.x = value;
+        obj->data.slider.min.x = min_val;
+        obj->data.slider.max.x = max_val;
+        obj->data.slider.components = 1;
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_SLIDER_SCALAR);
+    return 1;
+}
+
+/**
+ * window:AddSliderInt(label, value, min, max) -> slider int widget
+ */
+static int imgui_window_add_sliderint(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    int value = (int)luaL_optinteger(L, 3, 0);
+    int min_val = (int)luaL_optinteger(L, 4, 0);
+    int max_val = (int)luaL_optinteger(L, 5, 100);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_SLIDER_INT, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create slider int widget");
+    }
+
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        obj->data.slider_int.value[0] = value;
+        obj->data.slider_int.min[0] = min_val;
+        obj->data.slider_int.max[0] = max_val;
+        obj->data.slider_int.components = 1;
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_SLIDER_INT);
+    return 1;
+}
+
+/**
+ * window:AddCollapsingHeader(label, [default_open]) -> collapsing header widget
+ */
+static int imgui_window_add_collapsingheader(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    bool default_open = lua_toboolean(L, 3);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_COLLAPSING_HEADER, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create collapsing header widget");
+    }
+
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        obj->data.collapsing_header.is_open = default_open;
+        if (default_open) {
+            obj->data.collapsing_header.flags = 0x20;  // ImGuiTreeNodeFlags_DefaultOpen
+        }
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_COLLAPSING_HEADER);
+    return 1;
+}
+
+/**
+ * window:AddBulletText(text) -> bullet text widget
+ */
+static int imgui_window_add_bullettext(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_BULLET_TEXT, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create bullet text widget");
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_BULLET_TEXT);
+    return 1;
+}
+
+/**
+ * window:AddSeparatorText(text) -> separator text widget
+ */
+static int imgui_window_add_separatortext(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_SEPARATOR_TEXT, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create separator text widget");
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_SEPARATOR_TEXT);
+    return 1;
+}
+
+/**
+ * window:AddProgressBar([value], [overlay]) -> progress bar widget
+ */
+static int imgui_window_add_progressbar(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    float value = (float)luaL_optnumber(L, 2, 0.0);
+    const char *overlay = luaL_optstring(L, 3, NULL);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_PROGRESS_BAR, "");
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create progress bar widget");
+    }
+
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        obj->data.progress_bar.value = value;
+        if (overlay) {
+            strncpy(obj->data.progress_bar.overlay, overlay, sizeof(obj->data.progress_bar.overlay) - 1);
+            obj->data.progress_bar.overlay[sizeof(obj->data.progress_bar.overlay) - 1] = '\0';
+        }
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_PROGRESS_BAR);
+    return 1;
+}
+
+/**
+ * window:AddRadioButton(label, [active]) -> radio button widget
+ */
+static int imgui_window_add_radiobutton(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    bool active = lua_toboolean(L, 3);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_RADIO_BUTTON, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create radio button widget");
+    }
+
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        obj->data.radio_button.active = active;
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_RADIO_BUTTON);
+    return 1;
+}
+
+/**
+ * window:AddColorEdit(label, [r, g, b, a]) -> color edit widget
+ */
+static int imgui_window_add_coloredit(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    float r = (float)luaL_optnumber(L, 3, 1.0);
+    float g = (float)luaL_optnumber(L, 4, 1.0);
+    float b = (float)luaL_optnumber(L, 5, 1.0);
+    float a = (float)luaL_optnumber(L, 6, 1.0);
+
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_COLOR_EDIT, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create color edit widget");
+    }
+
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        obj->data.color.color = (ImguiVec4){r, g, b, a};
+    }
+
+    imgui_push_handle(L, child, IMGUI_OBJ_COLOR_EDIT);
     return 1;
 }
 
