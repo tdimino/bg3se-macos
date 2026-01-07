@@ -30,10 +30,8 @@ cd bg3se-macos
 # If you already cloned without --recursive:
 git submodule update --init --recursive
 
-# Build with CMake
-mkdir -p build && cd build
-cmake ..
-cmake --build .
+# Build
+./scripts/build.sh
 ```
 
 ### Verify Build Succeeded
@@ -62,8 +60,7 @@ file build/lib/libbg3se.dylib
 | `cmake: command not found` | Install CMake: `brew install cmake` |
 | `CMake Error: could not find compiler` | Install Xcode tools: `xcode-select --install` |
 | Missing Dobby/Lua/lz4 errors | Initialize submodules: `git submodule update --init --recursive` |
-| Build succeeds but no dylib | Check `build/lib/` directory; ensure `cmake --build .` completed |
-| `build.sh` does nothing | Use CMake directly (build.sh is deprecated) |
+| Build succeeds but no dylib | Check `build/lib/` directory; ensure build completed |
 | `CMake Error: source directory does not exist` | Stale cache after moving repo. Delete `build/` and rebuild: `rm -rf build && mkdir build && cd build && cmake .. && cmake --build .` |
 | Code changes don't appear in game | Stale CMake cache. Delete `build/` directory and rebuild from scratch |
 

@@ -15,6 +15,25 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ============================================
+# Submodule check - fail early with clear message
+# ============================================
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/lib/Dobby/CMakeLists.txt")
+    message(FATAL_ERROR
+        "\n"
+        "========================================\n"
+        "ERROR: Dobby submodule not initialized!\n"
+        "========================================\n"
+        "\n"
+        "It looks like you cloned without --recursive.\n"
+        "\n"
+        "Run this command to fix:\n"
+        "    git submodule update --init --recursive\n"
+        "\n"
+        "Then re-run cmake.\n"
+    )
+endif()
+
+# ============================================
 # Main injection dylib
 # ============================================
 
