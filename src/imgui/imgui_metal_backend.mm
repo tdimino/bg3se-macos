@@ -467,6 +467,138 @@ static void render_widget(ImguiObject *obj) {
             ImGui::EndGroup();
             break;
 
+        case IMGUI_OBJ_INPUT_TEXT:
+            {
+                char buf[4096];
+                strncpy(buf, obj->data.input_text.text, sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+
+                ImGuiInputTextFlags flags = (ImGuiInputTextFlags)obj->data.input_text.flags;
+                bool changed = false;
+
+                if (obj->data.input_text.hint[0]) {
+                    changed = ImGui::InputTextWithHint(obj->styled.label, obj->data.input_text.hint,
+                                                        buf, sizeof(buf), flags);
+                } else {
+                    changed = ImGui::InputText(obj->styled.label, buf, sizeof(buf), flags);
+                }
+
+                if (changed) {
+                    strncpy(obj->data.input_text.text, buf, sizeof(obj->data.input_text.text) - 1);
+                    obj->data.input_text.text[sizeof(obj->data.input_text.text) - 1] = '\0';
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, 0);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_COMBO:
+            {
+                const char* preview = (obj->data.combo.selected_index >= 0 &&
+                                       obj->data.combo.selected_index < obj->data.combo.option_count)
+                    ? obj->data.combo.options[obj->data.combo.selected_index]
+                    : "";
+
+                if (ImGui::BeginCombo(obj->styled.label, preview, (ImGuiComboFlags)obj->data.combo.flags)) {
+                    for (int i = 0; i < obj->data.combo.option_count; i++) {
+                        bool is_selected = (obj->data.combo.selected_index == i);
+                        if (ImGui::Selectable(obj->data.combo.options[i], is_selected)) {
+                            obj->data.combo.selected_index = i;
+                            lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, i + 1);  // 1-indexed for Lua
+                        }
+                        if (is_selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_SLIDER_SCALAR:
+            {
+                float val = obj->data.slider.value.x;
+                if (ImGui::SliderFloat(obj->styled.label, &val,
+                                       obj->data.slider.min.x, obj->data.slider.max.x)) {
+                    obj->data.slider.value.x = val;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, 0);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_SLIDER_INT:
+            {
+                int val = obj->data.slider_int.value[0];
+                if (ImGui::SliderInt(obj->styled.label, &val,
+                                     obj->data.slider_int.min[0], obj->data.slider_int.max[0])) {
+                    obj->data.slider_int.value[0] = val;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, val);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_COLLAPSING_HEADER:
+            {
+                ImGuiTreeNodeFlags flags = (ImGuiTreeNodeFlags)obj->data.collapsing_header.flags;
+                bool is_open = ImGui::CollapsingHeader(obj->styled.label, flags);
+                obj->data.collapsing_header.is_open = is_open;
+
+                // Render children if open
+                if (is_open && obj->children && obj->child_count > 0) {
+                    for (int i = 0; i < obj->child_count; i++) {
+                        ImguiObject *child = imgui_object_get(obj->children[i]);
+                        render_widget(child);
+                    }
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_BULLET_TEXT:
+            ImGui::BulletText("%s", obj->styled.label);
+            break;
+
+        case IMGUI_OBJ_SEPARATOR_TEXT:
+            ImGui::SeparatorText(obj->styled.label);
+            break;
+
+        case IMGUI_OBJ_PROGRESS_BAR:
+            {
+                const char *overlay = obj->data.progress_bar.overlay[0]
+                    ? obj->data.progress_bar.overlay
+                    : NULL;
+                ImGui::ProgressBar(obj->data.progress_bar.value,
+                                   ImVec2(obj->data.progress_bar.size.x, obj->data.progress_bar.size.y),
+                                   overlay);
+            }
+            break;
+
+        case IMGUI_OBJ_RADIO_BUTTON:
+            {
+                bool active = obj->data.radio_button.active;
+                if (ImGui::RadioButton(obj->styled.label, active)) {
+                    obj->data.radio_button.active = !active;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CLICK);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_COLOR_EDIT:
+            {
+                float col[4] = {
+                    obj->data.color.color.x,
+                    obj->data.color.color.y,
+                    obj->data.color.color.z,
+                    obj->data.color.color.w
+                };
+                if (ImGui::ColorEdit4(obj->styled.label, col, (ImGuiColorEditFlags)obj->data.color.flags)) {
+                    obj->data.color.color.x = col[0];
+                    obj->data.color.color.y = col[1];
+                    obj->data.color.color.z = col[2];
+                    obj->data.color.color.w = col[3];
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, 0);
+                }
+            }
+            break;
+
         default:
             // Unknown type - skip
             break;
