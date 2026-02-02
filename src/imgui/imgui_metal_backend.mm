@@ -394,6 +394,11 @@ static void render_widget(ImguiObject *obj) {
         return;
     }
 
+    static int widget_log_counter = 0;
+    if (widget_log_counter++ % 600 == 0) {
+        LOG_IMGUI_INFO("render_widget: type=%d label='%s'", obj->type, obj->styled.label);
+    }
+
     // Push style overrides before rendering
     imgui_object_push_style(obj);
 
@@ -461,7 +466,7 @@ static void render_widget(ImguiObject *obj) {
             if (obj->children && obj->child_count > 0) {
                 for (int i = 0; i < obj->child_count; i++) {
                     ImguiObject *child = imgui_object_get(obj->children[i]);
-                    render_widget(child);
+                    if (child) render_widget(child);
                 }
             }
             ImGui::EndGroup();
@@ -546,7 +551,7 @@ static void render_widget(ImguiObject *obj) {
                 if (is_open && obj->children && obj->child_count > 0) {
                     for (int i = 0; i < obj->child_count; i++) {
                         ImguiObject *child = imgui_object_get(obj->children[i]);
-                        render_widget(child);
+                        if (child) render_widget(child);
                     }
                 }
             }
@@ -568,6 +573,31 @@ static void render_widget(ImguiObject *obj) {
                 ImGui::ProgressBar(obj->data.progress_bar.value,
                                    ImVec2(obj->data.progress_bar.size.x, obj->data.progress_bar.size.y),
                                    overlay);
+            }
+            break;
+
+        case IMGUI_OBJ_IMAGE:
+            {
+                // TODO: Implement texture loading from image_path
+                // For now, render as placeholder text showing image info
+                char placeholder[512];
+                snprintf(placeholder, sizeof(placeholder), "[Image: %s (%.0fx%.0f)]",
+                         obj->data.image.image_path,
+                         obj->data.image.size.x,
+                         obj->data.image.size.y);
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", placeholder);
+
+                // When texture loading is implemented:
+                // ImTextureID texId = imgui_texture_get(obj->data.image.image_path);
+                // if (texId) {
+                //     ImGui::Image(texId, ImVec2(obj->data.image.size.x, obj->data.image.size.y),
+                //                  ImVec2(obj->data.image.uv0.x, obj->data.image.uv0.y),
+                //                  ImVec2(obj->data.image.uv1.x, obj->data.image.uv1.y),
+                //                  ImVec4(obj->data.image.tint.x, obj->data.image.tint.y,
+                //                         obj->data.image.tint.z, obj->data.image.tint.w),
+                //                  ImVec4(obj->data.image.border.x, obj->data.image.border.y,
+                //                         obj->data.image.border.z, obj->data.image.border.w));
+                // }
             }
             break;
 
@@ -599,9 +629,330 @@ static void render_widget(ImguiObject *obj) {
             }
             break;
 
+        case IMGUI_OBJ_COLOR_PICKER:
+            {
+                float col[4] = {
+                    obj->data.color.color.x,
+                    obj->data.color.color.y,
+                    obj->data.color.color.z,
+                    obj->data.color.color.w
+                };
+                if (ImGui::ColorPicker4(obj->styled.label, col, (ImGuiColorEditFlags)obj->data.color.flags)) {
+                    obj->data.color.color.x = col[0];
+                    obj->data.color.color.y = col[1];
+                    obj->data.color.color.z = col[2];
+                    obj->data.color.color.w = col[3];
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, 0);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_DRAG_SCALAR:
+            {
+                float val = obj->data.slider.value.x;
+                if (ImGui::DragFloat(obj->styled.label, &val,
+                                     0.1f, obj->data.slider.min.x, obj->data.slider.max.x)) {
+                    obj->data.slider.value.x = val;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, 0);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_DRAG_INT:
+            {
+                int val = obj->data.slider_int.value[0];
+                if (ImGui::DragInt(obj->styled.label, &val,
+                                   1.0f, obj->data.slider_int.min[0], obj->data.slider_int.max[0])) {
+                    obj->data.slider_int.value[0] = val;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, val);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_INPUT_SCALAR:
+            {
+                float val = obj->data.slider.value.x;
+                if (ImGui::InputFloat(obj->styled.label, &val, 0.0f, 0.0f, "%.3f",
+                                      (ImGuiInputTextFlags)obj->data.slider.flags)) {
+                    obj->data.slider.value.x = val;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, 0);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_INPUT_INT:
+            {
+                int val = obj->data.slider_int.value[0];
+                if (ImGui::InputInt(obj->styled.label, &val, 1, 100,
+                                    (ImGuiInputTextFlags)obj->data.slider_int.flags)) {
+                    obj->data.slider_int.value[0] = val;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CHANGE, val);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_SELECTABLE:
+            {
+                bool selected = obj->data.selectable.selected;
+                ImVec2 size(0, 0);
+                if (obj->data.selectable.has_size) {
+                    size = ImVec2(obj->data.selectable.size.x, obj->data.selectable.size.y);
+                }
+                if (ImGui::Selectable(obj->styled.label, &selected,
+                                      (ImGuiSelectableFlags)obj->data.selectable.flags, size)) {
+                    obj->data.selectable.selected = selected;
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CLICK);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_TEXT_LINK:
+            if (ImGui::TextLink(obj->styled.label)) {
+                lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CLICK);
+            }
+            break;
+
+        case IMGUI_OBJ_TREE:
+            {
+                ImGuiTreeNodeFlags flags = (ImGuiTreeNodeFlags)obj->data.tree.flags;
+                bool was_open = obj->data.tree.is_open;
+                obj->data.tree.is_open = ImGui::TreeNodeEx(obj->styled.label, flags);
+
+                if (obj->data.tree.is_open != was_open) {
+                    if (obj->data.tree.is_open) {
+                        lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_EXPAND);
+                    } else {
+                        lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_COLLAPSE);
+                    }
+                }
+
+                if (obj->data.tree.is_open) {
+                    // Render children
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+                    ImGui::TreePop();
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_TABLE:
+            {
+                ImguiTableData* d = &obj->data.table;
+                ImVec2 size = d->has_size ? ImVec2(d->size.x, d->size.y) : ImVec2(0, 0);
+
+                if (ImGui::BeginTable(obj->styled.label, d->columns, (ImGuiTableFlags)d->flags, size)) {
+                    if (d->freeze_cols > 0 || d->freeze_rows > 0) {
+                        ImGui::TableSetupScrollFreeze(d->freeze_cols, d->freeze_rows);
+                    }
+
+                    // Render children (TableRow widgets)
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+
+                    // Check for sort changes
+                    ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
+                    if (specs && specs->SpecsDirty) {
+                        lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_SORT_CHANGED);
+                        specs->SpecsDirty = false;
+                    }
+
+                    ImGui::EndTable();
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_TABLE_ROW:
+            {
+                ImGui::TableNextRow((ImGuiTableRowFlags)obj->data.table_row.flags);
+                // Render children (TableCell widgets)
+                if (obj->children && obj->child_count > 0) {
+                    for (int i = 0; i < obj->child_count; i++) {
+                        ImguiObject *child = imgui_object_get(obj->children[i]);
+                        if (child) render_widget(child);
+                    }
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_TABLE_CELL:
+            {
+                ImGui::TableNextColumn();
+                // Render children within this cell
+                if (obj->children && obj->child_count > 0) {
+                    for (int i = 0; i < obj->child_count; i++) {
+                        ImguiObject *child = imgui_object_get(obj->children[i]);
+                        if (child) render_widget(child);
+                    }
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_TAB_BAR:
+            {
+                if (ImGui::BeginTabBar(obj->styled.label, (ImGuiTabBarFlags)obj->data.tab_bar.flags)) {
+                    // Render children (TabItem widgets)
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+                    ImGui::EndTabBar();
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_TAB_ITEM:
+            {
+                ImguiTabItemData* d = &obj->data.tab_item;
+                bool was_selected = d->is_selected;
+
+                if (ImGui::BeginTabItem(obj->styled.label, NULL, (ImGuiTabItemFlags)d->flags)) {
+                    d->is_selected = true;
+                    // Render children
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+                    ImGui::EndTabItem();
+                } else {
+                    d->is_selected = false;
+                }
+
+                if (d->is_selected != was_selected && d->is_selected) {
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_ACTIVATE);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_MENU_BAR:
+            {
+                if (ImGui::BeginMenuBar()) {
+                    // Render children (Menu widgets)
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+                    ImGui::EndMenuBar();
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_MENU:
+            {
+                if (ImGui::BeginMenu(obj->styled.label)) {
+                    obj->data.menu.is_open = true;
+                    // Render children (MenuItem widgets)
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+                    ImGui::EndMenu();
+                } else {
+                    obj->data.menu.is_open = false;
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_MENU_ITEM:
+            {
+                ImguiMenuItemData* d = &obj->data.menu_item;
+                const char* shortcut = d->shortcut[0] ? d->shortcut : NULL;
+                if (ImGui::MenuItem(obj->styled.label, shortcut, false, d->enabled)) {
+                    lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_CLICK);
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_POPUP:
+            {
+                ImguiPopupData* d = &obj->data.popup;
+                if (d->is_open) {
+                    if (ImGui::BeginPopup(obj->styled.label, (ImGuiWindowFlags)d->flags)) {
+                        // Render children
+                        if (obj->children && obj->child_count > 0) {
+                            for (int i = 0; i < obj->child_count; i++) {
+                                ImguiObject *child = imgui_object_get(obj->children[i]);
+                                if (child) render_widget(child);
+                            }
+                        }
+                        ImGui::EndPopup();
+                    } else {
+                        d->is_open = false;
+                    }
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_TOOLTIP:
+            {
+                if (ImGui::BeginTooltip()) {
+                    // Render children
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+                    ImGui::EndTooltip();
+                }
+            }
+            break;
+
+        case IMGUI_OBJ_CHILD_WINDOW:
+            {
+                ImguiChildWindowData* d = &obj->data.child_window;
+                ImVec2 size = d->has_size ? ImVec2(d->size.x, d->size.y) : ImVec2(0, 0);
+
+                if (ImGui::BeginChild(obj->styled.label, size, (ImGuiChildFlags)d->child_flags,
+                                      (ImGuiWindowFlags)d->flags)) {
+                    // Render children
+                    if (obj->children && obj->child_count > 0) {
+                        for (int i = 0; i < obj->child_count; i++) {
+                            ImguiObject *child = imgui_object_get(obj->children[i]);
+                            if (child) render_widget(child);
+                        }
+                    }
+                }
+                ImGui::EndChild();
+            }
+            break;
+
         default:
             // Unknown type - skip
             break;
+    }
+
+    // Track hover state changes for all widgets
+    bool is_hovered = ImGui::IsItemHovered();
+    if (is_hovered && !obj->styled.was_hovered) {
+        lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_HOVER_ENTER);
+    }
+    if (!is_hovered && obj->styled.was_hovered) {
+        lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_HOVER_LEAVE);
+    }
+    obj->styled.was_hovered = is_hovered;
+
+    // Track activate/deactivate
+    if (ImGui::IsItemActivated()) {
+        lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_ACTIVATE);
+    }
+    if (ImGui::IsItemDeactivated()) {
+        lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_DEACTIVATE);
     }
 
     // Pop style overrides after rendering
@@ -624,15 +975,32 @@ static void render_window(ImguiObject *win) {
     // Closeable handling
     bool *p_open = win->data.window.closeable ? &win->data.window.open : NULL;
 
+    // Set initial position/size for new windows
+    ImGui::SetNextWindowPos(ImVec2(550, 100), ImGuiCond_FirstUseEver);  // Right of debug window
+    ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(1.0f);  // Fully opaque
+    ImGui::SetNextWindowCollapsed(false, ImGuiCond_FirstUseEver);
+
     // Begin window
     bool window_open = ImGui::Begin(win->styled.label, p_open, flags);
 
+    static int render_log_counter = 0;
+    if (render_log_counter++ % 300 == 0) {
+        LOG_IMGUI_INFO("render_window: '%s' Begin returned %d, children=%d, flags=0x%x",
+            win->styled.label, window_open, win->child_count, flags);
+    }
+
     if (window_open) {
+        // DEBUG: Add a test text to verify the window can render ANYTHING
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 1.0f, 1.0f), "=== LUA WINDOW RENDER TEST ===");
+        ImGui::Text("This is a Lua-created window");
+        ImGui::Separator();
+
         // Render all children
         if (win->children && win->child_count > 0) {
             for (int i = 0; i < win->child_count; i++) {
                 ImguiObject *child = imgui_object_get(win->children[i]);
-                render_widget(child);
+                if (child) render_widget(child);
             }
         }
     }
@@ -643,6 +1011,22 @@ static void render_window(ImguiObject *win) {
     if (p_open && !win->data.window.open) {
         LOG_IMGUI_DEBUG("Window '%s' closed", win->styled.label);
         lua_imgui_fire_event(win->handle, IMGUI_EVENT_ON_CLOSE);
+    }
+}
+
+// ============================================================================
+// Public Render API (for standalone test apps)
+// ============================================================================
+
+void imgui_render_all_windows(void) {
+    int window_count = 0;
+    ImguiHandle *windows = imgui_get_all_windows(&window_count);
+
+    if (windows && window_count > 0) {
+        for (int i = 0; i < window_count; i++) {
+            ImguiObject *win = imgui_object_get(windows[i]);
+            render_window(win);
+        }
     }
 }
 
@@ -713,12 +1097,23 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
             // Render Lua-created windows
             int window_count = 0;
             ImguiHandle *windows = imgui_get_all_windows(&window_count);
+            static int debug_log_counter = 0;
             if (windows && window_count > 0) {
                 for (int i = 0; i < window_count; i++) {
                     ImguiObject *win = imgui_object_get(windows[i]);
+                    if (debug_log_counter % 300 == 0) {  // Log every ~5 seconds
+                        if (win) {
+                            LOG_IMGUI_INFO("Window[%d]: label='%s' visible=%d open=%d type=%d children=%d",
+                                i, win->styled.label, win->styled.visible, win->data.window.open,
+                                win->type, win->child_count);
+                        } else {
+                            LOG_IMGUI_WARN("Window[%d]: NULL (handle=0x%llx)", i, (unsigned long long)windows[i]);
+                        }
+                    }
                     render_window(win);
                 }
             }
+            debug_log_counter++;
 
             // Also show built-in debug window for testing
             ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);

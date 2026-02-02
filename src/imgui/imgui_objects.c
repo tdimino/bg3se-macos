@@ -5,6 +5,7 @@
  */
 
 #include "imgui_objects.h"
+#include "../lua/lua_imgui.h"
 #include "logging.h"
 #include <stdlib.h>
 #include <string.h>
@@ -93,9 +94,11 @@ void imgui_objects_init(void) {
 void imgui_objects_shutdown(void) {
     if (!g_initialized) return;
 
-    // Destroy all active objects
+    // Destroy all active objects, cleaning up Lua refs first
     for (int i = 0; i < MAX_IMGUI_OBJECTS; i++) {
         if (g_pool.objects[i].in_use) {
+            // Clean up Lua references before clearing
+            lua_imgui_cleanup_refs(g_pool.objects[i].handle);
             clear_object(&g_pool.objects[i]);
         }
     }
@@ -433,12 +436,14 @@ static void destroy_object_recursive(ImguiHandle handle) {
         // Copy children array since it will be modified
         int count = obj->child_count;
         ImguiHandle* children = (ImguiHandle*)malloc(sizeof(ImguiHandle) * count);
-        memcpy(children, obj->children, sizeof(ImguiHandle) * count);
+        if (children) {
+            memcpy(children, obj->children, sizeof(ImguiHandle) * count);
 
-        for (int i = 0; i < count; i++) {
-            destroy_object_recursive(children[i]);
+            for (int i = 0; i < count; i++) {
+                destroy_object_recursive(children[i]);
+            }
+            free(children);
         }
-        free(children);
     }
 
     // Unregister window if applicable
@@ -450,6 +455,9 @@ static void destroy_object_recursive(ImguiHandle handle) {
     if (obj->parent != IMGUI_INVALID_HANDLE) {
         imgui_object_remove_child(obj->parent, handle);
     }
+
+    // Clean up Lua references before clearing the object
+    lua_imgui_cleanup_refs(handle);
 
     // Return to free list
     int index = IMGUI_HANDLE_INDEX(handle);
@@ -747,4 +755,12 @@ void imgui_objects_dump_stats(void) {
             LOG_IMGUI_INFO("  %s: %d", g_type_names[t], type_counts[t]);
         }
     }
+}
+
+int imgui_objects_get_window_count(void) {
+    return g_pool.window_count;
+}
+
+int imgui_objects_get_total_count(void) {
+    return g_pool.active_count;
 }

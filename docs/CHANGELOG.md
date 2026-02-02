@@ -13,6 +13,39 @@ Each entry includes:
 
 ---
 
+## [v0.36.21] - 2026-01-30
+
+**Parity:** ~87% | **Category:** ImGui Widget System Complete | **Issues:** #36
+
+### Added
+- **Complete Ext.IMGUI Widget System** - All 40 widget types now implemented with full event support
+  - **Input Widgets:** InputText, Combo, RadioButton with Value/SelectedIndex properties and OnChange callbacks
+  - **Slider Widgets:** SliderFloat, SliderInt, DragFloat, DragInt with Min/Max/Value support
+  - **Color Widgets:** ColorEdit, ColorPicker with RGBA Color property
+  - **Container Widgets:** Group, Tree, Table, TabBar, TabItem, MenuBar, Menu, MenuItem
+  - **Display Widgets:** Text, ProgressBar, Separator, Spacing
+  - **Event System:** OnClick, OnChange, OnActivate, OnDeactivate, OnHoverEnter, OnHoverLeave, OnClose, OnExpand, OnCollapse
+
+### Added (Tooling)
+- **Standalone Test Application** - `tools/imgui_test/` for testing widgets without launching BG3
+  - Metal + Cocoa rendering with full ImGui integration
+  - Lua console for interactive widget testing
+  - Quick test buttons for all widget types
+  - Script loading from `test_scripts/` directory
+
+### Fixed
+- **Memory Leak:** Lua reference cleanup on object destruction via `lua_imgui_cleanup_refs()`
+- **NULL Safety:** All child widget iterations now check for NULL before rendering
+- **Malloc Safety:** Combo widget creation checks for allocation failure
+
+### Technical
+- Added `imgui_objects_get_window_count()`, `imgui_objects_get_total_count()` for statistics
+- Added `imgui_render_all_windows()` public API for standalone rendering
+- Test tool includes stub implementations for metal backend when running standalone
+- ~1,400 lines of new widget rendering code across 14 widget types
+
+---
+
 ## [v0.36.20] - 2025-12-31
 
 **Parity:** ~85% | **Category:** ImGui Widget System | **Issues:** #36

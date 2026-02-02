@@ -234,3 +234,11 @@ add_custom_command(TARGET bg3se POST_BUILD
     COMMAND file ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libbg3se.dylib
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/deploy.sh
 )
+
+# ============================================
+# Optional: ImGui standalone test tool
+# ============================================
+option(BUILD_IMGUI_TEST "Build standalone ImGui test application" ON)
+if(BUILD_IMGUI_TEST)
+    add_subdirectory(tools/imgui_test)
+endif()

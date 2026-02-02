@@ -149,6 +149,10 @@ static inline GenericArray* storage_container_get_entities(void *storageContaine
 #define HASHMAP_KEYS_OFFSET         0x20  // Array<K>
 #define HASHMAP_VALUES_OFFSET       0x30  // Array<V> or StaticArray<V>
 
+// Total size of a HashMap<K,V> structure (for inline storage calculations)
+// Layout: HashKeys(16) + NextIds(16) + Keys(16) + Values(16) = 64 bytes
+#define HASHMAP_STRUCT_SIZE         0x40
+
 // ============================================================================
 // Helper Macros for HashMap Access
 // ============================================================================

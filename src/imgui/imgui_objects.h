@@ -486,6 +486,13 @@ void imgui_object_pop_style(ImguiObject* obj);
 // Debug
 void imgui_objects_dump_stats(void);
 
+// Statistics (for test tools)
+int imgui_objects_get_window_count(void);
+int imgui_objects_get_total_count(void);
+
+// Render all windows (call from render loop)
+void imgui_render_all_windows(void);
+
 #ifdef __cplusplus
 }
 #endif

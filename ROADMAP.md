@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.20
+## Current Status: v0.36.21
 
-**Overall Feature Parity: ~85%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~87%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -48,7 +48,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Input` | ✅ Full | ✅ CGEventTap capture, hotkeys (8 macOS-specific) | **100%** | 9 |
 | `Ext.Net` | ✅ Full | ❌ Not impl | **0%** | 6 |
 | `Ext.UI` | ✅ Full (9) | ❌ Not impl | **0%** | 8 |
-| `Ext.IMGUI` | ✅ Full (7+) | 🔄 Widget system + Metal backend (85%) - Window, Text, Button, Checkbox, Group | **85%** | 8 |
+| `Ext.IMGUI` | ✅ Full (7+) | ✅ Complete widget system (40 types) - All widgets, events, Metal backend | **100%** | 8 |
 | `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
 | `Ext.Audio` | ✅ Full (17) | ❌ Not impl | **0%** | 10 |
 | `Ext.Localization` | ✅ Full (2) | ⚠️ GetLanguage + safe stubs (1/2) | **50%** | 10 |
@@ -1124,9 +1124,9 @@ Ext.UI.GetDragDrop()       -- v22+
 - `Color`, `Vector2`, `Vector3`, `Point`, `Rect`
 
 ### 8.2 IMGUI Debug Overlay
-**Status:** 🔄 In Progress (85%) - **Widget System Complete**
+**Status:** ✅ Complete (v0.36.21) - **All 40 Widget Types**
 
-**Implemented:**
+**Implemented (v0.36.21):**
 - ✅ Dear ImGui library integration
 - ✅ Metal rendering backend (ImGui_ImplMetal)
 - ✅ CAMetalLayer hook for render injection
@@ -1136,19 +1136,21 @@ Ext.UI.GetDragDrop()       -- v22+
 - ✅ **Widget object system** - Handle-based (4096 max), generation counters (v0.36.20)
 - ✅ **Lua bindings** - NewWindow, AddText, AddButton, AddCheckbox, AddSeparator, AddGroup
 - ✅ **Property access** - Metatables with __index/__newindex for Open, Visible, Label, etc.
-- ✅ **Event callbacks** - OnClick, OnChange, OnClose support
+- ✅ **Event callbacks** - OnClick, OnChange, OnClose, OnExpand, OnCollapse support
+- ✅ **Input widgets** - InputText, Combo, RadioButton with Value/SelectedIndex (v0.36.21)
+- ✅ **Slider widgets** - SliderFloat, SliderInt, DragFloat, DragInt (v0.36.21)
+- ✅ **Color widgets** - ColorEdit, ColorPicker with RGBA (v0.36.21)
+- ✅ **Container widgets** - Tree, Table, TabBar, TabItem, MenuBar, Menu, MenuItem (v0.36.21)
+- ✅ **Progress widgets** - ProgressBar with overlay text (v0.36.21)
+- ✅ **Standalone test app** - tools/imgui_test for testing without BG3 (v0.36.21)
 
 **Platform Note:** BG3 macOS uses native Cocoa/AppKit (NOT SDL like Windows).
 Input uses CGEventTap → direct io.MousePos (skips ImGui_ImplOSX_NewFrame which overwrote coords).
 
-**Pending:**
-- InputText, Combo, RadioButton widgets
-- Slider, Drag, ColorEdit, ProgressBar widgets
-- Table rendering with sorting, freeze rows/cols
-- Tree widget with expand/collapse
-- Menu/Tab system
+**Remaining (low priority):**
 - Font loading and scaling
-- Texture binding
+- Texture binding (images)
+- Style enums (GuiStyleVar, GuiColor)
 
 From ReleaseNotes.md v23-27:
 - Window management (SetPos, SetSize, SetCollapsed, etc.)
@@ -1417,7 +1419,7 @@ Full debugging experience with breakpoints, stepping, and variable inspection.
 | ID | Feature | Effort | Status | Issue |
 |----|---------|--------|--------|-------|
 | D1 | Noesis UI (Ext.UI) | High | ❌ Not Started | [#35](https://github.com/tdimino/bg3se-macos/issues/35) |
-| D2 | IMGUI Debug Overlay | High | 🔄 In Progress (85%) - Widget system complete | [#36](https://github.com/tdimino/bg3se-macos/issues/36) |
+| D2 | IMGUI Debug Overlay | High | ✅ Complete (v0.36.21) - All 40 widget types | [#36](https://github.com/tdimino/bg3se-macos/issues/36) |
 | D3 | Physics/Raycasting (Ext.Level) | High | ❌ Not Started | [#37](https://github.com/tdimino/bg3se-macos/issues/37) |
 | D4 | Audio (Ext.Audio) | Medium | ❌ Not Started | [#38](https://github.com/tdimino/bg3se-macos/issues/38) |
 | D5 | Localization (Ext.Localization) | Low | ❌ Not Started | [#39](https://github.com/tdimino/bg3se-macos/issues/39) |
@@ -1441,6 +1443,8 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.21 | 2026-01-30 | **Complete Ext.IMGUI Widget System** - All 40 widget types (InputText, Combo, Slider, ColorEdit, Tree, Table, Tabs, Menu), event callbacks, standalone test app (Issue #36) |
+| v0.36.20 | 2025-12-31 | **ImGui Widget Foundation** - Handle-based objects, Lua userdata, basic widgets (Window, Text, Button, Checkbox) (Issue #36) |
 | v0.36.19 | 2025-12-31 | **ImGui OSX Backend Bypass** - Skip ImGui_ImplOSX_NewFrame (overwrote CGEventTap coords), apply cached mouse pos directly (Issue #36) |
 | v0.36.18 | 2025-12-30 | **ImGui Mouse Input Fix** - Fixed Cocoa coordinate conversion, 4-step CG→Screen→Window→View, works fullscreen/windowed (Issue #36) |
 | v0.36.17 | 2025-12-28 | **IDE Types** - GenerateIdeHelpers for VS Code IntelliSense, GetComponentLayout, GetAllLayouts (Issue #7) |
@@ -1543,7 +1547,7 @@ See `agent_docs/acceleration.md` for detailed methodology |
 **Client Features (45-70% acceleration, 2-4 weeks):**
 | Issue | Feature | Acceleration | Key Technique |
 |-------|---------|--------------|---------------|
-| **#36 IMGUI** | Debug Overlay | **70%** | Metal backend done, CGEventTap input (Cocoa, not SDL) |
+| ~~#36~~ | IMGUI | ✅ DONE (v0.36.21) |
 | **#42 Debugger** | VS Code DAP | **60%** | DAP reference implementations |
 | **#38 Audio** | WWise Audio | **45%** | WWise SDK documented |
 | ~~#7 IDE Types~~ | LuaLS Annotations | ✅ **DONE** | GenerateIdeHelpers API |
@@ -1618,7 +1622,7 @@ FeatManager::GetFeats prologue @ 0x101b752b4:
 
 | Order | Issue | Acceleration | Why This Order |
 |-------|-------|--------------|----------------|
-| 9 | **#36 Ext.IMGUI** | 80% | Metal backend + input complete |
+| 9 | ~~#36 Ext.IMGUI~~ | ✅ Complete | All 40 widget types (v0.36.21) |
 | 10 | **#38 Ext.Audio** | 45% | WWise documented |
 | 11 | **#42 Debugger** | 60% | DAP reference exists |
 | 12 | ~~#7 IDE Types~~ | ✅ Complete | GenerateIdeHelpers API |
@@ -1642,7 +1646,7 @@ FeatManager::GetFeats prologue @ 0x101b752b4:
 6. ✅ **#51 Ext.Events** - 32 engine events with priority/once/prevent patterns
 7. ✅ **#53 Stats Functors** - ExecuteFunctor/AfterExecuteFunctor for damage/heal hooks
 
-All Phase 1-2 complete. Next: Component expansion (#52), Client features (#36 IMGUI, #42 Debugger).
+All Phase 1-2 complete. #36 IMGUI complete (v0.36.21). Next: Component expansion (#52), Debugger (#42).
 
 ### Patterns from Windows BG3SE
 

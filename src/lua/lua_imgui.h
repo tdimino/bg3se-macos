@@ -43,4 +43,12 @@ lua_State *lua_imgui_get_lua_state(void);
  */
 void lua_imgui_fire_event(ImguiHandle handle, ImguiEventType event, ...);
 
+/**
+ * Clean up Lua references for an IMGUI object before destruction.
+ * Must be called before imgui_object_destroy() to prevent memory leaks.
+ *
+ * @param handle Object handle to clean up
+ */
+void lua_imgui_cleanup_refs(ImguiHandle handle);
+
 #endif /* LUA_IMGUI_H */

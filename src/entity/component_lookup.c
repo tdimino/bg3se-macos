@@ -519,21 +519,22 @@ static int get_oneframe_entities(void *storageData, uint16_t componentTypeIndex,
     LOG_ENTITY_DEBUG("  OneFrame: found at outerIdx=%d", outerIdx);
 
     // Get the inner HashMap (EntityHandle → void*) from Values array
+    // CRITICAL: Values are INLINE HashMap structures, not pointers!
+    // Each inner HashMap is HASHMAP_STRUCT_SIZE (0x40) bytes
     GenericArray *outerValues = GET_VALUES(oneFrameMap);
     if (!outerValues->buf || (uint32_t)outerIdx >= outerValues->size) {
         LOG_ENTITY_DEBUG("  OneFrame: outerValues invalid or outerIdx out of bounds");
         return 0;
     }
 
-    // Values array contains pointers to inner HashMaps
-    void **valuePtrArray = (void **)outerValues->buf;
-    void *innerMap = valuePtrArray[outerIdx];
-    if (!innerMap) {
-        LOG_ENTITY_DEBUG("  OneFrame: innerMap is NULL");
-        return 0;
-    }
+    // Values are inline HashMap<EntityHandle, void*> structures (64 bytes each)
+    // Access by byte offset, not pointer array indexing
+    char *valuesBuf = (char *)outerValues->buf;
+    void *innerMap = valuesBuf + (outerIdx * HASHMAP_STRUCT_SIZE);
 
-    LOG_ENTITY_DEBUG("  OneFrame: innerMap=%p", innerMap);
+    LOG_ENTITY_DEBUG("  OneFrame: outerValues.buf=%p, size=%u, idx=%d, innerMap=%p (offset 0x%x)",
+                     outerValues->buf, outerValues->size, outerIdx, innerMap,
+                     outerIdx * HASHMAP_STRUCT_SIZE);
 
     // Inner HashMap has EntityHandle keys at +0x20
     // We collect all EntityHandles from the keys array (they all have this component)
@@ -648,27 +649,27 @@ static int count_oneframe_entities(void *storageData, uint16_t componentTypeInde
     }
 
     void *oneFrameMap = (char *)storageData + STORAGE_DATA_ONEFRAME_COMPONENTS;
-    GenericArray *keys = (GenericArray *)((char *)oneFrameMap + 0x20);
-    if (!keys->buf || keys->size == 0) {
+
+    // Use proper bucket-based HashMap lookup (same as get_oneframe_entities)
+    uint16_t searchKey = componentTypeIndex & 0x7FFF;
+    int outerIdx = hashmap_find_index_u16(oneFrameMap, searchKey);
+    if (outerIdx < 0) {
         return 0;
     }
 
-    uint16_t searchKey = componentTypeIndex & 0x7FFF;
-    uint16_t *keyArray = (uint16_t *)keys->buf;
-    void **valueArray = *(void ***)((char *)oneFrameMap + 0x30);
+    // CRITICAL: Values are INLINE HashMap structures, not pointers!
+    GenericArray *outerValues = GET_VALUES(oneFrameMap);
+    if (!outerValues->buf || (uint32_t)outerIdx >= outerValues->size) {
+        return 0;
+    }
 
-    if (!valueArray) return 0;
+    // Access inline HashMap by byte offset
+    char *valuesBuf = (char *)outerValues->buf;
+    void *innerMap = valuesBuf + (outerIdx * HASHMAP_STRUCT_SIZE);
 
-    for (uint32_t i = 0; i < keys->size; i++) {
-        if ((keyArray[i] & 0x7FFF) == searchKey) {
-            void *innerMap = valueArray[i];
-            if (!innerMap) continue;
-
-            GenericArray *entityKeys = (GenericArray *)((char *)innerMap + 0x20);
-            if (entityKeys->buf && entityKeys->size > 0) {
-                return (int)entityKeys->size;
-            }
-        }
+    GenericArray *entityKeys = GET_KEYS(innerMap);
+    if (entityKeys->buf && entityKeys->size > 0) {
+        return (int)entityKeys->size;
     }
 
     return 0;

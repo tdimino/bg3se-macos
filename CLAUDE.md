@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.36.20 | **Parity:** ~85% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.36.21 | **Parity:** ~87% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -63,7 +63,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 - **Ext.Template** - Game object templates (14 functions, 10 properties, type detection via VMT)
 - **Ext.Types** - Full reflection API (9 functions): GetAllTypes (~2050), GetTypeInfo, GetObjectType, TypeOf, IsA, Validate, GetComponentLayout, GetAllLayouts, **GenerateIdeHelpers** (VS Code IntelliSense)
 - **Ext.Debug** - Memory introspection (ReadPtr, ProbeStruct, HexDump)
-- **Ext.IMGUI** - Widget system (NewWindow, AddText, AddButton, AddCheckbox, AddSeparator, AddGroup), handle-based objects, property access, event callbacks
+- **Ext.IMGUI** - **Complete widget system** (40 widget types): NewWindow, AddText, AddButton, AddCheckbox, AddInputText, AddCombo, AddSlider, AddColorEdit, AddProgressBar, AddTree, AddTable, AddTabBar, AddMenu, handle-based objects, event callbacks (OnClick, OnChange, OnClose, OnExpand, OnCollapse)
 
 ## Conventions
 
