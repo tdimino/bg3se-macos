@@ -24,7 +24,7 @@ void ExecuteStatsFunctor(StatsFunctorBase* functor, uint64_t functorId, AttackTa
 
 ### Context-Specific Handlers
 
-All context handlers share this signature pattern:
+**Standard handlers** (8 types) share this 3-parameter signature:
 ```c
 void ExecuteStatsFunctors(functor* self, StatsFunctorList* functors, <ContextType>* context);
 ```
@@ -40,7 +40,19 @@ void ExecuteStatsFunctors(functor* self, StatsFunctorList* functors, <ContextTyp
 | NearbyAttackingContextData | `0x10578fba8` | `0x105790903` | 3419 bytes |
 | EquipContextData | `0x105790a28` | `0x10579279f` | 7543 bytes |
 | SourceContextData | `0x105792a90` | `0x1057961c7` | 14135 bytes |
+
+**Interrupt handler** has a unique 4-parameter signature (Issue #60 fix):
+```c
+void ExecuteInterruptFunctors(HitResult* hit, ecs::EntityWorld* world,
+                              StatsFunctorList* functors, InterruptContextData* context);
+```
+
+| Context Type | Address | Body End | Size |
+|-------------|---------|----------|------|
 | InterruptContextData | `0x1057965e4` | `0x10579be47` | 22627 bytes |
+
+> **Note:** The Interrupt handler takes `HitResult*` as the first parameter, unlike all other handlers.
+> This is required for combat reactions (Attack of Opportunity, Counterspell, etc.).
 
 ### Damage Processing
 

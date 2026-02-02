@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.21
+## Current Status: v0.36.22
 
 **Overall Feature Parity: ~87%** (based on comprehensive API function count analysis)
 
@@ -1443,6 +1443,7 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.22 | 2026-02-02 | **Critical Bug Fix: Reaction Crash** - Fixed game crash on in-combat reactions (AoO, Counterspell, etc.). Root cause: Interrupt functor hook had wrong 3-param signature instead of 4-param with HitResult* first (Issue #60) |
 | v0.36.21 | 2026-01-30 | **Complete Ext.IMGUI Widget System** - All 40 widget types (InputText, Combo, Slider, ColorEdit, Tree, Table, Tabs, Menu), event callbacks, standalone test app (Issue #36) |
 | v0.36.20 | 2025-12-31 | **ImGui Widget Foundation** - Handle-based objects, Lua userdata, basic widgets (Window, Text, Button, Checkbox) (Issue #36) |
 | v0.36.19 | 2025-12-31 | **ImGui OSX Backend Bypass** - Skip ImGui_ImplOSX_NewFrame (overwrote CGEventTap coords), apply cached mouse pos directly (Issue #36) |

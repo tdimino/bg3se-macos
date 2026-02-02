@@ -13,6 +13,23 @@ Each entry includes:
 
 ---
 
+## [v0.36.22] - 2026-02-02
+
+**Parity:** ~87% | **Category:** Bug Fix | **Issues:** #60
+
+### Fixed
+- **Critical: In-Combat Reaction Crash** - Fixed crash when using combat reactions (Attack of Opportunity, Counterspell, Shield, etc.)
+  - **Root cause:** `ExecuteInterruptFunctorsProc` had incorrect 3-parameter signature instead of 4-parameter
+  - **Fix:** Added missing `HitResult*` as first parameter to match Windows BG3SE
+  - Verified against Windows BG3SE source (`FunctorEvents.inl`)
+
+### Technical
+- `functor_types.h`: Updated `ExecuteInterruptFunctorsProc` typedef to 4 parameters
+- `functor_hooks.c`: Updated `hook_ExecuteFunctors_Interrupt` to forward all 4 parameters
+- Interrupt handler signature: `(HitResult*, void* entityWorld, StatsFunctorList*, InterruptContextData*)`
+
+---
+
 ## [v0.36.21] - 2026-01-30
 
 **Parity:** ~87% | **Category:** ImGui Widget System Complete | **Issues:** #36

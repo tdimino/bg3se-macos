@@ -140,10 +140,11 @@ static void hook_ExecuteFunctors_Source(void* self, StatsFunctorList* functors, 
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_SOURCE);
 }
 
-static void hook_ExecuteFunctors_Interrupt(void* entityWorld, StatsFunctorList* functors, InterruptContextData* ctx) {
+static void hook_ExecuteFunctors_Interrupt(HitResult* hit, void* entityWorld, StatsFunctorList* functors, InterruptContextData* ctx) {
+    // Note: Interrupt handler has 4 parameters (HitResult first) unlike other handlers
     fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_INTERRUPT);
     if (g_OrigInterrupt) {
-        g_OrigInterrupt(entityWorld, functors, ctx);
+        g_OrigInterrupt(hit, entityWorld, functors, ctx);
     }
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_INTERRUPT);
 }

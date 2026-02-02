@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.36.21 | **Parity:** ~87% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.36.22 | **Parity:** ~87% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -33,15 +33,39 @@ date && tail -f "/Users/tomdimino/Library/Application Support/BG3SE/bg3se.log"
 
 ## Semantic Search
 
-**PREFER osgrep** over grep/Grep. Use `osgrep-reference` skill for CLI reference.
+**PREFER RLAMA over OSGrep** for semantic code search. RLAMA provides locally-indexed RAG with superior context retrieval for large C/C++ codebases.
 
-**Indexed repos:**
-- `/Users/tomdimino/Desktop/Programming/bg3se-macos` - This project (macOS port)
-- `/Users/tomdimino/Desktop/Programming/bg3se` - Windows BG3SE reference (Norbyte's original)
+### RLAMA Buckets (Recommended)
+
+| Bucket | Description | Documents |
+|--------|-------------|-----------|
+| `bg3se-macos` | This project (macOS port) | 389 |
+| `bg3se-windows` | Norbyte's Windows BG3SE (reference) | 294 |
 
 ```bash
-cd /Users/tomdimino/Desktop/Programming/bg3se-macos && osgrep "query"  # This project
-cd /Users/tomdimino/Desktop/Programming/bg3se && osgrep "query"        # Windows reference
+# Semantic queries - how/why questions, architectural understanding
+rlama run bg3se-macos --query "how is the Metal ImGui backend implemented?"
+rlama run bg3se-windows --query "how does entity component lookup work?"
+
+# Compare implementations
+rlama run bg3se-windows --query "how does the Lua state manager work?"
+rlama run bg3se-macos --query "how does the Lua state manager work?"
+```
+
+### OSGrep (Fallback)
+
+Use OSGrep for exact symbol/string search and grep-style pattern matching:
+
+```bash
+cd /Users/tomdimino/Desktop/Programming/game-modding/bg3/bg3se-macos && osgrep "exact_function_name"
+cd /Users/tomdimino/Desktop/Programming/game-modding/bg3/bg3se && osgrep "exact_function_name"
+```
+
+### Refreshing RLAMA Indexes
+
+If codebase changes significantly:
+```bash
+rlama add-docs bg3se-macos /Users/tomdimino/Desktop/Programming/game-modding/bg3/bg3se-macos
 ```
 
 Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.

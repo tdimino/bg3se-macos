@@ -398,11 +398,14 @@ typedef void (*ExecuteFunctorsProc)(
     void*              context      // Context-specific type
 );
 
-// Interrupt handler has different signature (takes EntityWorld)
+// Interrupt handler has different signature (4 parameters, HitResult first)
+// Windows BG3SE: void ExecuteInterruptFunctorProc(HitResult* hit, ecs::EntityWorld* world,
+//                                                  Functors* self, InterruptContextData* params);
 typedef void (*ExecuteInterruptFunctorsProc)(
-    void*                  entityWorld,
-    StatsFunctorList*      functors,
-    InterruptContextData*  context
+    HitResult*             hit,          // Hit result being processed
+    void*                  entityWorld,  // ecs::EntityWorld*
+    StatsFunctorList*      functors,     // Functors object
+    InterruptContextData*  context       // Context with source/target/observer
 );
 
 // Main dispatcher signature
