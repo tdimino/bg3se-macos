@@ -43,12 +43,14 @@ uint64_t callback_registry_register(lua_State *L);
 /**
  * Retrieve and remove a callback by request ID.
  * Pushes the callback function onto the Lua stack.
+ * IMPORTANT: If a state mismatch occurs, uses the owner state and returns it via out_L.
  *
- * @param L Lua state
+ * @param L Lua state (may differ from owner)
  * @param request_id The request ID
+ * @param out_L [out] If not NULL, receives the actual Lua state used (owner_L)
  * @return true if callback found and pushed, false otherwise
  */
-bool callback_registry_retrieve(lua_State *L, uint64_t request_id);
+bool callback_registry_retrieve(lua_State *L, uint64_t request_id, lua_State **out_L);
 
 /**
  * Check if a callback exists for a request ID.
@@ -84,5 +86,28 @@ int callback_registry_cleanup_expired(lua_State *L, uint64_t timeout_ms);
  * @return Number of active callbacks
  */
 int callback_registry_count(void);
+
+/**
+ * Clean up all callbacks registered by a specific Lua state.
+ * MUST be called before destroying a Lua state to prevent dangling pointers.
+ *
+ * @param L Lua state being destroyed
+ * @return Number of callbacks cleaned up
+ */
+int callback_registry_cleanup_for_state(lua_State *L);
+
+/**
+ * Invoke a callback with reply payload data.
+ * Retrieves the callback, parses the JSON payload, and calls the function.
+ * This is a one-shot operation - the callback is removed after invocation.
+ *
+ * @param L Lua state
+ * @param request_id The request ID to invoke callback for
+ * @param payload JSON payload string (will be parsed into Lua table)
+ * @param user_id Optional user ID to pass to callback (0 if none)
+ * @return true if callback was found and invoked successfully
+ */
+bool callback_registry_invoke(lua_State *L, uint64_t request_id,
+                             const char *payload, int32_t user_id);
 
 #endif /* CALLBACK_REGISTRY_H */

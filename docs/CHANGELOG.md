@@ -13,6 +13,46 @@ Each entry includes:
 
 ---
 
+## [v0.36.24] - 2026-02-04
+
+**Parity:** ~88% | **Category:** Network API | **Issues:** #6
+
+### Added
+- **NetChannel API Phase 2 Complete** - Request/reply callbacks now working!
+  - `channel:SetRequestHandler(fn)` - Register handler that returns response data
+  - `channel:RequestToServer(data, callback)` - Send request with reply callback
+  - `channel:RequestToClient(data, user, callback)` - Server to client with callback
+  - Callbacks are one-shot (automatically cleaned up after invocation)
+  - 30-second timeout cleanup for stale callbacks
+
+### Fixed
+- **Critical: Lua state mismatch in callback invocation** - Three-agent review identified bug where `callback_registry_retrieve()` switched to `owner_L` internally but didn't return it to caller
+  - Added `out_L` parameter to return actual Lua state used
+  - `callback_registry_invoke()` now uses the correct state for stack operations
+  - Prevents stack corruption when owner_L != L
+
+- **JSON double-parsing error** - Callbacks received "bad argument #1 to 'Parse' (string expected, got table)"
+  - Root cause: C code parsed JSON into table, but Lua wrapper tried to parse again
+  - Fix: Pass raw JSON string to callbacks (matches Windows BG3SE behavior)
+
+### Technical
+- `callback_registry_retrieve(L, request_id, &out_L)` - Returns actual owner state via out parameter
+- `callback_registry_invoke(L, request_id, payload, user_id)` - Full callback invocation with state safety
+- `callback_registry_cleanup_for_state(L)` - Clean up callbacks when Lua state is destroyed
+- Added owner tracking (`owner_L`) in CallbackEntry for cross-state safety
+- Callbacks receive: `(payload_string, binary_flag)` - consistent with Windows BG3SE
+
+### Verified
+```
+=== PHASE 2 FINAL TEST ===
+Request sent, waiting for callback...
+Server received: {"message":"Hello Phase 2!"}
+*** CALLBACK SUCCESS! ***
+Response: {"status":"ok","echo":"Hello Phase 2!"}
+```
+
+---
+
 ## [v0.36.23] - 2026-02-03
 
 **Parity:** ~88% | **Category:** Network API | **Issues:** #6

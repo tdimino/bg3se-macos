@@ -57,22 +57,44 @@ static int64_t get_opt_int(lua_State *L, int idx, int64_t default_val) {
  *
  * Send a message from client to server.
  * In local mode, queues for immediate delivery on next tick.
+ *
+ * handler can be:
+ * - nil: fire-and-forget message
+ * - function: callback for request/reply pattern (callback stored, request_id assigned)
+ * - string: handler name for routing (legacy, currently ignored)
  */
 static int lua_net_post_to_server(lua_State *L) {
     const char *channel = luaL_checkstring(L, 1);
     const char *payload = get_opt_string(L, 2, "{}");
     const char *module = get_opt_string(L, 3, "");
-    const char *handler = get_opt_string(L, 4, "");
+    // handler at position 4 - can be function, string, or nil
     int64_t reply_id = get_opt_int(L, 5, 0);
     bool binary = get_opt_bool(L, 6, false);
 
-    (void)handler;  // Handler name stored for routing
     (void)binary;   // Binary flag for future use
 
-    NetMessage msg = message_create_to_server(channel, module, payload, 0);
+    uint64_t request_id = 0;
+
+    // Check if handler is a function (request/reply pattern)
+    if (lua_isfunction(L, 4)) {
+        // Push the function to top of stack for callback_registry_register
+        lua_pushvalue(L, 4);
+        request_id = callback_registry_register(L);
+        if (request_id == 0) {
+            return luaL_error(L, "Failed to register callback");
+        }
+        LOG_NET_DEBUG("Registered callback for request: request_id=%llu",
+                     (unsigned long long)request_id);
+    }
+
+    NetMessage msg = message_create_to_server(channel, module, payload, request_id);
     msg.reply_to_id = (uint64_t)reply_id;
 
     if (!message_bus_queue(&msg)) {
+        // If we registered a callback but queue failed, cancel it
+        if (request_id != 0) {
+            callback_registry_cancel(L, request_id);
+        }
         message_free(&msg);
         return luaL_error(L, "Failed to queue message");
     }
@@ -91,17 +113,30 @@ static int lua_net_post_to_user(lua_State *L) {
     const char *channel = luaL_checkstring(L, 2);
     const char *payload = get_opt_string(L, 3, "{}");
     const char *module = get_opt_string(L, 4, "");
-    const char *handler = get_opt_string(L, 5, "");
+    // handler at position 5 - can be function, string, or nil
     int64_t reply_id = get_opt_int(L, 6, 0);
     bool binary = get_opt_bool(L, 7, false);
 
-    (void)handler;
     (void)binary;
 
-    NetMessage msg = message_create_to_user(user_id, channel, module, payload, 0);
+    uint64_t request_id = 0;
+
+    // Check if handler is a function (request/reply pattern)
+    if (lua_isfunction(L, 5)) {
+        lua_pushvalue(L, 5);
+        request_id = callback_registry_register(L);
+        if (request_id == 0) {
+            return luaL_error(L, "Failed to register callback");
+        }
+    }
+
+    NetMessage msg = message_create_to_user(user_id, channel, module, payload, request_id);
     msg.reply_to_id = (uint64_t)reply_id;
 
     if (!message_bus_queue(&msg)) {
+        if (request_id != 0) {
+            callback_registry_cancel(L, request_id);
+        }
         message_free(&msg);
         return luaL_error(L, "Failed to queue message");
     }
@@ -120,17 +155,30 @@ static int lua_net_post_to_client(lua_State *L) {
     const char *channel = luaL_checkstring(L, 2);
     const char *payload = get_opt_string(L, 3, "{}");
     const char *module = get_opt_string(L, 4, "");
-    const char *handler = get_opt_string(L, 5, "");
+    // handler at position 5 - can be function, string, or nil
     int64_t reply_id = get_opt_int(L, 6, 0);
     bool binary = get_opt_bool(L, 7, false);
 
-    (void)handler;
     (void)binary;
 
-    NetMessage msg = message_create_to_client(guid, channel, module, payload, 0);
+    uint64_t request_id = 0;
+
+    // Check if handler is a function (request/reply pattern)
+    if (lua_isfunction(L, 5)) {
+        lua_pushvalue(L, 5);
+        request_id = callback_registry_register(L);
+        if (request_id == 0) {
+            return luaL_error(L, "Failed to register callback");
+        }
+    }
+
+    NetMessage msg = message_create_to_client(guid, channel, module, payload, request_id);
     msg.reply_to_id = (uint64_t)reply_id;
 
     if (!message_bus_queue(&msg)) {
+        if (request_id != 0) {
+            callback_registry_cancel(L, request_id);
+        }
         message_free(&msg);
         return luaL_error(L, "Failed to queue message");
     }
@@ -143,23 +191,38 @@ static int lua_net_post_to_client(lua_State *L) {
  * Ext.Net.BroadcastMessage(channel, payload, excludeCharacterGuid, module, handler, replyId, binary)
  *
  * Broadcast a message from server to all connected clients.
+ * Note: Broadcasts typically don't use request/reply pattern, but we support it for consistency.
  */
 static int lua_net_broadcast(lua_State *L) {
     const char *channel = luaL_checkstring(L, 1);
     const char *payload = get_opt_string(L, 2, "{}");
     const char *exclude = get_opt_string(L, 3, NULL);
     const char *module = get_opt_string(L, 4, "");
-    const char *handler = get_opt_string(L, 5, "");
+    // handler at position 5 - can be function, string, or nil
     int64_t reply_id = get_opt_int(L, 6, 0);
     bool binary = get_opt_bool(L, 7, false);
 
-    (void)handler;
     (void)binary;
 
-    NetMessage msg = message_create_broadcast(channel, module, payload, exclude, 0);
+    uint64_t request_id = 0;
+
+    // Check if handler is a function (request/reply pattern)
+    // Note: Broadcast request/reply is unusual but supported
+    if (lua_isfunction(L, 5)) {
+        lua_pushvalue(L, 5);
+        request_id = callback_registry_register(L);
+        if (request_id == 0) {
+            return luaL_error(L, "Failed to register callback");
+        }
+    }
+
+    NetMessage msg = message_create_broadcast(channel, module, payload, exclude, request_id);
     msg.reply_to_id = (uint64_t)reply_id;
 
     if (!message_bus_queue(&msg)) {
+        if (request_id != 0) {
+            callback_registry_cancel(L, request_id);
+        }
         message_free(&msg);
         return luaL_error(L, "Failed to queue message");
     }

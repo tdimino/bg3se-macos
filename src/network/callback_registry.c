@@ -9,6 +9,7 @@
 
 #include "callback_registry.h"
 #include "../core/logging.h"
+#include "../lua/lua_json.h"
 #include <lauxlib.h>
 #include <string.h>
 #include <time.h>
@@ -94,22 +95,26 @@ uint64_t callback_registry_register(lua_State *L) {
     return request_id;
 }
 
-bool callback_registry_retrieve(lua_State *L, uint64_t request_id) {
+bool callback_registry_retrieve(lua_State *L, uint64_t request_id, lua_State **out_L) {
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
         if (g_callbacks[i].active && g_callbacks[i].request_id == request_id) {
-            // Verify we're using the correct Lua state
-            if (g_callbacks[i].owner_L != L) {
-                LOG_NET_WARN("Callback retrieve: state mismatch (registered=%p, requesting=%p)",
-                            (void*)g_callbacks[i].owner_L, (void*)L);
-                // Use the owner state for the operation
-                L = g_callbacks[i].owner_L;
+            // Use the owner state - this is critical for correct stack operations
+            lua_State *actual_L = g_callbacks[i].owner_L;
+            if (actual_L != L) {
+                LOG_NET_WARN("Callback retrieve: state mismatch (registered=%p, requesting=%p), using owner",
+                            (void*)actual_L, (void*)L);
             }
 
-            // Push callback function onto stack
-            lua_rawgeti(L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+            // Return the actual state to caller so they use the correct one
+            if (out_L) {
+                *out_L = actual_L;
+            }
+
+            // Push callback function onto the owner's stack
+            lua_rawgeti(actual_L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
 
             // Release the reference (one-shot callback)
-            luaL_unref(L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+            luaL_unref(actual_L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
 
             // Clear slot
             g_callbacks[i].active = false;
@@ -117,8 +122,8 @@ bool callback_registry_retrieve(lua_State *L, uint64_t request_id) {
             g_callbacks[i].lua_ref = LUA_NOREF;
             g_callbacks[i].owner_L = NULL;
 
-            LOG_NET_DEBUG("Retrieved callback: request_id=%llu",
-                        (unsigned long long)request_id);
+            LOG_NET_DEBUG("Retrieved callback: request_id=%llu (actual_L=%p)",
+                        (unsigned long long)request_id, (void*)actual_L);
 
             return true;
         }
@@ -208,4 +213,91 @@ int callback_registry_count(void) {
         }
     }
     return count;
+}
+
+int callback_registry_cleanup_for_state(lua_State *L) {
+    if (!L) return 0;
+
+    int cleaned = 0;
+    for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
+        if (g_callbacks[i].active && g_callbacks[i].owner_L == L) {
+            // Release the Lua reference
+            luaL_unref(L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+
+            LOG_NET_DEBUG("Cleaning up callback for destroyed state: request_id=%llu",
+                         (unsigned long long)g_callbacks[i].request_id);
+
+            // Clear slot
+            g_callbacks[i].active = false;
+            g_callbacks[i].request_id = 0;
+            g_callbacks[i].lua_ref = LUA_NOREF;
+            g_callbacks[i].owner_L = NULL;
+
+            cleaned++;
+        }
+    }
+
+    if (cleaned > 0) {
+        LOG_NET_INFO("Cleaned up %d callbacks for destroyed Lua state %p", cleaned, (void*)L);
+    }
+
+    return cleaned;
+}
+
+bool callback_registry_invoke(lua_State *L, uint64_t request_id,
+                             const char *payload, int32_t user_id) {
+    if (!L || request_id == 0) {
+        return false;
+    }
+
+    // Retrieve pushes the callback function onto stack and returns the actual state used
+    lua_State *actual_L = L;
+    if (!callback_registry_retrieve(L, request_id, &actual_L)) {
+        LOG_NET_DEBUG("No callback found for request_id=%llu",
+                     (unsigned long long)request_id);
+        return false;
+    }
+
+    // CRITICAL: Use actual_L for all subsequent operations
+    // The callback function is now on actual_L's stack
+    L = actual_L;
+
+    // Record stack top for cleanup on error
+    int stack_top = lua_gettop(L);  // Should be N+1 where N was previous top
+
+    // Stack: [callback_function]
+
+    // Push the raw payload string (Lua wrapper handles JSON parsing)
+    // This matches Windows BG3SE behavior where callbacks receive raw payloads
+    int nargs = 0;
+    if (payload && payload[0] != '\0') {
+        lua_pushstring(L, payload);
+        nargs = 1;
+    } else {
+        // No payload - push empty string
+        lua_pushstring(L, "{}");
+        nargs = 1;
+    }
+
+    // Stack: [callback_function, payload_string]
+
+    // Push binary flag as second argument (false for JSON payloads)
+    lua_pushboolean(L, 0);  // binary = false
+    nargs = 2;
+
+    // Call the callback
+    int result = lua_pcall(L, nargs, 0, 0);
+    if (result != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        LOG_NET_ERROR("Callback invocation failed for request_id=%llu: %s",
+                     (unsigned long long)request_id,
+                     err ? err : "unknown error");
+        lua_pop(L, 1);  // Pop error message
+        return false;
+    }
+
+    LOG_NET_DEBUG("Invoked callback for request_id=%llu successfully",
+                 (unsigned long long)request_id);
+
+    return true;
 }

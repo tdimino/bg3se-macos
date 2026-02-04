@@ -8,6 +8,7 @@
  */
 
 #include "message_bus.h"
+#include "callback_registry.h"
 #include "../core/logging.h"
 #include "../lua/lua_events.h"
 #include <lauxlib.h>
@@ -150,7 +151,43 @@ int message_bus_process(lua_State *server_L, lua_State *client_L) {
             continue;
         }
 
-        // Route message based on destination
+        // Check if this is a reply to a pending request
+        // If so, invoke the callback instead of firing an event
+        if (msg->reply_to_id != 0) {
+            // Determine which Lua state should receive the callback
+            // Replies go to the opposite context from where they were sent
+            lua_State *callback_L = NULL;
+            switch (msg->dest_type) {
+                case MSG_DEST_SERVER:
+                    // Reply going to server - callback was registered by server
+                    callback_L = server_L;
+                    break;
+                case MSG_DEST_USER:
+                case MSG_DEST_CLIENT:
+                case MSG_DEST_BROADCAST:
+                    // Reply going to client - callback was registered by client
+                    callback_L = client_L;
+                    break;
+            }
+
+            if (callback_L) {
+                LOG_NET_DEBUG("Invoking callback for reply_to_id=%llu",
+                             (unsigned long long)msg->reply_to_id);
+
+                if (callback_registry_invoke(callback_L, msg->reply_to_id,
+                                            msg->payload, msg->user_id)) {
+                    // Callback invoked successfully, skip event firing
+                    LOG_NET_DEBUG("Callback invoked for reply_to_id=%llu",
+                                 (unsigned long long)msg->reply_to_id);
+                    goto cleanup;
+                }
+                // Callback not found - fall through to normal event handling
+                LOG_NET_DEBUG("No callback found for reply_to_id=%llu, firing event",
+                             (unsigned long long)msg->reply_to_id);
+            }
+        }
+
+        // Route message based on destination (normal event handling)
         switch (msg->dest_type) {
             case MSG_DEST_SERVER:
                 // Client -> Server: deliver to server context
@@ -173,6 +210,7 @@ int message_bus_process(lua_State *server_L, lua_State *client_L) {
                 break;
         }
 
+cleanup:
         // Free payload and mark inactive
         if (msg->payload) {
             free(msg->payload);

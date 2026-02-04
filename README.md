@@ -100,7 +100,7 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 
 ## Status
 
-**Version:** v0.36.23 | **Feature Parity:** ~88%
+**Version:** v0.36.24 | **Feature Parity:** ~88%
 
 | Feature | Status |
 |---------|--------|
@@ -121,8 +121,8 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Ext.StaticData | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription) via ForceCapture |
 | Ext.Resource | ✅ Get, GetAll, GetTypes, GetCount (34 resource types) |
 | Ext.Template | ✅ **Auto-capture**, iteration (Cache/LocalCache), GUID resolution |
-| Ext.Net | ✅ **Phase 1 Complete** - PostMessageToServer/User/Client, BroadcastMessage, Version, IsHost |
-| Net.CreateChannel | ✅ **Phase 1 Complete** - High-level channel API with SetHandler, SendToServer, Broadcast |
+| Ext.Net | ✅ **Phase 2 Complete** - PostMessageToServer/User/Client, BroadcastMessage, Version, IsHost, **Request/Reply Callbacks** |
+| Net.CreateChannel | ✅ **Phase 2 Complete** - High-level channel API with SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, Broadcast |
 | Ext.Mod | ✅ IsModLoaded, GetLoadOrder, GetMod, GetBaseMod |
 | Lifetime Scoping | ✅ Prevents stale object access |
 | Context System | ✅ **Server/Client context awareness**, Ext.IsServer/IsClient/GetContext, two-phase bootstrap |

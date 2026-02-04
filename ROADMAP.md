@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.23
+## Current Status: v0.36.24
 
 **Overall Feature Parity: ~88%** (based on comprehensive API function count analysis)
 
@@ -46,7 +46,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Enums` | ✅ Full | ✅ 14 enum/bitfield types | **100%** | 7 |
 | `Ext.Math` | ✅ Full (59) | ✅ 57 functions (vectors, matrices, 16 quaternions, scalars) | **97%** | 7.5 |
 | `Ext.Input` | ✅ Full | ✅ CGEventTap capture, hotkeys (8 macOS-specific) | **100%** | 9 |
-| `Ext.Net` | ✅ Full | ⚠️ Phase 1 Complete (local messaging, 6 functions) | **60%** | 6 |
+| `Ext.Net` | ✅ Full | ✅ Phase 2 Complete (local messaging + request/reply callbacks) | **80%** | 6 |
 | `Ext.UI` | ✅ Full (9) | ❌ Not impl | **0%** | 8 |
 | `Ext.IMGUI` | ✅ Full (7+) | ✅ Complete widget system (40 types) - All widgets, events, Metal backend | **100%** | 8 |
 | `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
@@ -877,7 +877,7 @@ Ext.Debug.HexDump(addr, size)
 ## Phase 6: Networking & Co-op Sync
 
 ### 6.1 NetChannel API (New - v22+)
-**Status:** ⚠️ Phase 1 Complete (v0.36.23) - Local messaging working, Phase 2/3 planned
+**Status:** ✅ Phase 2 Complete (v0.36.24) - Local messaging + request/reply callbacks working, Phase 3 planned
 
 From API.md: "NetChannel API provides a structured abstraction for request/response and message broadcasting."
 
@@ -912,11 +912,28 @@ Ext.Net.Version()  -- Returns 2 (binary support)
 - [x] `NetModMessage` event firing to handlers
 - [x] `Ext.Mod` namespace (IsModLoaded, GetLoadOrder, GetMod, GetBaseMod)
 
-**Phase 2 TODO (Request/Reply):**
-- [ ] `SetRequestHandler()` for request/reply pattern
-- [ ] `RequestToServer()` with callback
-- [ ] `RequestToClient()` with callback
-- [ ] Callback registry for reply correlation
+**Phase 2 Implementation (Complete - v0.36.24):**
+- [x] `SetRequestHandler()` for request/reply pattern
+- [x] `RequestToServer()` with callback
+- [x] `RequestToClient()` with callback
+- [x] Callback registry with request_id/reply_to_id correlation
+- [x] `callback_registry_invoke()` - retrieves and calls stored callbacks
+- [x] Owner state tracking (`owner_L`) for cross-Lua-state callback safety
+- [x] Timeout cleanup (30 second) via `callback_registry_cleanup_expired()`
+
+**Verified Working (Phase 2):**
+```lua
+-- Request/reply handler (server-side)
+channel:SetRequestHandler(function(data, user)
+    return { status = "ok", echo = data.message }
+end)
+
+-- Request with callback (client-side)
+channel:RequestToServer({message = "Hello!"}, function(response)
+    _P("*** CALLBACK SUCCESS! ***")
+    _P("Response: " .. Ext.Json.Stringify(response))
+end)
+```
 
 **Phase 3 TODO (True Multiplayer):**
 - [ ] Hook `NetMessageFactory` for custom message type
