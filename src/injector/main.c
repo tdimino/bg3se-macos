@@ -1832,6 +1832,119 @@ static void shutdown_lua(void) {
 // Track if mod scripts have been loaded
 static int mod_scripts_loaded = 0;
 
+// ============================================================================
+// Deferred Session Init (Issue #65)
+//
+// Moves ~2,800 mach_vm_read_overwrite kernel calls out of fake_Load and into
+// the tick loop (fake_Event). This prevents the game from bouncing back to
+// LoadSession on some machines (especially macOS Tahoe / M4).
+//
+// State machine:
+//   IDLE → PENDING (requested by fake_Load) → COMPLETE (all init done)
+// ============================================================================
+
+typedef enum {
+    SESSION_INIT_IDLE = 0,
+    SESSION_INIT_PENDING,
+    SESSION_INIT_COMPLETE
+} SessionInitState;
+
+static SessionInitState s_session_init_state = SESSION_INIT_IDLE;
+
+static void request_deferred_session_init(void) {
+    if (s_session_init_state == SESSION_INIT_COMPLETE) {
+        // Already complete — on save reload, allow re-init
+        s_session_init_state = SESSION_INIT_PENDING;
+        LOG_GAME_INFO("Deferred session init re-requested (save reload)");
+        return;
+    }
+    s_session_init_state = SESSION_INIT_PENDING;
+    LOG_GAME_INFO("Deferred session init requested (Issue #65)");
+}
+
+/**
+ * Tick function for deferred session initialization.
+ * Called from fake_Event tick loop. Performs all heavy init work
+ * that was previously in fake_Load:
+ *   - EntityWorld discovery + TypeId discovery (~2,200 kernel calls)
+ *   - Stats system validation (~68 kernel calls)
+ *   - Static data capture (~400-600 kernel calls)
+ *   - Fires: StatsStructureLoaded, StatsLoaded, SessionLoaded, ModuleResume
+ *   - Sets state to Running + requests deferred net init
+ *
+ * Returns true if init was completed this tick.
+ */
+static bool deferred_session_init_tick(void) {
+    if (s_session_init_state != SESSION_INIT_PENDING) return false;
+    if (!L) return false;
+
+    // BG3SE_MINIMAL: skip all subsystem initialization (Issue #65 debugging)
+    // Only Osiris hooks + basic Lua API remain active
+    static int minimal_mode = -1;
+    if (minimal_mode < 0) minimal_mode = (getenv("BG3SE_MINIMAL") != NULL);
+    if (minimal_mode) {
+        log_message("[WARN] BG3SE_MINIMAL=1: ALL subsystem init skipped. "
+                    "Mods will NOT receive SessionLoaded/StatsLoaded events. "
+                    "PersistentVars will NOT be restored. Network hooks disabled.");
+        game_state_on_session_loaded(L);  // Still transition to Running
+        s_session_init_state = SESSION_INIT_COMPLETE;
+        return true;
+    }
+
+    uint64_t t_start = (uint64_t)timer_get_monotonic_ms();
+    LOG_GAME_INFO("Deferred session init starting...");
+
+    // Step 1: Entity world discovery
+    uint64_t t0 = t_start;
+    if (!entity_system_ready()) {
+        LOG_ENTITY_DEBUG("Attempting EntityWorld discovery (deferred)...");
+        if (entity_discover_world()) {
+            LOG_ENTITY_DEBUG("EntityWorld discovered successfully!");
+        } else {
+            LOG_ENTITY_DEBUG("EntityWorld discovery failed - try Ext.Entity.Discover() later");
+        }
+    }
+    uint64_t t1 = (uint64_t)timer_get_monotonic_ms();
+    LOG_GAME_INFO("  entity_discover_world: %llums", (unsigned long long)(t1 - t0));
+
+    // Step 2: TypeId discovery (~2,200 kernel calls)
+    t0 = t1;
+    entity_on_session_loaded();
+    t1 = (uint64_t)timer_get_monotonic_ms();
+    LOG_GAME_INFO("  entity_on_session_loaded: %llums", (unsigned long long)(t1 - t0));
+
+    // Step 3: Stats system validation
+    t0 = t1;
+    stats_manager_on_session_loaded();
+    t1 = (uint64_t)timer_get_monotonic_ms();
+    LOG_GAME_INFO("  stats_manager_on_session_loaded: %llums", (unsigned long long)(t1 - t0));
+
+    // Step 4: Static data capture
+    t0 = t1;
+    staticdata_post_init_capture();
+    t1 = (uint64_t)timer_get_monotonic_ms();
+    LOG_GAME_INFO("  staticdata_post_init_capture: %llums", (unsigned long long)(t1 - t0));
+
+    // Step 5: Fire events + state transition
+    events_fire(L, EVENT_STATS_STRUCTURE_LOADED);
+    events_fire(L, EVENT_STATS_LOADED);
+    persist_restore_all(L);
+    game_state_on_session_loaded(L);  // LoadSession → Running
+    events_fire(L, EVENT_SESSION_LOADED);
+    events_fire(L, EVENT_MODULE_RESUME);
+
+    // Step 6: Now net hooks can proceed (state is Running)
+    net_hooks_request_deferred_init();
+
+    s_session_init_state = SESSION_INIT_COMPLETE;
+
+    uint64_t t_end = (uint64_t)timer_get_monotonic_ms();
+    LOG_GAME_INFO("Deferred session init complete: %llums total",
+                  (unsigned long long)(t_end - t_start));
+
+    return true;
+}
+
 /**
  * Hooked COsiris::InitGame - called when game initializes Osiris
  * Mangled name: _ZN7COsiris8InitGameEv
@@ -1872,8 +1985,10 @@ static void fake_InitGame(void *thisPtr) {
     if (L) {
         luaL_dostring(L, "Ext.Print('Osiris initialized!')");
 
-        // Notify game state tracker that session is loading (every time, including reloads)
-        game_state_on_session_loading(L);
+        // NOTE: Do NOT call game_state_on_session_loading() here.
+        // By the time InitGame fires, fake_Load has already set state to Running.
+        // Resetting to LoadSession here corrupted the state machine and broke
+        // deferred net init (Issue #65).
 
         // Load mod scripts after Osiris is initialized (only once per game launch)
         if (!mod_scripts_loaded) {
@@ -1912,64 +2027,21 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
     if (L && result) {
         luaL_dostring(L, "Ext.Print('Story/save data loaded!')");
 
-        // Try to discover EntityWorld now that the game is fully loaded
-        // This is the best time - EocServer should be initialized
-        if (!entity_system_ready()) {
-            LOG_ENTITY_DEBUG("Attempting EntityWorld discovery after save load...");
-            if (entity_discover_world()) {
-                LOG_ENTITY_DEBUG("EntityWorld discovered successfully!");
-            } else {
-                LOG_ENTITY_DEBUG("EntityWorld discovery failed - try Ext.Entity.Discover() later");
-            }
-        }
-
-        // Request deferred network initialization (Issue #65)
-        // Actual capture moves to tick loop to avoid ~65 mach_vm_read_overwrite
-        // kernel calls during the timing-sensitive save load window.
-        net_hooks_request_deferred_init();
-
         // Load mod scripts after save is loaded (if not already loaded)
         // This handles the case where InitGame wasn't called (loading existing save)
+        // NOTE: Mod loading stays in fake_Load (needs to happen before first tick)
         if (!mod_scripts_loaded) {
             mod_scripts_loaded = 1;
             events_fire(L, EVENT_MODULE_LOAD_STARTED);
             load_mod_scripts(L);
         }
 
-        // Initialize subsystems BEFORE firing Lua events
-        // (so Lua handlers can use Stats, Entity APIs)
-
-        // Retry TypeId discovery now that the game is fully loaded
-        // TypeId globals may not have been initialized at injection time
-        entity_on_session_loaded();
-
-        // Check stats system now that the game is loaded
-        stats_manager_on_session_loaded();
-
-        // Capture static data managers now that game data is loaded
-        // This enables Ext.StaticData.GetAll() without Frida
-        staticdata_post_init_capture();
-
-        // Fire StatsStructureLoaded event (raw stats structures parsed, before StatsLoaded)
-        // Mods can use this to inspect/modify stats before full initialization
-        events_fire(L, EVENT_STATS_STRUCTURE_LOADED);
-
-        // Fire StatsLoaded event (stats system is now ready)
-        events_fire(L, EVENT_STATS_LOADED);
-
-        // Restore persistent variables BEFORE firing SessionLoaded
-        // (so mods can access restored data in their callbacks)
-        persist_restore_all(L);
-
-        // Notify game state tracker that session is loaded (fires GameStateChanged: LoadSession -> Running)
-        game_state_on_session_loaded(L);
-
-        // Fire SessionLoaded event after subsystems are ready
-        events_fire(L, EVENT_SESSION_LOADED);
-
-        // Fire ModuleResume event AFTER SessionLoaded (all systems ready)
-        // This indicates a session resumed from a save file
-        events_fire(L, EVENT_MODULE_RESUME);
+        // Request deferred session init — just sets a flag, zero kernel calls.
+        // All heavy work (entity TypeId discovery, stats, staticdata, events)
+        // is deferred to deferred_session_init_tick() in the tick loop.
+        // This prevents ~2,800 mach_vm_read_overwrite kernel calls from
+        // blocking the timing-sensitive window after COsiris::Load (Issue #65).
+        request_deferred_session_init();
     }
 
     return result;
@@ -2324,10 +2396,17 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
         // Note: In full implementation, client_L would be the client Lua state
         lua_net_process_messages(L, L);  // Both server and client in same process for now
 
+        // Deferred session initialization (Issue #65)
+        // Performs entity/stats/staticdata init + fires SessionLoaded here
+        // instead of during fake_Load. This prevents ~2,800 kernel calls
+        // from blocking the timing-sensitive COsiris::Load window.
+        deferred_session_init_tick();
+
         // Deferred network initialization (Issue #65)
-        // Performs net capture/hook/insert here instead of during fake_Load
+        // Performs net capture/hook/insert here; depends on Running state
+        // which is set by deferred_session_init_tick above.
         if (net_hooks_deferred_tick()) {
-            log_message("INFO", "Net", "Network hooks initialized via deferred tick");
+            LOG_NET_INFO("Network hooks initialized via deferred tick");
         }
     }
 

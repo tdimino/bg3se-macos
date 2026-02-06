@@ -278,3 +278,20 @@ bool functor_hooks_is_active(void) {
 uint64_t functor_hooks_get_event_count(void) {
     return g_EventCount;
 }
+
+void* functor_hooks_get_original_proc(int ctx_type) {
+    if (!g_HooksInstalled) return NULL;
+
+    switch (ctx_type) {
+    case FUNCTOR_CTX_ATTACK_TARGET:    return (void*)g_OrigAttackTarget;
+    case FUNCTOR_CTX_ATTACK_POSITION:  return (void*)g_OrigAttackPosition;
+    case FUNCTOR_CTX_MOVE:             return (void*)g_OrigMove;
+    case FUNCTOR_CTX_TARGET:           return (void*)g_OrigTarget;
+    case FUNCTOR_CTX_NEARBY_ATTACKED:  return (void*)g_OrigNearbyAttacked;
+    case FUNCTOR_CTX_NEARBY_ATTACKING: return (void*)g_OrigNearbyAttacking;
+    case FUNCTOR_CTX_EQUIP:            return (void*)g_OrigEquip;
+    case FUNCTOR_CTX_SOURCE:           return (void*)g_OrigSource;
+    case FUNCTOR_CTX_INTERRUPT:        return (void*)g_OrigInterrupt;
+    default: return NULL;
+    }
+}

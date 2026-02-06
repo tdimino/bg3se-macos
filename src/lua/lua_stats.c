@@ -24,6 +24,10 @@ static int lua_stats_object_get_property(lua_State *L);
 static int lua_stats_object_set_property(lua_State *L);
 static int lua_stats_object_dump(lua_State *L);
 static int lua_stats_object_get_raw_property(lua_State *L);
+static int lua_stats_object_sync(lua_State *L);
+static int lua_stats_object_set_persistence(lua_State *L);
+static int lua_stats_object_copy_from(lua_State *L);
+static int lua_stats_object_set_raw_attribute(lua_State *L);
 
 // ============================================================================
 // StatsObject Userdata
@@ -116,7 +120,50 @@ static int lua_stats_object_index(lua_State *L) {
         return 1;
     }
 
+    if (strcmp(key, "ModId") == 0) {
+        // Returns mod UUID of last modifier. We don't track mod load order,
+        // so return empty string (matches Windows behavior for runtime-created stats).
+        lua_pushstring(L, "");
+        return 1;
+    }
+
+    if (strcmp(key, "OriginalModId") == 0) {
+        // Returns mod UUID of original definer. Same approach.
+        lua_pushstring(L, "");
+        return 1;
+    }
+
+    if (strcmp(key, "ModifierList") == 0) {
+        const char *type = stats_get_type(ud->obj);
+        if (type) {
+            lua_pushstring(L, type);
+        } else {
+            lua_pushnil(L);
+        }
+        return 1;
+    }
+
     // Methods
+    if (strcmp(key, "Sync") == 0) {
+        lua_pushcfunction(L, lua_stats_object_sync);
+        return 1;
+    }
+
+    if (strcmp(key, "SetPersistence") == 0) {
+        lua_pushcfunction(L, lua_stats_object_set_persistence);
+        return 1;
+    }
+
+    if (strcmp(key, "CopyFrom") == 0) {
+        lua_pushcfunction(L, lua_stats_object_copy_from);
+        return 1;
+    }
+
+    if (strcmp(key, "SetRawAttribute") == 0) {
+        lua_pushcfunction(L, lua_stats_object_set_raw_attribute);
+        return 1;
+    }
+
     if (strcmp(key, "GetRawProperty") == 0) {
         // Method: stat:GetRawProperty(index) -> int32
         lua_pushcfunction(L, lua_stats_object_get_raw_property);
@@ -337,13 +384,93 @@ static int lua_stats_object_dump(lua_State *L) {
     return 0;
 }
 
+// StatsObject:Sync(persist?)
+static int lua_stats_object_sync(lua_State *L) {
+    LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
+    if (!ud->obj) {
+        return luaL_error(L, "Invalid StatsObject");
+    }
+
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        static bool warned = false;
+        if (!warned) {
+            LOG_STATS_DEBUG("The 'persist' argument to StatsObject:Sync() is deprecated");
+            warned = true;
+        }
+    }
+
+    const char *name = stats_get_name(ud->obj);
+    if (name) {
+        stats_sync(name);
+    }
+    return 0;
+}
+
+// StatsObject:SetPersistence(persist) - deprecated
+static int lua_stats_object_set_persistence(lua_State *L) {
+    check_stats_object(L, 1);
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("StatsObject:SetPersistence() is deprecated and has no effect");
+        warned = true;
+    }
+    return 0;
+}
+
+// StatsObject:CopyFrom(parentName)
+static int lua_stats_object_copy_from(lua_State *L) {
+    LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
+    const char *parent = luaL_checkstring(L, 2);
+
+    if (!ud->obj) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool ok = stats_copy_from(ud->obj, parent);
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
+// StatsObject:SetRawAttribute(key, value)
+static int lua_stats_object_set_raw_attribute(lua_State *L) {
+    LuaStatsObject *ud = check_stats_object(L, 1);
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "StatsObject");
+    }
+    const char *key = luaL_checkstring(L, 2);
+    const char *value = luaL_checkstring(L, 3);
+
+    if (!ud->obj) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    bool ok = stats_set_raw_attribute(ud->obj, key, value);
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
 // ============================================================================
 // Ext.Stats Functions
 // ============================================================================
 
-// Ext.Stats.Get(name) -> StatsObject or nil
+// Ext.Stats.Get(name, level?, warnOnError?, byRef?) -> StatsObject or nil
 static int lua_stats_get(lua_State *L) {
     const char *name = luaL_checkstring(L, 1);
+    // level (arg 2): ignored on macOS (no level scaling support yet)
+    // warnOnError (arg 3): if true, log warning when stat not found
+    bool warn_on_error = false;
+    if (lua_gettop(L) >= 3 && lua_isboolean(L, 3)) {
+        warn_on_error = lua_toboolean(L, 3);
+    }
+    // byRef (arg 4): ignored on macOS
 
     if (!stats_manager_ready()) {
         LOG_STATS_DEBUG("Stats system not ready");
@@ -352,6 +479,9 @@ static int lua_stats_get(lua_State *L) {
     }
 
     StatsObjectPtr obj = stats_get(name);
+    if (!obj && warn_on_error) {
+        LOG_STATS_DEBUG("Ext.Stats.Get: Stat not found: %s", name);
+    }
     push_stats_object(L, obj);
     return 1;
 }
@@ -637,27 +767,31 @@ static int lua_stats_get_modifier_attributes(lua_State *L) {
     return 1;
 }
 
-// Ext.Stats.AddAttribute() - Stub (rare API, requires careful memory management)
+// Ext.Stats.AddAttribute(modifierList, modifierName, typeName) -> bool
+// Stub: requires CNamedElementManager Insert (memory allocation in game heap)
+// Windows note: only safe to call before stats data files load (StatsStructureLoaded event)
 static int lua_stats_add_attribute(lua_State *L) {
-    (void)L;
-    static bool warned = false;
-    if (!warned) {
-        LOG_STATS_DEBUG("Ext.Stats.AddAttribute() is not yet implemented on macOS");
-        warned = true;
-    }
+    const char *modifier_list = luaL_checkstring(L, 1);
+    const char *modifier_name = luaL_checkstring(L, 2);
+    const char *type_name = luaL_checkstring(L, 3);
+
+    LOG_STATS_DEBUG("Ext.Stats.AddAttribute('%s', '%s', '%s'): "
+                    "Not yet implemented on macOS (requires game heap allocation)",
+                    modifier_list, modifier_name, type_name);
     lua_pushboolean(L, 0);
     return 1;
 }
 
-// Ext.Stats.AddEnumerationValue() - Stub (rare API)
+// Ext.Stats.AddEnumerationValue(typeName, enumLabel) -> int or nil
+// Stub: requires RPGEnumeration.Values map insertion
 static int lua_stats_add_enumeration_value(lua_State *L) {
-    (void)L;
-    static bool warned = false;
-    if (!warned) {
-        LOG_STATS_DEBUG("Ext.Stats.AddEnumerationValue() is not yet implemented on macOS");
-        warned = true;
-    }
-    lua_pushboolean(L, 0);
+    const char *type_name = luaL_checkstring(L, 1);
+    const char *enum_label = luaL_checkstring(L, 2);
+
+    LOG_STATS_DEBUG("Ext.Stats.AddEnumerationValue('%s', '%s'): "
+                    "Not yet implemented on macOS (requires game heap allocation)",
+                    type_name, enum_label);
+    lua_pushnil(L);
     return 1;
 }
 
@@ -873,6 +1007,174 @@ static int lua_stats_get_prototype_manager_ptrs(lua_State *L) {
     return 1;
 }
 
+// ============================================================================
+// Functor Execution API (Phase 2)
+// ============================================================================
+
+#include "../stats/functor_hooks.h"
+#include "../stats/functor_types.h"
+
+#define FUNCTOR_CONTEXT_METATABLE "bg3se.FunctorContext"
+
+typedef struct {
+    ContextData *ctx;
+    FunctorContextType type;
+} LuaFunctorContext;
+
+// Ext.Stats.PrepareFunctorParams(type) -> FunctorContext userdata
+// Creates a default-initialized context for the given type.
+static int lua_stats_prepare_functor_params(lua_State *L) {
+    int type = (int)luaL_checkinteger(L, 1);
+    if (type < 0 || type > 8) {
+        return luaL_error(L, "Unsupported context type: %d (expected 0-8)", type);
+    }
+
+    // Allocate context as Lua-managed userdata (lifetime tied to Lua GC)
+    size_t ctx_sizes[] = {
+        sizeof(AttackTargetContextData),    // 0
+        sizeof(AttackPositionContextData),  // 1
+        sizeof(MoveContextData),            // 2
+        sizeof(TargetContextData),          // 3
+        sizeof(NearbyAttackedContextData),  // 4
+        sizeof(NearbyAttackingContextData), // 5
+        sizeof(EquipContextData),           // 6
+        sizeof(SourceContextData),          // 7
+        sizeof(InterruptContextData),       // 8
+    };
+
+    size_t total = sizeof(LuaFunctorContext) + ctx_sizes[type];
+    LuaFunctorContext *ud = (LuaFunctorContext *)lua_newuserdata(L, total);
+    memset(ud, 0, total);
+
+    // Context data is stored right after the LuaFunctorContext header
+    ud->ctx = (ContextData *)((char *)ud + sizeof(LuaFunctorContext));
+    ud->type = (FunctorContextType)type;
+    ud->ctx->Type = (FunctorContextType)type;
+
+    luaL_getmetatable(L, FUNCTOR_CONTEXT_METATABLE);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        luaL_newmetatable(L, FUNCTOR_CONTEXT_METATABLE);
+        lua_pop(L, 1);
+        luaL_getmetatable(L, FUNCTOR_CONTEXT_METATABLE);
+    }
+    lua_setmetatable(L, -2);
+
+    return 1;
+}
+
+// Ext.Stats.ExecuteFunctors(functorContext) -> nil
+// Calls the game's original functor execution code for the given context.
+// Currently a stub since we need a real Functors* to pass (from stat object).
+static int lua_stats_execute_functors(lua_State *L) {
+    if (!functor_hooks_is_active()) {
+        return luaL_error(L, "Functor hooks not installed (game must be in a session)");
+    }
+
+    // Check if we got a FunctorContext userdata
+    LuaFunctorContext *ctx_ud = (LuaFunctorContext *)luaL_testudata(L, 1, FUNCTOR_CONTEXT_METATABLE);
+    if (!ctx_ud) {
+        return luaL_error(L, "Expected FunctorContext userdata as argument 1");
+    }
+
+    void *proc = functor_hooks_get_original_proc((int)ctx_ud->type);
+    if (!proc) {
+        return luaL_error(L, "No original proc for context type %d", (int)ctx_ud->type);
+    }
+
+    // For a real implementation, we'd need a StatsFunctorList* from a stat object.
+    // For now, log that this requires stat object integration.
+    LOG_STATS_DEBUG("ExecuteFunctors: context type %d ready, but needs Functors* from stat object (TODO)", (int)ctx_ud->type);
+    return 0;
+}
+
+// Ext.Stats.ExecuteFunctor(functorContext) -> nil
+// Same as ExecuteFunctors but for a single functor.
+static int lua_stats_execute_functor(lua_State *L) {
+    return lua_stats_execute_functors(L);
+}
+
+// ============================================================================
+// GetStatsLoadedBefore (Phase 3)
+// ============================================================================
+
+// Ext.Stats.GetStatsLoadedBefore(modUuid, type?) -> array of names
+// Stub: returns empty table. Mod load order tracking not yet implemented on macOS.
+static int lua_stats_get_stats_loaded_before(lua_State *L) {
+    luaL_checkstring(L, 1);  // modUuid (validate arg exists)
+    // type is optional arg 2
+
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.GetStatsLoadedBefore(): Mod load order tracking not yet available on macOS, returning empty table");
+        warned = true;
+    }
+    lua_newtable(L);
+    return 1;
+}
+
+// ============================================================================
+// TreasureTable / TreasureCategory Stubs (Phase 4)
+// ============================================================================
+
+static int lua_stats_treasure_table_get(lua_State *L) {
+    luaL_checkstring(L, 1);
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.TreasureTable.Get(): Requires runtime offset discovery (RPGStats.TreasureTables)");
+        warned = true;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int lua_stats_treasure_table_get_legacy(lua_State *L) {
+    luaL_checkstring(L, 1);
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.TreasureTable.GetLegacy(): Requires runtime offset discovery");
+        warned = true;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int lua_stats_treasure_table_update(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.TreasureTable.Update(): Requires runtime offset discovery");
+        warned = true;
+    }
+    return 0;
+}
+
+static int lua_stats_treasure_category_get_legacy(lua_State *L) {
+    luaL_checkstring(L, 1);
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.TreasureCategory.GetLegacy(): Requires runtime offset discovery");
+        warned = true;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int lua_stats_treasure_category_update(lua_State *L) {
+    luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.TreasureCategory.Update(): Requires runtime offset discovery");
+        warned = true;
+    }
+    return 0;
+}
+
+// ============================================================================
+// Registration
+// ============================================================================
+
 static const luaL_Reg stats_functions[] = {
     {"Get", lua_stats_get},
     {"GetAll", lua_stats_getall},
@@ -904,6 +1206,10 @@ static const luaL_Reg stats_functions[] = {
     {"DumpPrototypeManagers", lua_stats_dump_prototype_managers},  // Debug: prototype manager status
     {"ProbePrototypeManager", lua_stats_probe_prototype_manager},  // Debug: probe a manager
     {"GetPrototypeManagerPtrs", lua_stats_get_prototype_manager_ptrs},  // Debug: raw manager pointers
+    {"GetStatsLoadedBefore", lua_stats_get_stats_loaded_before},
+    {"ExecuteFunctors", lua_stats_execute_functors},
+    {"ExecuteFunctor", lua_stats_execute_functor},
+    {"PrepareFunctorParams", lua_stats_prepare_functor_params},
     {NULL, NULL}
 };
 
@@ -920,12 +1226,35 @@ void lua_stats_register(lua_State *L, int ext_table_index) {
     luaL_setfuncs(L, stats_object_methods, 0);
     lua_pop(L, 1);
 
+    // Create FunctorContext metatable
+    luaL_newmetatable(L, FUNCTOR_CONTEXT_METATABLE);
+    lua_pop(L, 1);
+
     // Create Ext.Stats table
     lua_newtable(L);
+    int stats_table = lua_gettop(L);
     luaL_setfuncs(L, stats_functions, 0);
+
+    // Create Ext.Stats.TreasureTable subtable
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_stats_treasure_table_get);
+    lua_setfield(L, -2, "Get");
+    lua_pushcfunction(L, lua_stats_treasure_table_get_legacy);
+    lua_setfield(L, -2, "GetLegacy");
+    lua_pushcfunction(L, lua_stats_treasure_table_update);
+    lua_setfield(L, -2, "Update");
+    lua_setfield(L, stats_table, "TreasureTable");
+
+    // Create Ext.Stats.TreasureCategory subtable
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_stats_treasure_category_get_legacy);
+    lua_setfield(L, -2, "GetLegacy");
+    lua_pushcfunction(L, lua_stats_treasure_category_update);
+    lua_setfield(L, -2, "Update");
+    lua_setfield(L, stats_table, "TreasureCategory");
 
     // Set as Ext.Stats
     lua_setfield(L, ext_table_index, "Stats");
 
-    LOG_STATS_DEBUG("Ext.Stats API registered");
+    LOG_STATS_DEBUG("Ext.Stats API registered with TreasureTable/TreasureCategory submodules");
 }

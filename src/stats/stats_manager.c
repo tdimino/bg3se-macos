@@ -1706,6 +1706,70 @@ StatsObjectPtr stats_create(const char *name, const char *type, const char *temp
 }
 
 // ============================================================================
+// StatsObject Methods
+// ============================================================================
+
+bool stats_copy_from(StatsObjectPtr dst, const char *parent_name) {
+    if (!dst || !parent_name) return false;
+
+    StatsObjectPtr src = stats_get(parent_name);
+    if (!src) {
+        LOG_STATS_DEBUG("stats_copy_from: Source stat not found: %s", parent_name);
+        return false;
+    }
+
+    // Don't copy from self
+    if (src == dst) return true;
+
+    // Check if shadow stat
+    CreatedStatEntry *entry = NULL;
+    for (CreatedStatEntry *e = g_CreatedStats; e; e = e->next) {
+        if ((StatsObjectPtr)e->object == dst) {
+            entry = e;
+            break;
+        }
+    }
+
+    if (entry) {
+        // Shadow stat: copy via template function
+        return copy_stat_properties_from_template(entry, src);
+    }
+
+    // Game stat: copy IndexedProperties directly
+    void *src_begin = NULL, *src_end = NULL;
+    void *dst_begin = NULL, *dst_end = NULL;
+
+    if (!safe_read_ptr((char*)src + OBJECT_OFFSET_INDEXED_PROPS + VECTOR_OFFSET_BEGIN, &src_begin) ||
+        !safe_read_ptr((char*)src + OBJECT_OFFSET_INDEXED_PROPS + VECTOR_OFFSET_END, &src_end) ||
+        !safe_read_ptr((char*)dst + OBJECT_OFFSET_INDEXED_PROPS + VECTOR_OFFSET_BEGIN, &dst_begin) ||
+        !safe_read_ptr((char*)dst + OBJECT_OFFSET_INDEXED_PROPS + VECTOR_OFFSET_END, &dst_end)) {
+        LOG_STATS_DEBUG("stats_copy_from: Failed to read vector pointers");
+        return false;
+    }
+
+    if (!src_begin || !src_end || !dst_begin || !dst_end) return false;
+
+    int src_count = (int)((char*)src_end - (char*)src_begin) / (int)sizeof(int32_t);
+    int dst_count = (int)((char*)dst_end - (char*)dst_begin) / (int)sizeof(int32_t);
+    int copy_count = (src_count < dst_count) ? src_count : dst_count;
+
+    for (int i = 0; i < copy_count; i++) {
+        int32_t value = 0;
+        if (safe_read_i32((char*)src_begin + i * sizeof(int32_t), &value)) {
+            safe_write_i32((char*)dst_begin + i * sizeof(int32_t), value);
+        }
+    }
+
+    LOG_STATS_DEBUG("stats_copy_from: Copied %d properties from '%s'", copy_count, parent_name);
+    return true;
+}
+
+bool stats_set_raw_attribute(StatsObjectPtr obj, const char *key, const char *value) {
+    if (!obj || !key || !value) return false;
+    return stats_set_string(obj, key, value);
+}
+
+// ============================================================================
 // Debugging
 // ============================================================================
 

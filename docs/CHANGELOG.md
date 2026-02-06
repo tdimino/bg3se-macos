@@ -13,6 +13,64 @@ Each entry includes:
 
 ---
 
+## [v0.36.35] - 2026-02-06
+
+**Parity:** ~92% | **Category:** Critical Bug Fix | **Issues:** #65
+
+### Fixed
+- **Game won't start with BG3SE injected (Issue #65)**
+  - **Root cause 1:** Spurious `game_state_on_session_loading()` call in `fake_InitGame` (line 1876) corrupted internal state from Running→LoadSession after session was already loaded. This permanently broke deferred net init and produced misleading "bounce" in logs.
+  - **Root cause 2:** ~2,800 `mach_vm_read_overwrite` kernel calls during `fake_Load` extended the timing-sensitive window after `COsiris::Load` returns, potentially triggering a game-side watchdog on some machines (especially macOS Tahoe 26.2 / M4).
+
+### Changed
+- **Deferred session init:** All heavy initialization (entity TypeId discovery ~2,200 calls, stats validation ~68 calls, static data capture ~400-600 calls) moved from `fake_Load` to tick loop (`fake_Event`). `fake_Load` now returns immediately after calling the original function + loading mod scripts.
+- **State machine correctness:** `LoadSession → Running` transition now fires from tick loop after all subsystems are ready, not from `fake_Load` during the critical Load window.
+- **Net hooks ordering:** Deferred net init now depends on deferred session init (Running state set correctly first).
+
+### Added
+- **Diagnostic timing:** Each deferred init step logs elapsed milliseconds (entity, stats, staticdata).
+- **`BG3SE_MINIMAL` env var:** Set `BG3SE_MINIMAL=1` to skip all subsystem init (entity/stats/staticdata/net). Only Osiris hooks + basic Lua API remain active. Useful for isolating whether game failure is from init work or hooks themselves.
+
+### Technical
+- New `SessionInitState` state machine in `main.c` (IDLE → PENDING → COMPLETE)
+- `request_deferred_session_init()` sets flag only (zero kernel calls in fake_Load)
+- `deferred_session_init_tick()` runs in tick loop with per-step timing
+
+---
+
+## [v0.36.34] - 2026-02-06
+
+**Parity:** ~92% | **Category:** Stats 100% Parity | **Issues:** Parity Push
+
+### Added
+- **Ext.Stats 100% Windows API Parity (22 new items)**
+  - StatsObject `:Sync(persist?)` method — sync stat changes to game engine
+  - StatsObject `:SetPersistence(persist)` method — deprecated stub with warning
+  - StatsObject `:CopyFrom(parent)` method — copy IndexedProperties from another stat
+  - StatsObject `:SetRawAttribute(key, value)` method — set property from raw string
+  - StatsObject `ModId` property (read-only) — returns mod UUID (empty for now)
+  - StatsObject `OriginalModId` property (read-only) — returns original mod UUID
+  - StatsObject `ModifierList` property (read-only) — returns stat type name
+  - Enhanced `Get(name, level?, warnOnError?, byRef?)` — all optional parameters
+  - `GetStatsLoadedBefore(modUuid, type?)` — stub with one-time warning
+  - `ExecuteFunctors(context)` — calls original game functor execution
+  - `ExecuteFunctor(context)` — single functor wrapper
+  - `PrepareFunctorParams(type)` — creates default functor context by type
+  - `Ext.Stats.TreasureTable.Get(name)` — stub pending RE
+  - `Ext.Stats.TreasureTable.GetLegacy(name)` — stub pending RE
+  - `Ext.Stats.TreasureTable.Update(table)` — stub pending RE
+  - `Ext.Stats.TreasureCategory.GetLegacy(name)` — stub pending RE
+  - `Ext.Stats.TreasureCategory.Update(name, cat)` — stub pending RE
+  - Improved `AddAttribute` / `AddEnumerationValue` stubs with parameter validation
+
+### Technical
+- New `stats_copy_from()` and `stats_set_raw_attribute()` in stats_manager
+- `functor_hooks_get_original_proc()` exposes saved original function pointers
+- FunctorContext userdata type (`bg3se.FunctorContext`) for type-safe Lua bindings
+- TreasureTable/TreasureCategory registered as Ext.Stats subtables
+
+---
+
 ## [v0.36.33] - 2026-02-06
 
 **Parity:** ~90% | **Category:** Bug Fix | **Issues:** #65

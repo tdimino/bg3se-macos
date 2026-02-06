@@ -293,6 +293,31 @@ bool stats_get_modifier_attribute(const char *modifier_name, int index,
 int stats_get_modifier_attribute_count_by_name(const char *modifier_name);
 
 // ============================================================================
+// StatsObject Methods (for Lua metatable)
+// ============================================================================
+
+/**
+ * Copy all indexed properties from a source stat to a destination stat.
+ * Both stats must have the same ModifierList (type).
+ *
+ * @param dst Destination stat object
+ * @param parent_name Name of the source stat to copy from
+ * @return true if copy succeeded, false on error
+ */
+bool stats_copy_from(StatsObjectPtr dst, const char *parent_name);
+
+/**
+ * Set a stat property from a raw string value.
+ * This parses the string and sets the appropriate property.
+ *
+ * @param obj Stat object
+ * @param key Property name (e.g., "Damage", "DamageType")
+ * @param value Raw string value (e.g., "2d8", "Fire")
+ * @return true if set succeeded
+ */
+bool stats_set_raw_attribute(StatsObjectPtr obj, const char *key, const char *value);
+
+// ============================================================================
 // Debugging
 // ============================================================================
 

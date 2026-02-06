@@ -36,4 +36,13 @@ bool functor_hooks_is_active(void);
  */
 uint64_t functor_hooks_get_event_count(void);
 
+/**
+ * Get the original (pre-hook) function pointer for a context type.
+ * Used by ExecuteFunctors Lua API to call the game's functor execution code.
+ *
+ * @param ctx_type Context type (0-8, see FunctorContextType enum)
+ * @return Original function pointer, or NULL if hooks not installed or invalid type
+ */
+void* functor_hooks_get_original_proc(int ctx_type);
+
 #endif // FUNCTOR_HOOKS_H
