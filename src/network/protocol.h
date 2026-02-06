@@ -63,6 +63,16 @@
 #define OFFSET_GAMESERVER_PROTOMAP        0x310
 
 // ============================================================================
+// Ghidra Addresses (Phase 4F)
+//
+// These are virtual addresses from the Ghidra analysis.
+// At runtime, apply ASLR: runtime = ghidra - 0x100000000 + binary_base
+// ============================================================================
+
+/** NetMessageFactory::GetMessage (GetFreeMessage) — 524 callers confirmed. */
+#define ADDR_GETMESSAGE 0x1063d5998ULL
+
+// ============================================================================
 // Protocol Version (matches Windows BG3SE ProtoVersion enum)
 // ============================================================================
 

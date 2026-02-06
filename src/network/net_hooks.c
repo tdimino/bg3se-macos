@@ -21,6 +21,8 @@
 #include "extender_message.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../entity/entity_system.h"  // entity_get_binary_base()
+#include <dobby.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -35,6 +37,11 @@ static NetCapturedPtrs s_ptrs = {0};
 // Captured network objects
 static void *s_game_server = NULL;         // GameServer* (from EocServer+0xA8)
 static void *s_net_msg_factory = NULL;     // NetMessageFactory* (from GameServer+0x1F8)
+
+// GetMessage hook state (Phase 4F)
+typedef void *(*GetMessage_t)(void *factory, uint32_t message_id);
+static GetMessage_t s_orig_GetMessage = NULL;
+static void *s_hook_target_addr = NULL;    // For cleanup
 
 // ============================================================================
 // Safe Memory Helpers
@@ -63,6 +70,44 @@ static void *safe_read_ptr(const void *base, uintptr_t offset) {
 static bool safe_read_u64(const void *base, uintptr_t offset, uint64_t *out) {
     if (!base || !out) return false;
     return safe_memory_read_u64((mach_vm_address_t)base + offset, out);
+}
+
+// ============================================================================
+// ASLR Address Resolution
+// ============================================================================
+
+#define GHIDRA_BASE_ADDRESS 0x100000000ULL
+
+static uintptr_t get_runtime_addr(uintptr_t ghidra_addr) {
+    void *base = entity_get_binary_base();
+    if (!base) return 0;
+    return ghidra_addr - GHIDRA_BASE_ADDRESS + (uintptr_t)base;
+}
+
+// ============================================================================
+// GetMessage Hook (Phase 4F)
+//
+// Intercepts NetMessageFactory::GetMessage. For ID 400 (NETMSG_SCRIPT_EXTENDER),
+// returns an ExtenderMessage from our pool. For all other IDs, calls the
+// original game function.
+//
+// ARM64 signature:
+//   x0 = this (MessageFactory*), w1 = messageId (uint32_t)
+//   Returns: x0 = Message* (or NULL)
+// ============================================================================
+
+static void *hook_GetMessage(void *factory, uint32_t message_id) {
+    if (message_id == NETMSG_SCRIPT_EXTENDER) {
+        ExtenderMessage *msg = extender_message_pool_get();
+        if (msg) {
+            LOG_NET_DEBUG("GetMessage(%u): returning ExtenderMessage %p from pool",
+                          message_id, (void *)msg);
+            return &msg->base;
+        }
+        LOG_NET_WARN("GetMessage(%u): pool exhausted, returning NULL", message_id);
+        return NULL;
+    }
+    return s_orig_GetMessage(factory, message_id);
 }
 
 // ============================================================================
@@ -198,6 +243,16 @@ void net_hooks_remove(void) {
         }
     }
 
+    // Remove GetMessage hook (Phase 4F)
+    // Note: Dobby doesn't provide DobbyDestroy on all platforms.
+    // Clear our state so the hook becomes a pass-through if it fires during shutdown.
+    if (s_status.message_factory_hooked) {
+        LOG_NET_INFO("  Clearing GetMessage hook state");
+        s_status.message_factory_hooked = false;
+        // After this, hook_GetMessage will still call s_orig_GetMessage for all IDs
+        // since message_factory_hooked is cleared. This is safe.
+    }
+
     // Destroy the ExtenderProtocol singleton
     ExtenderProtocol *proto = extender_protocol_get();
     if (proto) {
@@ -208,6 +263,7 @@ void net_hooks_remove(void) {
     memset(&s_ptrs, 0, sizeof(s_ptrs));
     s_game_server = NULL;
     s_net_msg_factory = NULL;
+    s_hook_target_addr = NULL;
 }
 
 NetHookStatus net_hooks_get_status(void) {
@@ -382,8 +438,36 @@ bool net_hooks_register_message(void) {
         LOG_NET_INFO("  Pool validation: %d/4 sampled entries have valid vtables", valid_pools);
     }
 
-    LOG_NET_INFO("  Message registration deferred to Phase 4F (requires GameAlloc)");
-    return true;
+    // ---- Phase 4F: Hook GetMessage instead of MessagePool registration ----
+    // Hooking GetMessage avoids needing GameAlloc and Larian container RE.
+    // For ID 400 we return our own pooled ExtenderMessage, for all other IDs
+    // we pass through to the original.
+
+    uintptr_t runtime_addr = get_runtime_addr(ADDR_GETMESSAGE);
+    if (!runtime_addr) {
+        LOG_NET_WARN("  GetMessage hook: failed to resolve runtime address (no binary base)");
+        return false;
+    }
+
+    s_hook_target_addr = (void *)runtime_addr;
+    LOG_NET_INFO("  GetMessage: Ghidra=0x%llx, runtime=%p",
+                 (unsigned long long)ADDR_GETMESSAGE, s_hook_target_addr);
+
+    // Initialize the message pool before hooking
+    extender_message_pool_init();
+
+    int result = DobbyHook(s_hook_target_addr, (void *)hook_GetMessage,
+                           (void **)&s_orig_GetMessage);
+    if (result == 0) {
+        LOG_NET_INFO("  GetMessage hook installed successfully (orig=%p)",
+                     (void *)s_orig_GetMessage);
+        s_status.message_factory_hooked = true;
+        return true;
+    } else {
+        LOG_NET_ERROR("  GetMessage hook FAILED (Dobby result=%d)", result);
+        s_hook_target_addr = NULL;
+        return false;
+    }
 }
 
 bool net_hooks_insert_protocol(void) {

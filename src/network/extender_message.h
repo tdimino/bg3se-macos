@@ -78,10 +78,19 @@ typedef struct {
 // ============================================================================
 
 struct MessageBase {
-    const Message_VMT *vmt;
-    uint32_t msg_id;         // NetMessage enum (400 for NETMSG_SCRIPT_EXTENDER)
-    uint32_t reliability;    // Default: 4 (matches Windows)
+    const Message_VMT *vmt;        // +0x00
+    uint32_t msg_id;               // +0x08  NetMessage enum (400 for NETMSG_SCRIPT_EXTENDER)
+    uint32_t reliability;          // +0x0C  Default: 4
+    uint32_t priority;             // +0x10  Default: 1
+    uint8_t  ordering_sequence;    // +0x14  Default: 0
+    bool     timestamped;          // +0x15  Default: false
+    uint8_t  _pad[2];              // +0x16  Alignment padding
+    uint64_t timestamp;            // +0x18  Default: 0
+    uint32_t original_size;        // +0x20  Default: 0
+    float    latency;              // +0x24  Default: 0.0
 };
+// Full layout matches Windows net::Message (Net.h lines 65-72)
+// sizeof(MessageBase) == 0x28 (40 bytes)
 
 // ============================================================================
 // ExtenderMessage
@@ -172,5 +181,35 @@ uint32_t extender_message_deserialize(ExtenderMessage *msg,
  * @return Total serialized size in bytes
  */
 uint32_t extender_message_serialized_size(const ExtenderMessage *msg);
+
+// ============================================================================
+// Message Pool (Phase 4F)
+//
+// Pre-allocated pool for the GetMessage hook. Avoids malloc in the hot path.
+// Pool is tiny (8 messages) — extender messages are rare.
+// ============================================================================
+
+#define EXTMSG_POOL_SIZE 8
+
+/**
+ * Initialize the message pool. Called once during net_hooks setup.
+ */
+void extender_message_pool_init(void);
+
+/**
+ * Get a free message from the pool.
+ * Falls back to malloc if pool is exhausted.
+ *
+ * @return ExtenderMessage ready for use, or NULL on failure
+ */
+ExtenderMessage *extender_message_pool_get(void);
+
+/**
+ * Return a message to the pool after use.
+ * If msg was malloc'd (not from pool), it is freed.
+ *
+ * @param msg Message to return (NULL-safe)
+ */
+void extender_message_pool_return(ExtenderMessage *msg);
 
 #endif /* EXTENDER_MESSAGE_H */

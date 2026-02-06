@@ -9,6 +9,7 @@
 
 #include "extender_message.h"
 #include "../core/logging.h"
+#include "../core/safe_memory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -40,10 +41,48 @@ static void em_deleting_destructor(MessageBase *self) {
 }
 
 static void em_serialize(MessageBase *self, void *serializer) {
-    (void)self;
-    (void)serializer;
-    // Phase 4E: Will integrate with game's BitstreamSerializer
-    LOG_NET_DEBUG("ExtenderMessage::Serialize called (stub)");
+    ExtenderMessage *em = (ExtenderMessage *)self;
+
+    LOG_NET_INFO("ExtenderMessage::Serialize called: self=%p, serializer=%p",
+                 (void *)self, serializer);
+
+    if (!serializer) {
+        LOG_NET_WARN("  Serialize: NULL serializer");
+        return;
+    }
+
+    // Diagnostic: dump first 64 bytes of serializer for layout discovery.
+    // The game calls msg->Serialize(serializer) where serializer is a
+    // BitstreamSerializer. We need to discover:
+    //   - IsWriting flag (bool/uint8_t at some offset)
+    //   - ReadBytes/WriteBytes method pointers or inline functions
+    //
+    // This diagnostic runs until BitstreamSerializer RE is complete (Phase 4G).
+    LOG_NET_INFO("  Serializer dump (first 64 bytes):");
+    for (int i = 0; i < 64; i += 8) {
+        uint64_t val = 0;
+        if (safe_memory_read_u64((mach_vm_address_t)serializer + i, &val)) {
+            LOG_NET_INFO("    +0x%02x: 0x%016llx", i, (unsigned long long)val);
+        } else {
+            LOG_NET_INFO("    +0x%02x: <unreadable>", i);
+            break;
+        }
+    }
+
+    // Heuristic: try common IsWriting offsets (0x08, 0x10, 0x18)
+    // If IsWriting==0 (deserializing), we're receiving a message.
+    // If IsWriting==1 (serializing), we're sending a message.
+    for (int off = 0x08; off <= 0x18; off += 0x08) {
+        uint8_t flag = 0xFF;
+        if (safe_memory_read_u8((mach_vm_address_t)serializer + off, &flag)) {
+            if (flag == 0 || flag == 1) {
+                LOG_NET_INFO("  Candidate IsWriting at +0x%02x = %u", off, flag);
+            }
+        }
+    }
+
+    LOG_NET_INFO("  Payload state: valid=%d, size=%u",
+                 em->valid, em->payload_size);
 }
 
 static void em_unknown(MessageBase *self) {
@@ -101,6 +140,20 @@ static const MessageVtableBlock s_vtable_block = {
 // Public API
 // ============================================================================
 
+static void init_message_base(MessageBase *base) {
+    base->vmt = &s_vtable_block.vmt;
+    base->msg_id = NETMSG_SCRIPT_EXTENDER;
+    base->reliability = 4;
+    base->priority = 1;
+    base->ordering_sequence = 0;
+    base->timestamped = false;
+    base->_pad[0] = 0;
+    base->_pad[1] = 0;
+    base->timestamp = 0;
+    base->original_size = 0;
+    base->latency = 0.0f;
+}
+
 ExtenderMessage *extender_message_create(void) {
     ExtenderMessage *msg = calloc(1, sizeof(ExtenderMessage));
     if (!msg) {
@@ -108,9 +161,7 @@ ExtenderMessage *extender_message_create(void) {
         return NULL;
     }
 
-    msg->base.vmt = &s_vtable_block.vmt;
-    msg->base.msg_id = NETMSG_SCRIPT_EXTENDER;
-    msg->base.reliability = 4;  // Matches Windows default
+    init_message_base(&msg->base);
     msg->payload = NULL;
     msg->payload_size = 0;
     msg->valid = false;
@@ -239,4 +290,64 @@ uint32_t extender_message_deserialize(ExtenderMessage *msg,
 uint32_t extender_message_serialized_size(const ExtenderMessage *msg) {
     if (!msg) return 0;
     return sizeof(uint32_t) + msg->payload_size;
+}
+
+// ============================================================================
+// Message Pool
+//
+// Pre-allocated pool of ExtenderMessages for the GetMessage hook.
+// Avoids malloc in the hot path. Falls back to malloc if exhausted.
+// ============================================================================
+
+static ExtenderMessage s_msg_pool[EXTMSG_POOL_SIZE];
+static bool s_pool_in_use[EXTMSG_POOL_SIZE];
+static bool s_pool_initialized = false;
+
+void extender_message_pool_init(void) {
+    if (s_pool_initialized) return;
+
+    for (int i = 0; i < EXTMSG_POOL_SIZE; i++) {
+        memset(&s_msg_pool[i], 0, sizeof(ExtenderMessage));
+        init_message_base(&s_msg_pool[i].base);
+        s_pool_in_use[i] = false;
+    }
+    s_pool_initialized = true;
+    LOG_NET_DEBUG("ExtenderMessage pool initialized (%d slots)", EXTMSG_POOL_SIZE);
+}
+
+ExtenderMessage *extender_message_pool_get(void) {
+    if (!s_pool_initialized) {
+        extender_message_pool_init();
+    }
+
+    for (int i = 0; i < EXTMSG_POOL_SIZE; i++) {
+        if (!s_pool_in_use[i]) {
+            s_pool_in_use[i] = true;
+            extender_message_reset(&s_msg_pool[i]);
+            init_message_base(&s_msg_pool[i].base);
+            LOG_NET_DEBUG("Pool: allocated slot %d", i);
+            return &s_msg_pool[i];
+        }
+    }
+
+    // Pool exhausted — fall back to heap allocation
+    LOG_NET_WARN("ExtenderMessage pool exhausted, falling back to malloc");
+    return extender_message_create();
+}
+
+void extender_message_pool_return(ExtenderMessage *msg) {
+    if (!msg) return;
+
+    // Check if this message is from our pool
+    for (int i = 0; i < EXTMSG_POOL_SIZE; i++) {
+        if (msg == &s_msg_pool[i]) {
+            extender_message_reset(msg);
+            s_pool_in_use[i] = false;
+            LOG_NET_DEBUG("Pool: returned slot %d", i);
+            return;
+        }
+    }
+
+    // Not from pool — was malloc'd as fallback, free it
+    extender_message_destroy(msg);
 }

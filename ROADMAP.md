@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.27
+## Current Status: v0.36.28
 
 **Overall Feature Parity: ~88%** (based on comprehensive API function count analysis)
 
@@ -46,7 +46,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Enums` | ✅ Full | ✅ 14 enum/bitfield types | **100%** | 7 |
 | `Ext.Math` | ✅ Full (59) | ✅ 57 functions (vectors, matrices, 16 quaternions, scalars) | **97%** | 7.5 |
 | `Ext.Input` | ✅ Full | ✅ CGEventTap capture, hotkeys (8 macOS-specific) | **100%** | 9 |
-| `Ext.Net` | ✅ Full | ✅ Phase 4D Complete (RE offsets verified, capture pipeline) | **85%** | 6 |
+| `Ext.Net` | ✅ Full | ✅ Phase 4F Complete (GetMessage hook, message pool, incoming pipeline) | **90%** | 6 |
 | `Ext.UI` | ✅ Full (9) | ❌ Not impl | **0%** | 8 |
 | `Ext.IMGUI` | ✅ Full (7+) | ✅ Complete widget system (40 types) - All widgets, events, Metal backend | **100%** | 8 |
 | `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
@@ -877,7 +877,7 @@ Ext.Debug.HexDump(addr, size)
 ## Phase 6: Networking & Co-op Sync
 
 ### 6.1 NetChannel API (New - v22+)
-**Status:** ✅ Phase 4D Complete (v0.36.26) - All network offsets RE'd, Itanium ABI vtable, capture pipeline implemented. Phase 4E (runtime verification + insertion) next.
+**Status:** ✅ Phase 4F Complete (v0.36.28) - GetMessage hook intercepts ID 400, message pool, incoming pipeline routes to message_bus. BitstreamSerializer RE needed for actual payload parsing (Phase 4G).
 
 From API.md: "NetChannel API provides a structured abstraction for request/response and message broadcasting."
 
@@ -1494,6 +1494,7 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.28 | 2026-02-06 | **NetChannel API Phase 4F** - GetMessage hook via Dobby (ASLR-aware), ExtenderMessage pool (8 slots), full net::Message layout (40 bytes), em_serialize diagnostic, process_msg routes to message_bus (Issue #6) |
 | v0.36.27 | 2026-02-05 | **NetChannel API Phase 4E** - Live ProtocolList insertion (swap-to-end pattern), MessageFactory runtime probe, safe_memory write API, cleanup on shutdown (Issue #6, #65) |
 | v0.36.26 | 2026-02-05 | **NetChannel API Phase 4D** - All network offsets RE'd via statistical binary analysis: EocServer+0xA8=GameServer, GameServer+0x1F8=NetMessageFactory, +0x2E0=ProtocolList. Itanium ABI vtable, capture pipeline in main.c (Issue #6) |
 | v0.36.25 | 2026-02-04 | **NetChannel API Phase 4A** - Protocol VMT matching Windows, ExtenderProtocol stub, NetworkBackend abstraction (Local/RakNet), PeerManager with rate limiting. Reviewed by 4 agents (Issue #6) |
@@ -1613,7 +1614,7 @@ See `agent_docs/acceleration.md` for detailed methodology |
 | Issue | Feature | Acceleration | Key Technique |
 |-------|---------|--------------|---------------|
 | **#37 Ext.Level** | Physics/Raycast | **50%** | Find physics engine, port LevelLib.inl |
-| ~~#6 NetChannel~~ | Networking | ⚠️ **Phase 4D DONE** | RE complete, capture pipeline built, Phase 4E (insertion) next |
+| ~~#6 NetChannel~~ | Networking | ⚠️ **Phase 4F DONE** | GetMessage hook, message pool, incoming pipeline. Phase 4G (BitstreamSerializer RE, outbound send) next |
 | **#35 Ext.UI** | Noesis UI | **25%** | Deep game UI hooks required |
 
 **Completed:**

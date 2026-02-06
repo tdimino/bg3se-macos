@@ -13,6 +13,34 @@ Each entry includes:
 
 ---
 
+## [v0.36.28] - 2026-02-06
+
+**Parity:** ~88% | **Category:** Network Hooks | **Issues:** #6
+
+### Added
+- **NetChannel API Phase 4F: GetMessage Hook** - Dobby hook on `NetMessageFactory::GetMessage` intercepts message ID 400
+  - ASLR-aware address resolution from Ghidra virtual address `0x1063d5998`
+  - For ID 400 returns pooled ExtenderMessage; all other IDs pass through to original
+  - Pre-allocated pool of 8 ExtenderMessages avoids malloc in the hot path
+  - Pool falls back to heap allocation when exhausted
+- **ExtenderMessage full layout** - MessageBase expanded to 40 bytes matching Windows `net::Message`
+  - Added: priority, ordering_sequence, timestamped, timestamp, original_size, latency fields
+  - `init_message_base()` helper initializes all fields with correct defaults
+- **em_serialize diagnostic** - Dumps first 64 bytes of BitstreamSerializer for layout discovery
+  - Probes candidate IsWriting offsets (0x08, 0x10, 0x18)
+  - Enables runtime discovery of serializer fields without Ghidra
+- **ExtenderProtocol process_msg routing** - Incoming ID 400 messages routed to message_bus
+  - Extracts sender user_id from MessageContext
+  - Rate-limited via `message_bus_queue_from_peer()`
+  - Returns messages to pool after processing
+
+### Technical
+- `ADDR_GETMESSAGE` constant in protocol.h for Ghidra address management
+- `get_runtime_addr()` helper follows established ASLR pattern from functor_hooks.c
+- GetMessage hook state cleared during `net_hooks_remove()` for safe shutdown
+
+---
+
 ## [v0.36.27] - 2026-02-05
 
 **Parity:** ~88% | **Category:** Network Integration | **Issues:** #6

@@ -12,6 +12,7 @@
  */
 
 #include "extender_protocol.h"
+#include "extender_message.h"
 #include "message_bus.h"
 #include "peer_manager.h"
 #include "../core/logging.h"
@@ -77,11 +78,46 @@ static ProtocolResult extender_process_msg(Protocol *self, void *unused,
         return PROTOCOL_RESULT_UNHANDLED;
     }
 
-    LOG_NET_DEBUG("ExtenderProtocol: received NETMSG_SCRIPT_EXTENDER from user %d",
-                  ctx ? ctx->user_id : -1);
+    int32_t sender = ctx ? ctx->user_id : -1;
+    LOG_NET_INFO("ExtenderProtocol: received NETMSG_SCRIPT_EXTENDER from user %d", sender);
 
-    // TODO (Phase 4E): Deserialize payload and route to message_bus
-    // For now, just log and consume the message
+    // Cast to ExtenderMessage (our GetMessage hook returned this from the pool)
+    ExtenderMessage *em = (ExtenderMessage *)msg;
+
+    // At this point, the game has already called em_serialize(deserializer).
+    // Once BitstreamSerializer RE is complete (Phase 4G), em->payload will
+    // contain the deserialized payload bytes.
+    if (!em->payload || em->payload_size == 0) {
+        LOG_NET_DEBUG("  ExtenderMessage has no payload (em_serialize is diagnostic-only)");
+        extender_message_pool_return(em);
+        return PROTOCOL_RESULT_HANDLED;
+    }
+
+    // Parse the payload as a JSON-encoded NetMessage.
+    // Expected format: {"Channel":"ch","Module":"mod","Payload":"data",...}
+    // For now, treat the entire payload as the message payload on a default channel.
+    LOG_NET_INFO("  Processing %u-byte payload from user %d", em->payload_size, sender);
+
+    NetMessage net_msg = message_create_to_server("", "", "", 0);
+    net_msg.user_id = sender;
+
+    // Copy raw payload as the message content
+    net_msg.payload = malloc(em->payload_size + 1);
+    if (net_msg.payload) {
+        memcpy(net_msg.payload, em->payload, em->payload_size);
+        net_msg.payload[em->payload_size] = '\0';
+        net_msg.payload_len = em->payload_size;
+
+        if (!message_bus_queue_from_peer(sender, &net_msg)) {
+            LOG_NET_WARN("  Failed to queue message from peer %d", sender);
+        }
+        free(net_msg.payload);
+        net_msg.payload = NULL;
+    }
+
+    // Return message to pool
+    extender_message_pool_return(em);
+
     return PROTOCOL_RESULT_HANDLED;
 }
 
