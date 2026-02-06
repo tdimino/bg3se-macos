@@ -252,6 +252,11 @@ typedef enum {
     [self setNeedsDisplay:YES];
 }
 
+// Accept clicks even when the overlay window is not key (first-click activation)
+- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+    return YES;
+}
+
 @end
 
 // ============================================================================
@@ -702,7 +707,7 @@ static NSColor* colorForLogLevel(const char* text) {
     }
 }
 
-// Handle up/down arrows for history, Escape to close, and block newlines
+// Handle up/down arrows for history and Escape to close
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector {
     if (control == _inputField) {
         if (commandSelector == @selector(moveUp:)) {
@@ -725,11 +730,6 @@ static NSColor* colorForLogLevel(const char* text) {
         } else if (commandSelector == @selector(cancelOperation:)) {
             // Escape key - hide overlay
             overlay_hide();
-            return YES;
-        } else if (commandSelector == @selector(insertNewline:) ||
-                   commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {
-            // Shift+Enter or other newline attempts - ignore in single-line mode
-            // This prevents crashes from attempting to insert newlines
             return YES;
         }
     }

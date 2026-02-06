@@ -241,6 +241,12 @@ void* entity_get_world_for_context(bool is_server);
  */
 void* entity_get_binary_base(void);
 
+/**
+ * Get the captured EocServer pointer.
+ * Returns NULL if not yet discovered.
+ */
+void* entity_get_eoc_server(void);
+
 // ============================================================================
 // TypeId Discovery
 // ============================================================================

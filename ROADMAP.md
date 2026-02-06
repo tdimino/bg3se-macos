@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.24
+## Current Status: v0.36.27
 
 **Overall Feature Parity: ~88%** (based on comprehensive API function count analysis)
 
@@ -46,7 +46,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Enums` | ✅ Full | ✅ 14 enum/bitfield types | **100%** | 7 |
 | `Ext.Math` | ✅ Full (59) | ✅ 57 functions (vectors, matrices, 16 quaternions, scalars) | **97%** | 7.5 |
 | `Ext.Input` | ✅ Full | ✅ CGEventTap capture, hotkeys (8 macOS-specific) | **100%** | 9 |
-| `Ext.Net` | ✅ Full | ✅ Phase 2 Complete (local messaging + request/reply callbacks) | **80%** | 6 |
+| `Ext.Net` | ✅ Full | ✅ Phase 4D Complete (RE offsets verified, capture pipeline) | **85%** | 6 |
 | `Ext.UI` | ✅ Full (9) | ❌ Not impl | **0%** | 8 |
 | `Ext.IMGUI` | ✅ Full (7+) | ✅ Complete widget system (40 types) - All widgets, events, Metal backend | **100%** | 8 |
 | `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
@@ -877,7 +877,7 @@ Ext.Debug.HexDump(addr, size)
 ## Phase 6: Networking & Co-op Sync
 
 ### 6.1 NetChannel API (New - v22+)
-**Status:** ✅ Phase 2 Complete (v0.36.24) - Local messaging + request/reply callbacks working, Phase 3 planned
+**Status:** ✅ Phase 4D Complete (v0.36.26) - All network offsets RE'd, Itanium ABI vtable, capture pipeline implemented. Phase 4E (runtime verification + insertion) next.
 
 From API.md: "NetChannel API provides a structured abstraction for request/response and message broadcasting."
 
@@ -934,6 +934,26 @@ channel:RequestToServer({message = "Hello!"}, function(response)
     _P("Response: " .. Ext.Json.Stringify(response))
 end)
 ```
+
+**Phase 4D: Ghidra RE (COMPLETE):**
+- [x] Found `GameServer::ActivatePeer` at `0x104abbb2c` (string ref tracing)
+- [x] Found `GameServer::DeactivatePeer` at `0x105347910`
+- [x] **EocServer+0xA8 = GameServer** (233 accesses, statistical analysis of 2706 loads)
+- [x] **GameServer+0x1F8 = NetMessageFactory** (74 accesses, +16 from Windows)
+- [x] **GameServer+0x2E0 = ProtocolList** (data/capacity/size at +0x2E0/+0x2F0/+0x300)
+- [x] **GameServer+0x310 = ProtocolMap** (HashMap for protocol ID lookup)
+- [x] Itanium ABI vtable with dual destructor entries implemented
+- [x] `net_hooks_capture_peer()` reads GameServer, NetMessageFactory, ProtocolList from live game
+- [x] Integrated into main.c after EntityWorld discovery
+- [x] Confirmed GameServer struct fields: `+0x650` (peer array), `+0x694/0x698` (peer hash)
+- [x] Found `AbstractPeer::Protocols` TypeContext at `0x1010a857c`
+- [x] Documented Windows struct layouts from BG3Extender reference
+- [x] Created ARM64 binary analysis scripts (`scripts/re/`)
+- [x] Full RE documentation in `ghidra/offsets/NETWORKING.md`
+- [ ] Runtime probe EocServer→GameServer offset (Windows: 0xA8)
+- [ ] Find macOS ProtocolList offset (Windows: ~0x2B0, shifted on ARM64)
+- [ ] Find macOS NetMessageFactory offset (Windows: ~0x1E8, shifted on ARM64)
+- [ ] Find message dispatch / ProcessMsg hook point
 
 **Phase 3 TODO (True Multiplayer):**
 - [ ] Hook `NetMessageFactory` for custom message type
@@ -1474,6 +1494,10 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.27 | 2026-02-05 | **NetChannel API Phase 4E** - Live ProtocolList insertion (swap-to-end pattern), MessageFactory runtime probe, safe_memory write API, cleanup on shutdown (Issue #6, #65) |
+| v0.36.26 | 2026-02-05 | **NetChannel API Phase 4D** - All network offsets RE'd via statistical binary analysis: EocServer+0xA8=GameServer, GameServer+0x1F8=NetMessageFactory, +0x2E0=ProtocolList. Itanium ABI vtable, capture pipeline in main.c (Issue #6) |
+| v0.36.25 | 2026-02-04 | **NetChannel API Phase 4A** - Protocol VMT matching Windows, ExtenderProtocol stub, NetworkBackend abstraction (Local/RakNet), PeerManager with rate limiting. Reviewed by 4 agents (Issue #6) |
+| v0.36.24 | 2026-02-04 | **NetChannel API Phase 2** - Request/reply callbacks, callback registry with Lua state safety, 30s timeout cleanup (Issue #6) |
 | v0.36.23 | 2026-02-03 | **NetChannel API Phase 1** - Ext.Net namespace (6 functions), Net.CreateChannel high-level API, Ext.Mod namespace, in-process message bus for local/single-player. Fire-and-forget messaging working (Issue #6) |
 | v0.36.22 | 2026-02-02 | **Critical Bug Fix: Reaction Crash** - Fixed game crash on in-combat reactions (AoO, Counterspell, etc.). Root cause: Interrupt functor hook had wrong 3-param signature instead of 4-param with HitResult* first (Issue #60) |
 | v0.36.21 | 2026-01-30 | **Complete Ext.IMGUI Widget System** - All 40 widget types (InputText, Combo, Slider, ColorEdit, Tree, Table, Tabs, Menu), event callbacks, standalone test app (Issue #36) |
@@ -1589,7 +1613,7 @@ See `agent_docs/acceleration.md` for detailed methodology |
 | Issue | Feature | Acceleration | Key Technique |
 |-------|---------|--------------|---------------|
 | **#37 Ext.Level** | Physics/Raycast | **50%** | Find physics engine, port LevelLib.inl |
-| ~~#6 NetChannel~~ | Networking | ⚠️ **Phase 1 DONE** | Local messaging complete, Phase 2-3 pending |
+| ~~#6 NetChannel~~ | Networking | ⚠️ **Phase 4D DONE** | RE complete, capture pipeline built, Phase 4E (insertion) next |
 | **#35 Ext.UI** | Noesis UI | **25%** | Deep game UI hooks required |
 
 **Completed:**

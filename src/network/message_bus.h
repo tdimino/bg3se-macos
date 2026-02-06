@@ -64,11 +64,24 @@ void message_bus_init(void);
 
 /**
  * Queue a message for delivery.
+ * Validates payload size and channel name.
  *
  * @param msg Message to queue (contents are copied)
- * @return true on success, false if queue full
+ * @return true on success, false if queue full or validation fails
  */
 bool message_bus_queue(const NetMessage *msg);
+
+/**
+ * Queue a message from a network peer with rate limiting.
+ * Checks the peer's rate limit before queueing.
+ * Use this for messages received from the network (Phase 4D).
+ * For local in-process messages, use message_bus_queue() directly.
+ *
+ * @param peer_user_id User ID of the sending peer
+ * @param msg          Message to queue (contents are copied)
+ * @return true on success, false if rate limited, queue full, or validation fails
+ */
+bool message_bus_queue_from_peer(int32_t peer_user_id, const NetMessage *msg);
 
 /**
  * Process pending messages and fire NetModMessage events.

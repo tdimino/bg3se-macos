@@ -13,14 +13,23 @@
 #include <lauxlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>  // arc4random_buf
 
 // ============================================================================
 // Static State
 // ============================================================================
 
-static CallbackEntry g_callbacks[MAX_PENDING_CALLBACKS];
-static uint64_t g_next_request_id = 1;
-static bool g_initialized = false;
+static CallbackEntry s_callbacks[MAX_PENDING_CALLBACKS];
+static bool s_initialized = false;
+
+// Generate cryptographically random request ID (security fix per review)
+static uint64_t generate_random_request_id(void) {
+    uint64_t id;
+    arc4random_buf(&id, sizeof(id));
+    // Ensure non-zero (0 is used as "no callback")
+    if (id == 0) id = 1;
+    return id;
+}
 
 // ============================================================================
 // Time Utilities
@@ -37,17 +46,16 @@ static uint64_t get_current_time_ms(void) {
 // ============================================================================
 
 void callback_registry_init(void) {
-    if (g_initialized) return;
+    if (s_initialized) return;
 
-    memset(g_callbacks, 0, sizeof(g_callbacks));
-    g_next_request_id = 1;
-    g_initialized = true;
+    memset(s_callbacks, 0, sizeof(s_callbacks));
+    s_initialized = true;
 
-    LOG_NET_DEBUG("Callback registry initialized");
+    LOG_NET_DEBUG("Callback registry initialized (using crypto-random request IDs)");
 }
 
 uint64_t callback_registry_register(lua_State *L) {
-    if (!g_initialized) {
+    if (!s_initialized) {
         callback_registry_init();
     }
 
@@ -61,7 +69,7 @@ uint64_t callback_registry_register(lua_State *L) {
     // Find free slot
     int slot = -1;
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (!g_callbacks[i].active) {
+        if (!s_callbacks[i].active) {
             slot = i;
             break;
         }
@@ -80,14 +88,14 @@ uint64_t callback_registry_register(lua_State *L) {
         return 0;
     }
 
-    // Assign request ID and store
-    uint64_t request_id = g_next_request_id++;
+    // Assign cryptographically random request ID (prevents spoofing in multiplayer)
+    uint64_t request_id = generate_random_request_id();
 
-    g_callbacks[slot].request_id = request_id;
-    g_callbacks[slot].lua_ref = ref;
-    g_callbacks[slot].owner_L = L;  // Track owning Lua state
-    g_callbacks[slot].timestamp = get_current_time_ms();
-    g_callbacks[slot].active = true;
+    s_callbacks[slot].request_id = request_id;
+    s_callbacks[slot].lua_ref = ref;
+    s_callbacks[slot].owner_L = L;  // Track owning Lua state
+    s_callbacks[slot].timestamp = get_current_time_ms();
+    s_callbacks[slot].active = true;
 
     LOG_NET_DEBUG("Registered callback: request_id=%llu, slot=%d, ref=%d, owner=%p",
                 (unsigned long long)request_id, slot, ref, (void*)L);
@@ -97,9 +105,9 @@ uint64_t callback_registry_register(lua_State *L) {
 
 bool callback_registry_retrieve(lua_State *L, uint64_t request_id, lua_State **out_L) {
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (g_callbacks[i].active && g_callbacks[i].request_id == request_id) {
+        if (s_callbacks[i].active && s_callbacks[i].request_id == request_id) {
             // Use the owner state - this is critical for correct stack operations
-            lua_State *actual_L = g_callbacks[i].owner_L;
+            lua_State *actual_L = s_callbacks[i].owner_L;
             if (actual_L != L) {
                 LOG_NET_WARN("Callback retrieve: state mismatch (registered=%p, requesting=%p), using owner",
                             (void*)actual_L, (void*)L);
@@ -111,16 +119,16 @@ bool callback_registry_retrieve(lua_State *L, uint64_t request_id, lua_State **o
             }
 
             // Push callback function onto the owner's stack
-            lua_rawgeti(actual_L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+            lua_rawgeti(actual_L, LUA_REGISTRYINDEX, s_callbacks[i].lua_ref);
 
             // Release the reference (one-shot callback)
-            luaL_unref(actual_L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+            luaL_unref(actual_L, LUA_REGISTRYINDEX, s_callbacks[i].lua_ref);
 
             // Clear slot
-            g_callbacks[i].active = false;
-            g_callbacks[i].request_id = 0;
-            g_callbacks[i].lua_ref = LUA_NOREF;
-            g_callbacks[i].owner_L = NULL;
+            s_callbacks[i].active = false;
+            s_callbacks[i].request_id = 0;
+            s_callbacks[i].lua_ref = LUA_NOREF;
+            s_callbacks[i].owner_L = NULL;
 
             LOG_NET_DEBUG("Retrieved callback: request_id=%llu (actual_L=%p)",
                         (unsigned long long)request_id, (void*)actual_L);
@@ -136,7 +144,7 @@ bool callback_registry_retrieve(lua_State *L, uint64_t request_id, lua_State **o
 
 bool callback_registry_exists(uint64_t request_id) {
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (g_callbacks[i].active && g_callbacks[i].request_id == request_id) {
+        if (s_callbacks[i].active && s_callbacks[i].request_id == request_id) {
             return true;
         }
     }
@@ -146,18 +154,18 @@ bool callback_registry_exists(uint64_t request_id) {
 bool callback_registry_cancel(lua_State *L, uint64_t request_id) {
     (void)L;  // L is unused - we use the owner state instead
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (g_callbacks[i].active && g_callbacks[i].request_id == request_id) {
+        if (s_callbacks[i].active && s_callbacks[i].request_id == request_id) {
             // Use the owner Lua state for unref (not the passed-in L)
-            lua_State *owner = g_callbacks[i].owner_L;
+            lua_State *owner = s_callbacks[i].owner_L;
             if (owner) {
-                luaL_unref(owner, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+                luaL_unref(owner, LUA_REGISTRYINDEX, s_callbacks[i].lua_ref);
             }
 
             // Clear slot
-            g_callbacks[i].active = false;
-            g_callbacks[i].request_id = 0;
-            g_callbacks[i].lua_ref = LUA_NOREF;
-            g_callbacks[i].owner_L = NULL;
+            s_callbacks[i].active = false;
+            s_callbacks[i].request_id = 0;
+            s_callbacks[i].lua_ref = LUA_NOREF;
+            s_callbacks[i].owner_L = NULL;
 
             LOG_NET_DEBUG("Cancelled callback: request_id=%llu",
                         (unsigned long long)request_id);
@@ -174,24 +182,24 @@ int callback_registry_cleanup_expired(lua_State *L, uint64_t timeout_ms) {
     int cleaned = 0;
 
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (g_callbacks[i].active) {
-            uint64_t age = now - g_callbacks[i].timestamp;
+        if (s_callbacks[i].active) {
+            uint64_t age = now - s_callbacks[i].timestamp;
             if (age > timeout_ms) {
                 // Use the owner Lua state for unref (critical for cross-state safety)
-                lua_State *owner = g_callbacks[i].owner_L;
+                lua_State *owner = s_callbacks[i].owner_L;
                 if (owner) {
-                    luaL_unref(owner, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+                    luaL_unref(owner, LUA_REGISTRYINDEX, s_callbacks[i].lua_ref);
                 }
 
                 LOG_NET_WARN("Expired callback: request_id=%llu, age=%llums",
-                            (unsigned long long)g_callbacks[i].request_id,
+                            (unsigned long long)s_callbacks[i].request_id,
                             (unsigned long long)age);
 
                 // Clear slot
-                g_callbacks[i].active = false;
-                g_callbacks[i].request_id = 0;
-                g_callbacks[i].lua_ref = LUA_NOREF;
-                g_callbacks[i].owner_L = NULL;
+                s_callbacks[i].active = false;
+                s_callbacks[i].request_id = 0;
+                s_callbacks[i].lua_ref = LUA_NOREF;
+                s_callbacks[i].owner_L = NULL;
 
                 cleaned++;
             }
@@ -208,7 +216,7 @@ int callback_registry_cleanup_expired(lua_State *L, uint64_t timeout_ms) {
 int callback_registry_count(void) {
     int count = 0;
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (g_callbacks[i].active) {
+        if (s_callbacks[i].active) {
             count++;
         }
     }
@@ -220,18 +228,18 @@ int callback_registry_cleanup_for_state(lua_State *L) {
 
     int cleaned = 0;
     for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (g_callbacks[i].active && g_callbacks[i].owner_L == L) {
+        if (s_callbacks[i].active && s_callbacks[i].owner_L == L) {
             // Release the Lua reference
-            luaL_unref(L, LUA_REGISTRYINDEX, g_callbacks[i].lua_ref);
+            luaL_unref(L, LUA_REGISTRYINDEX, s_callbacks[i].lua_ref);
 
             LOG_NET_DEBUG("Cleaning up callback for destroyed state: request_id=%llu",
-                         (unsigned long long)g_callbacks[i].request_id);
+                         (unsigned long long)s_callbacks[i].request_id);
 
             // Clear slot
-            g_callbacks[i].active = false;
-            g_callbacks[i].request_id = 0;
-            g_callbacks[i].lua_ref = LUA_NOREF;
-            g_callbacks[i].owner_L = NULL;
+            s_callbacks[i].active = false;
+            s_callbacks[i].request_id = 0;
+            s_callbacks[i].lua_ref = LUA_NOREF;
+            s_callbacks[i].owner_L = NULL;
 
             cleaned++;
         }

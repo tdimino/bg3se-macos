@@ -104,12 +104,26 @@ Ghidra MCP queries can consume significant tokens. Use these strategies to minim
 | **Limit parameters** | Use `limit` parameter on `search_functions_by_name`, `list_strings` | Reduces bloat |
 | **Skip list_strings** | String search often times out on large binaries; use grep instead | Avoids timeouts |
 
+### BG3 Binary Path
+
+**IMPORTANT:** The BG3 binary is installed via Steam, NOT in /Applications:
+
+```bash
+# Correct path (Steam installation)
+BG3_BIN="$HOME/Library/Application Support/Steam/steamapps/common/Baldurs Gate 3/Baldur's Gate 3.app/Contents/MacOS/Baldur's Gate 3"
+
+# For ARM64 strings (universal binary - must specify arch)
+strings -arch arm64 "$BG3_BIN" | grep "pattern"
+```
+
 ### Recommended Workflow
 
 1. **Discovery phase** (low cost):
    ```bash
-   # Find all symbols matching a pattern
-   nm -gU "/Applications/Baldur's Gate 3.app/Contents/MacOS/Baldur's Gate 3" 2>/dev/null | c++filt | grep "PatternHere"
+   # Find all symbols matching a pattern (note: main binary has 0 exported symbols - fully stripped)
+   # Use strings search instead:
+   BG3_BIN="$HOME/Library/Application Support/Steam/steamapps/common/Baldurs Gate 3/Baldur's Gate 3.app/Contents/MacOS/Baldur's Gate 3"
+   strings -arch arm64 "$BG3_BIN" 2>/dev/null | grep "PatternHere"
    ```
 
 2. **Analysis phase** (targeted):
@@ -124,6 +138,32 @@ Ghidra MCP queries can consume significant tokens. Use these strategies to minim
    # Use disassembly for offset patterns
    mcp__ghidra__disassemble_function("0xADDRESS")
    ```
+
+### GhidraMCP HTTP API Endpoints
+
+When Ghidra is running with CodeBrowser open, you can query directly via curl:
+
+```bash
+# Search for functions by name (most useful)
+curl -s "http://127.0.0.1:8080/searchFunctions?query=RakNet" | head -20
+
+# Decompile function by address
+curl -s "http://127.0.0.1:8080/decompile_function?address=0x100aac0d4"
+
+# Get XREFs to an address
+curl -s "http://127.0.0.1:8080/xrefs_to?address=0x107cedee2"
+
+# List all functions (paginated)
+curl -s "http://127.0.0.1:8080/methods?offset=0&limit=100"
+
+# List strings (limited to 2000, often incomplete for large binaries)
+curl -s "http://127.0.0.1:8080/strings?offset=0&limit=2000"
+
+# Get function by address
+curl -s "http://127.0.0.1:8080/get_function_by_address?address=0x100aac0d4"
+```
+
+**Note:** For comprehensive string search, use `strings -arch arm64` on the binary directly - faster and complete.
 
 ### Available MCP Tools
 

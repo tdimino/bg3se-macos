@@ -9,6 +9,7 @@
 
 #include "message_bus.h"
 #include "callback_registry.h"
+#include "peer_manager.h"
 #include "../core/logging.h"
 #include "../lua/lua_events.h"
 #include <lauxlib.h>
@@ -16,23 +17,23 @@
 #include <stdlib.h>
 
 // ============================================================================
-// Static State
+// Static State (s_ prefix for file-static variables per coding conventions)
 // ============================================================================
 
-static NetMessage g_message_queue[MAX_PENDING_MESSAGES];
-static int g_queue_head = 0;
-static int g_queue_tail = 0;
-static bool g_initialized = false;
+static NetMessage s_message_queue[MAX_PENDING_MESSAGES];
+static int s_queue_head = 0;
+static int s_queue_tail = 0;
+static bool s_initialized = false;
 
 // ============================================================================
 // Queue Management
 // ============================================================================
 
 static int queue_count(void) {
-    if (g_queue_tail >= g_queue_head) {
-        return g_queue_tail - g_queue_head;
+    if (s_queue_tail >= s_queue_head) {
+        return s_queue_tail - s_queue_head;
     }
-    return MAX_PENDING_MESSAGES - g_queue_head + g_queue_tail;
+    return MAX_PENDING_MESSAGES - s_queue_head + s_queue_tail;
 }
 
 static bool queue_is_full(void) {
@@ -40,7 +41,7 @@ static bool queue_is_full(void) {
 }
 
 static bool queue_is_empty(void) {
-    return g_queue_head == g_queue_tail;
+    return s_queue_head == s_queue_tail;
 }
 
 // ============================================================================
@@ -48,19 +49,32 @@ static bool queue_is_empty(void) {
 // ============================================================================
 
 void message_bus_init(void) {
-    if (g_initialized) return;
+    if (s_initialized) return;
 
-    memset(g_message_queue, 0, sizeof(g_message_queue));
-    g_queue_head = 0;
-    g_queue_tail = 0;
-    g_initialized = true;
+    memset(s_message_queue, 0, sizeof(s_message_queue));
+    s_queue_head = 0;
+    s_queue_tail = 0;
+    s_initialized = true;
 
     LOG_NET_DEBUG("Message bus initialized");
 }
 
 bool message_bus_queue(const NetMessage *msg) {
-    if (!g_initialized) {
+    if (!s_initialized) {
         message_bus_init();
+    }
+
+    // Validate payload size
+    if (msg->payload && msg->payload_len > MAX_MESSAGE_PAYLOAD) {
+        LOG_NET_ERROR("Message payload too large: %zu bytes (max %d)",
+                      msg->payload_len, MAX_MESSAGE_PAYLOAD);
+        return false;
+    }
+
+    // Validate channel name is non-empty
+    if (msg->channel[0] == '\0') {
+        LOG_NET_ERROR("Message has empty channel name");
+        return false;
     }
 
     if (queue_is_full()) {
@@ -69,7 +83,7 @@ bool message_bus_queue(const NetMessage *msg) {
     }
 
     // Initialize queue slot to zero first (prevents stale pointers)
-    NetMessage *queued = &g_message_queue[g_queue_tail];
+    NetMessage *queued = &s_message_queue[s_queue_tail];
     memset(queued, 0, sizeof(NetMessage));
 
     // Copy scalar fields
@@ -109,12 +123,23 @@ bool message_bus_queue(const NetMessage *msg) {
     queued->active = true;
 
     // Advance tail
-    g_queue_tail = (g_queue_tail + 1) % MAX_PENDING_MESSAGES;
+    s_queue_tail = (s_queue_tail + 1) % MAX_PENDING_MESSAGES;
 
     LOG_NET_DEBUG("Queued message: channel=%s, dest=%d, request_id=%llu",
                 msg->channel, msg->dest_type, (unsigned long long)msg->request_id);
 
     return true;
+}
+
+bool message_bus_queue_from_peer(int32_t peer_user_id, const NetMessage *msg) {
+    // Check rate limit for the sending peer
+    if (!peer_manager_check_rate_limit(peer_user_id)) {
+        LOG_NET_WARN("Message dropped: rate limit exceeded for peer user_id=%d",
+                     peer_user_id);
+        return false;
+    }
+
+    return message_bus_queue(msg);
 }
 
 /**
@@ -137,17 +162,17 @@ static void fire_net_mod_message(lua_State *L, const NetMessage *msg) {
 }
 
 int message_bus_process(lua_State *server_L, lua_State *client_L) {
-    if (!g_initialized || queue_is_empty()) {
+    if (!s_initialized || queue_is_empty()) {
         return 0;
     }
 
     int processed = 0;
 
     while (!queue_is_empty()) {
-        NetMessage *msg = &g_message_queue[g_queue_head];
+        NetMessage *msg = &s_message_queue[s_queue_head];
 
         if (!msg->active) {
-            g_queue_head = (g_queue_head + 1) % MAX_PENDING_MESSAGES;
+            s_queue_head = (s_queue_head + 1) % MAX_PENDING_MESSAGES;
             continue;
         }
 
@@ -218,7 +243,7 @@ cleanup:
         }
         msg->active = false;
 
-        g_queue_head = (g_queue_head + 1) % MAX_PENDING_MESSAGES;
+        s_queue_head = (s_queue_head + 1) % MAX_PENDING_MESSAGES;
         processed++;
     }
 
@@ -236,15 +261,15 @@ int message_bus_pending_count(void) {
 void message_bus_clear(void) {
     // Free all payloads
     for (int i = 0; i < MAX_PENDING_MESSAGES; i++) {
-        if (g_message_queue[i].payload) {
-            free(g_message_queue[i].payload);
-            g_message_queue[i].payload = NULL;
+        if (s_message_queue[i].payload) {
+            free(s_message_queue[i].payload);
+            s_message_queue[i].payload = NULL;
         }
-        g_message_queue[i].active = false;
+        s_message_queue[i].active = false;
     }
 
-    g_queue_head = 0;
-    g_queue_tail = 0;
+    s_queue_head = 0;
+    s_queue_tail = 0;
 
     LOG_NET_DEBUG("Message queue cleared");
 }

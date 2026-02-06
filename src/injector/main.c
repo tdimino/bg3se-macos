@@ -137,6 +137,7 @@ extern "C" {
 
 // Network system (Issue #6: NetChannel API)
 #include "lua_net.h"
+#include "net_hooks.h"
 
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
@@ -1908,6 +1909,17 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
             }
         }
 
+        // Capture network pointers from EocServer (Phase 4D)
+        // Must run after EntityWorld discovery since both need EocServer
+        void *eoc_server = entity_get_eoc_server();
+        if (eoc_server && !net_hooks_get_status().protocol_list_hooked) {
+            LOG_NET_INFO("Attempting network capture from EocServer...");
+            if (net_hooks_capture_peer(eoc_server)) {
+                net_hooks_register_message();
+                net_hooks_insert_protocol();
+            }
+        }
+
         // Load mod scripts after save is loaded (if not already loaded)
         // This handles the case where InitGame wasn't called (loading existing save)
         if (!mod_scripts_loaded) {
@@ -2865,6 +2877,9 @@ static void bg3se_cleanup(void) {
     // Log function cache summary
     LOG_OSIRIS_INFO("Osiris functions: %d cached, %d unique IDs observed",
                 osi_func_get_cache_count(), osi_func_get_seen_count());
+
+    // Remove network hooks (ExtenderProtocol from ProtocolList)
+    net_hooks_remove();
 
     // Shutdown ImGui Metal backend
     imgui_metal_shutdown();

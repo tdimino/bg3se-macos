@@ -1,7 +1,7 @@
 # BG3SE-macOS: Offset Documentation
 
 **Game Version:** Baldur's Gate 3 (macOS ARM64)
-**Last Updated:** 2025-11-29
+**Last Updated:** 2026-02-05
 
 ## Overview
 
@@ -15,6 +15,10 @@ This directory contains reverse-engineered offsets and memory layouts for the ma
 | [ENTITY_SYSTEM.md](ENTITY_SYSTEM.md) | ECS architecture, EntityWorld capture, GUID lookup |
 | [COMPONENTS.md](COMPONENTS.md) | GetComponent addresses and discovery status |
 | [STRUCTURES.md](STRUCTURES.md) | C structure definitions for game components |
+| [NETWORKING.md](NETWORKING.md) | Network system: EocServer, GameServer, AbstractPeer, ProtocolList, MessageFactory |
+| [STATS.md](STATS.md) | RPGStats system offsets |
+| [GAMESTATE.md](GAMESTATE.md) | Game state machine and transitions |
+| [PROTOTYPE_MANAGERS.md](PROTOTYPE_MANAGERS.md) | Spell/Status/Passive/etc prototype managers |
 
 ## Quick Reference
 

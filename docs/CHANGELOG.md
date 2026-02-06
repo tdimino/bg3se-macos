@@ -13,6 +13,101 @@ Each entry includes:
 
 ---
 
+## [v0.36.27] - 2026-02-05
+
+**Parity:** ~88% | **Category:** Network Integration | **Issues:** #6
+
+### Added
+- **NetChannel API Phase 4E: Live ProtocolList Insertion** - ExtenderProtocol now injected into the game's dispatch chain
+  - `net_hooks_insert_protocol()` performs insert_at(0) swap pattern into ProtocolList array
+  - Idempotency guard prevents double-insertion on repeated COsiris::Event calls
+  - Array growth with `malloc` fallback when capacity is full (one-time ~64 byte leak of game buffer)
+  - ARM64 memory barriers (`__sync_synchronize`) ensure write ordering for concurrent readers
+  - Post-insertion verification reads back data[0] to confirm
+- **MessageFactory Runtime Probe** - Diagnostic probing of NetMessageFactory layout
+  - Probes 32-bit and 64-bit pool array candidate layouts
+  - Validates pool entries by sampling first 4 vtable pointers
+  - Reports whether message ID 400 is within pool range (actual registration deferred to Phase 4F)
+- **Safe Memory Write API** - `safe_memory_write()`, `safe_memory_write_pointer()`, `safe_memory_write_u64()`
+  - Validates destination via `mach_vm_region`, uses `mach_vm_protect` fallback for read-only pages
+  - GPU carveout region guard prevents writes to device memory
+
+### Changed
+- `net_hooks_remove()` now removes ExtenderProtocol from ProtocolList (swap-with-last pattern)
+- `bg3se_cleanup()` calls `net_hooks_remove()` before ImGui/Lua shutdown
+- Console Enter key bug fixed (Issue #65) — removed `insertNewline:` interception in overlay
+
+### Technical
+- ExtenderMessage vtable updated to Itanium ABI (dual destructor + preamble block)
+- ProtocolList probe offsets corrected to match NETWORKING.md (+0x2E0/+0x2F0/+0x300)
+- All raw pointer dereferences in net_hooks.c replaced with safe_memory API
+
+---
+
+## [v0.36.26] - 2026-02-05
+
+**Parity:** ~88% | **Category:** Network RE | **Issues:** #6
+
+### Added
+- **NetChannel API Phase 4D: Ghidra RE Complete** - All network offsets verified via statistical binary analysis
+  - `EocServer+0xA8 = GameServer*` — Confirmed (233 accesses across 2706 singleton loads)
+  - `GameServer+0x1F8 = NetMessageFactory*` — Confirmed (74 accesses, +16 shift from Windows)
+  - `GameServer+0x2E0 = ProtocolList` — Confirmed (data/capacity/size at +0x2E0/+0x2F0/+0x300)
+  - `GameServer+0x310 = ProtocolMap` — Confirmed (HashMap for protocol ID lookup)
+- **Itanium C++ ABI Vtable** — Correct dual-destructor vtable layout for macOS ARM64
+  - `ProtocolVtableBlock` with preamble (offset_to_top=0, typeinfo=NULL) + 8 function pointers
+  - ExtenderProtocol uses static vtable block, vptr points past preamble
+- **Runtime ProtocolList Probing** — Tries 3 candidate array layouts at capture time
+  - Validates entries by checking for vtable-like pointer at offset 0
+  - Falls back to hex dump of GameServer+0x2D0..0x320 for manual analysis
+- **Network Pointer Capture Pipeline** — `net_hooks_capture_peer()` reads pointers from live game
+  - Captures GameServer, NetMessageFactory, and ProtocolList from EocServer
+  - Integrated into main.c after EntityWorld discovery
+- **RE Scripts** — `scripts/re/find_dispatch.py`, `find_processmsg.py` for binary analysis
+
+### Technical
+- `entity_get_eoc_server()` accessor added to entity_system for cross-module access
+- Message dispatch: AbstractPeer iterates ProtocolList calling ProcessMsg virtual — no hooking needed
+- `NetMessageFactory::GetMessage` at `0x1063d5998` (524 callers in binary)
+- Windows→macOS offset shifts: +16 (NetMessageFactory), +48 (ProtocolList) due to pthread_mutex_t growth
+
+---
+
+## [v0.36.25] - 2026-02-04
+
+**Parity:** ~88% | **Category:** Network API | **Issues:** #6
+
+### Added
+- **NetChannel API Phase 4A: Foundation** - Multiplayer-ready protocol and peer abstractions
+  - `protocol.h` - Protocol VMT matching Windows `net::Protocol` (7 virtual functions)
+  - `extender_protocol.c/h` - ExtenderProtocol with stub ProcessMsg for protocol chain
+  - `network_backend.c/h` - Pluggable backend (LocalBackend now, RakNetBackend future)
+  - `peer_manager.c/h` - Peer tracking with rate limiting (16 peers, 100 msg/s default)
+  - Constants: `NETMSG_SCRIPT_EXTENDER = 400`, `ProtoVersion`, `ProtocolResult`
+- **NetChannel API Phase 4B: ExtenderMessage** - Custom network message type
+  - `extender_message.c/h` - Message struct with VMT matching Windows `net::Message`
+  - Wire format: `[4-byte LE size][payload]` for network serialization
+  - Create/destroy/reset/serialize/deserialize API
+- **NetChannel API Phase 4E: Security Hardening** - Rate limiting and payload validation
+  - `message_bus_queue_from_peer()` - Rate-limited queueing for network messages
+  - Payload size validation against `MAX_MESSAGE_PAYLOAD` (64KB)
+  - Channel name validation (reject empty channels)
+
+### Changed
+- `lua_net.c` - Extracted `maybe_register_callback()` and `queue_or_error()` helpers (DRY)
+- `lua_net.c` - Renamed `g_*` to `s_*` for file-static variables per conventions
+- `lua_net.c` - Removed unused `get_opt_bool()` (binary flag was always discarded)
+
+### Technical
+- VMT layout note added for Itanium ABI dual-destructor consideration (Phase 4D)
+- Virtual destructor clears singleton to prevent dangling pointers
+- `peer_manager_clear()` now properly resets `s_initialized` for full state reset
+- Consistent auto-init guards across all `peer_manager_*` public functions
+- `net_hooks.c/h` prepared with documented Ghidra RE targets for Phase 4D
+- 4 reviewers (3 Claude agents + 1 Codex GPT-5.2): 0 critical bugs remaining
+
+---
+
 ## [v0.36.24] - 2026-02-04
 
 **Parity:** ~88% | **Category:** Network API | **Issues:** #6

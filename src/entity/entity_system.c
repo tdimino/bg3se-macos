@@ -1062,6 +1062,10 @@ void* entity_get_binary_base(void) {
     return g_MainBinaryBase;
 }
 
+void* entity_get_eoc_server(void) {
+    return g_EoCServer;
+}
+
 // ============================================================================
 // TypeId Discovery Retry
 // ============================================================================

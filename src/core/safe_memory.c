@@ -167,3 +167,64 @@ bool safe_memory_is_gpu_region(mach_vm_address_t address) {
      * Examples seen in crashes: 0x49000004a6, 0x4900000000 */
     return address >= GPU_REGION_START && address < GPU_REGION_END;
 }
+
+/* ============================================================================
+ * Safe Memory Write Implementation
+ * ============================================================================ */
+
+bool safe_memory_write(mach_vm_address_t dest, const void *src, size_t size) {
+    if (src == NULL || size == 0) {
+        return false;
+    }
+
+    /* Reject GPU carveout region */
+    if (safe_memory_is_gpu_region(dest)) {
+        return false;
+    }
+
+    /* Validate the destination region */
+    SafeMemoryInfo info = safe_memory_check_address(dest);
+    if (!info.is_valid || !info.is_readable) {
+        return false;
+    }
+
+    if (!info.is_writable) {
+        /* Temporarily make writable */
+        kern_return_t kr = mach_vm_protect(
+            mach_task_self(),
+            info.region_start,
+            info.region_size,
+            FALSE, /* not max_protection */
+            VM_PROT_READ | VM_PROT_WRITE
+        );
+        if (kr != KERN_SUCCESS) {
+            LOG_MEMORY_DEBUG("safe_memory_write: mach_vm_protect FAILED for 0x%llx: kr=%d",
+                       (unsigned long long)dest, kr);
+            return false;
+        }
+    }
+
+    /* Direct write — we are in the same process (DYLD_INSERT_LIBRARIES) */
+    memcpy((void *)dest, src, size);
+
+    /* Restore original protection if we changed it */
+    if (!info.is_writable) {
+        mach_vm_protect(
+            mach_task_self(),
+            info.region_start,
+            info.region_size,
+            FALSE,
+            VM_PROT_READ
+        );
+    }
+
+    return true;
+}
+
+bool safe_memory_write_pointer(mach_vm_address_t address, void *value) {
+    return safe_memory_write(address, &value, sizeof(void *));
+}
+
+bool safe_memory_write_u64(mach_vm_address_t address, uint64_t value) {
+    return safe_memory_write(address, &value, sizeof(uint64_t));
+}

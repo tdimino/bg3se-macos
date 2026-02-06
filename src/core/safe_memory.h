@@ -1,7 +1,7 @@
 /**
- * BG3SE-macOS - Safe Memory Reading Module
+ * BG3SE-macOS - Safe Memory Access Module
  *
- * Provides safe memory access using mach_vm APIs to prevent SIGBUS crashes
+ * Provides safe memory read/write using mach_vm APIs to prevent SIGBUS crashes
  * when probing potentially invalid memory addresses.
  *
  * Background: macOS ARM64 has GPU carveout regions (0x1000000000-0x7000000000)
@@ -115,6 +115,44 @@ bool safe_memory_read_string(mach_vm_address_t address, char *buffer, size_t max
  * @return true if address is in suspected GPU region
  */
 bool safe_memory_is_gpu_region(mach_vm_address_t address);
+
+// ============================================================================
+// Safe Memory Write API
+//
+// Validates the destination is in a writable region before writing.
+// If the page is read-only, temporarily enables writes via mach_vm_protect.
+// Game heap memory (where ProtocolList etc. live) is already R/W.
+// ============================================================================
+
+/**
+ * Safely write memory from src to destination address.
+ * Checks writability before writing. If page is read-only,
+ * temporarily changes protection using mach_vm_protect.
+ *
+ * @param dest  Destination address in game memory
+ * @param src   Source buffer to write from
+ * @param size  Number of bytes to write
+ * @return true on success, false on failure
+ */
+bool safe_memory_write(mach_vm_address_t dest, const void *src, size_t size);
+
+/**
+ * Safely write a pointer value to an address.
+ *
+ * @param address Address to write to
+ * @param value   Pointer value to write
+ * @return true on success, false on failure
+ */
+bool safe_memory_write_pointer(mach_vm_address_t address, void *value);
+
+/**
+ * Safely write a uint64_t value to an address.
+ *
+ * @param address Address to write to
+ * @param value   Value to write
+ * @return true on success, false on failure
+ */
+bool safe_memory_write_u64(mach_vm_address_t address, uint64_t value);
 
 #ifdef __cplusplus
 }

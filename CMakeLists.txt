@@ -136,6 +136,11 @@ add_library(bg3se SHARED
     src/lua/lua_net.c
     src/network/message_bus.c
     src/network/callback_registry.c
+    src/network/network_backend.c
+    src/network/peer_manager.c
+    src/network/extender_protocol.c
+    src/network/extender_message.c
+    src/network/net_hooks.c
     src/hooks/arm64_decode.c
     src/hooks/arm64_hook.c
     src/io/path_override.c
