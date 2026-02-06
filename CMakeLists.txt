@@ -74,6 +74,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/io
     ${CMAKE_SOURCE_DIR}/src/imgui
     ${CMAKE_SOURCE_DIR}/src/network
+    ${CMAKE_SOURCE_DIR}/src/level
+    ${CMAKE_SOURCE_DIR}/src/audio
 )
 
 add_library(bg3se SHARED
@@ -144,6 +146,10 @@ add_library(bg3se SHARED
     src/hooks/arm64_decode.c
     src/hooks/arm64_hook.c
     src/io/path_override.c
+    src/level/level_manager.c
+    src/lua/lua_level.c
+    src/audio/audio_manager.c
+    src/lua/lua_audio.c
     lib/lz4/lz4.c
     # ImGui core
     ${IMGUI_DIR}/imgui.cpp

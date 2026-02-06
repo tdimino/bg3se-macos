@@ -13,6 +13,82 @@ Each entry includes:
 
 ---
 
+## [v0.36.33] - 2026-02-06
+
+**Parity:** ~90% | **Category:** Bug Fix | **Issues:** #65
+
+### Fixed
+- **Game startup failure on some machines (Issue #65)**
+  - Deferred ~65 `mach_vm_read_overwrite` kernel calls from `COsiris::Load` to tick loop
+  - Network initialization now waits for Running state stability (500ms) before capture
+  - State machine with exponential backoff retry (3 attempts max)
+  - `BG3SE_NO_NET=1` environment variable retained as manual override
+  - Root cause: kernel calls during timing-sensitive save load window caused session abort
+
+### Technical
+- New `net_hooks_request_deferred_init()` / `net_hooks_deferred_tick()` / `net_hooks_is_ready()` API
+- Deferred state machine: IDLE → PENDING → CAPTURING → COMPLETE/FAILED
+- Ext.Net local message bus continues working during deferred initialization
+
+---
+
+## [v0.36.32] - 2026-02-06
+
+**Parity:** ~90% | **Category:** Stats Expansion + Level + Audio | **Issues:** Parity Push
+
+### Added
+- **Ext.Stats Expansion (12 new functions)**
+  - `GetStats(type?)` — alias for GetAll, returns array of stat names
+  - `SetPersistence(name, persist)` — deprecated stub with log-once warning
+  - `GetStatsManager()` — raw RPGStats pointer for debug/advanced use
+  - `GetCachedSpell(name)` — prototype cache lookup via SpellPrototypeManager
+  - `GetCachedStatus(name)` — prototype cache lookup via StatusPrototypeManager
+  - `GetCachedPassive(name)` — prototype cache lookup via PassivePrototypeManager
+  - `GetCachedInterrupt(name)` — prototype cache lookup via InterruptPrototypeManager
+  - `EnumIndexToLabel(enumName, index)` — RPGEnumeration value-to-label conversion
+  - `EnumLabelToIndex(enumName, label)` — RPGEnumeration label-to-value conversion
+  - `GetModifierAttributes(modifierName)` — returns {attrName=typeName} table for a stat type
+  - `AddAttribute(list, name, type)` — stub with warning (rare API)
+  - `AddEnumerationValue(type, label)` — stub with warning (rare API)
+
+- **Ext.Level (9 functions) — NEW NAMESPACE**
+  - `IsReady()` — check if LevelManager is available
+  - `GetCurrentLevel()` — current EoCLevel pointer
+  - `GetPhysicsScene()` — PhysicsSceneBase pointer
+  - `GetAiGrid()` — AiGrid pointer
+  - `RaycastClosest(src, dst, physType, includeGroup, excludeGroup, context)` — closest hit with Normal/Position/Distance
+  - `RaycastAny(src, dst, ...)` — boolean hit check
+  - `TestBox(pos, extents, physType, includeGroup, excludeGroup)` — box overlap test
+  - `TestSphere(pos, radius, physType, includeGroup, excludeGroup)` — sphere overlap test
+  - `GetHeightsAt(x, z)` — tile height query (stub pending AiGrid offset verification)
+
+- **Ext.Audio (13 functions) — NEW NAMESPACE**
+  - `IsReady()` — check if SoundManager is available
+  - `GetSoundObjectId(name)` — resolve "Global", "Music", "Listener0", etc. to ID
+  - `PostEvent(soundObject, eventName)` — play a WWise event
+  - `Stop(soundObject)` — stop playback on a sound object
+  - `PauseAllSounds()` — pause all audio
+  - `ResumeAllSounds()` — resume all audio
+  - `SetSwitch(soundObject, switchGroup, state)` — set WWise switch
+  - `SetState(stateGroup, state)` — set global WWise state
+  - `SetRTPC(soundObject, name, value)` — set real-time parameter
+  - `GetRTPC(soundObject, name)` — read real-time parameter
+  - `ResetRTPC(soundObject, name)` — reset parameter to default
+  - `LoadEvent(eventName)` — preload event data
+  - `UnloadEvent(eventName)` — release event data
+
+### Technical
+- New modules: `src/level/level_manager.c`, `src/audio/audio_manager.c`
+- New Lua bindings: `src/lua/lua_level.c`, `src/lua/lua_audio.c`
+- Stats enum lookup uses RPGStats.ModifierValueLists CNEM at +0x08
+- RPGEnumeration inherits CNamedElementManager — same CNEM access pattern
+- Level manager shares LevelManager::m_ptr (0x08a3be40) with template_manager
+- Audio manager accesses SoundManager via ResourceManager::m_ptr chain
+- Physics raycasting via PhysicsScene VMT dispatch (indices need runtime verification)
+- All ARM64 struct offsets are best-effort from Windows analysis; runtime RE session needed to verify
+
+---
+
 ## [v0.36.31] - 2026-02-06
 
 **Parity:** ~88% | **Category:** Network Handshake | **Issues:** #6

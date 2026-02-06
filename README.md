@@ -100,7 +100,7 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 
 ## Status
 
-**Version:** v0.36.24 | **Feature Parity:** ~88%
+**Version:** v0.36.33 | **Feature Parity:** ~90%
 
 | Feature | Status |
 |---------|--------|
@@ -109,7 +109,7 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Mod Loading | ✅ PAK file reading, auto-detection |
 | Ext.Osiris | ✅ Event listeners, custom functions (NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions), **server context guards** |
 | Ext.Entity | ✅ GUID lookup, **Dual EntityWorld** (client + server), **1,999 components registered** (534 layouts: 169 verified + 365 generated), **1,577 ARM64 sizes** + **702 Windows estimates** = **1,730 total** (87% coverage) |
-| Ext.Stats | ✅ 15,774 stats, property read/write, **Sync complete (created + existing stats)** |
+| Ext.Stats | ✅ 15,774 stats, property read/write, Sync, **Enum lookup, Modifier attributes, Prototype cache** |
 | Ext.Events | ✅ 33 events (13 lifecycle + 17 engine + 2 functor + 1 network) with Prevent pattern |
 | Ext.IO | ✅ LoadFile, SaveFile, **AddPathOverride, GetPathOverride** |
 | Ext.Timer | ✅ WaitFor, WaitForRealtime, Cancel, Pause, Resume, **MicrosecTime, ClockEpoch, ClockTime, GameTime, DeltaTime, Ticks, Persistent timers (6 functions)** |
@@ -121,8 +121,10 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Ext.StaticData | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription) via ForceCapture |
 | Ext.Resource | ✅ Get, GetAll, GetTypes, GetCount (34 resource types) |
 | Ext.Template | ✅ **Auto-capture**, iteration (Cache/LocalCache), GUID resolution |
-| Ext.Net | ✅ **Phase 2 Complete** - PostMessageToServer/User/Client, BroadcastMessage, Version, IsHost, **Request/Reply Callbacks** |
-| Net.CreateChannel | ✅ **Phase 2 Complete** - High-level channel API with SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, Broadcast |
+| Ext.Level | ✅ **9 functions** - RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, singleton accessors |
+| Ext.Audio | ✅ **13 functions** - PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent |
+| Ext.Net | ✅ **Phase 4I Complete** - Full RakNet backend, PostMessageToServer/User/Client, BroadcastMessage, IsHost, IsReady, PeerVersion, **Request/Reply Callbacks** |
+| Net.CreateChannel | ✅ **Phase 4I Complete** - High-level channel API with SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, Broadcast |
 | Ext.Mod | ✅ IsModLoaded, GetLoadOrder, GetMod, GetBaseMod |
 | Lifetime Scoping | ✅ Prevents stale object access |
 | Context System | ✅ **Server/Client context awareness**, Ext.IsServer/IsClient/GetContext, two-phase bootstrap |

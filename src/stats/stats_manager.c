@@ -530,6 +530,204 @@ static void* get_modifier_lists_manager(void) {
     return (char*)rpgstats + RPGSTATS_OFFSET_MODIFIER_LISTS;
 }
 
+// Get the ModifierValueLists manager from RPGStats
+// ModifierValueLists is the 1st CNamedElementManager (after VMT)
+// RPGStats layout: VMT(8) + ModifierValueLists(0x58) + ModifierLists(0x60) + Objects(0xC0)
+#define RPGSTATS_OFFSET_MODIFIER_VALUE_LISTS 0x08
+
+static void* get_modifier_value_lists_manager(void) {
+    void *rpgstats = stats_manager_get_raw();
+    if (!rpgstats) return NULL;
+    return (char*)rpgstats + RPGSTATS_OFFSET_MODIFIER_VALUE_LISTS;
+}
+
+// RPGEnumeration structure offsets (ARM64)
+// struct RPGEnumeration {
+//   FixedString Name;              // +0x00 (4 bytes, padded?)
+//   LegacyMap<FixedString, int32_t> Values;
+// }
+// On ARM64 with LegacyMap, the Values map is a hash table.
+// We'll use the NameToHandle HashMap pattern from CNEM which is:
+//   HashBuf ptr(8), HashSize u32(4), pad(4), Keys ptr(8), Values ptr(8), ...
+// But RPGEnumeration.Values is a simpler flat array of {key(4), value(4)} pairs.
+//
+// For now, probe at runtime. The RPGEnumeration name is read via read_fixed_string
+// at offset 0x00. The Values map starts after the name field.
+#define RPGENUM_OFFSET_NAME 0x00
+
+// Find RPGEnumeration by name, return its pointer
+static void* find_rpgenumeration_by_name(const char *name) {
+    if (!name || !stats_manager_ready()) return NULL;
+
+    void *mvl = get_modifier_value_lists_manager();
+    if (!mvl) return NULL;
+
+    int count = get_manager_count(mvl);
+    for (int i = 0; i < count; i++) {
+        void *enumeration = get_manager_element(mvl, i);
+        if (!enumeration) continue;
+
+        const char *enum_name = read_fixed_string((char*)enumeration + RPGENUM_OFFSET_NAME);
+        if (enum_name && strcmp(enum_name, name) == 0) {
+            return enumeration;
+        }
+    }
+    return NULL;
+}
+
+// RPGEnumeration.Values is a LegacyMap<FixedString, int32_t>
+// LegacyMap layout on ARM64 (from BG3SE Common.h):
+//   Node** HashTable (8)
+//   uint32_t HashSize (4)
+//   uint32_t pad (4)
+//   uint32_t Count (4) ... etc
+// But the simpler approach: iterate through the HashMap embedded in CNEM.
+// Actually, RPGEnumeration is NOT a CNEM — it's a standalone struct.
+// The Values field is a LegacyMap with separate key/value storage.
+//
+// Probed layout assumption:
+//   +0x00: FixedString Name (4 bytes)
+//   +0x04: padding (4 bytes to align)
+//   +0x08: LegacyMap Values start
+// LegacyMap<FixedString, int32_t>:
+//   +0x08: Node** HashBuckets (8)
+//   +0x10: uint32_t HashSize (4)
+//   +0x14: uint32_t pad
+//   +0x18: Keys array ptr (FixedString* - 8)
+//   +0x20: pad
+//   +0x28: Values array ptr (int32_t* - 8)
+//   +0x30: uint32_t ItemCount
+//
+// We'll use a safe iteration approach: read the Values.Keys and Values.Values arrays
+// by finding them relative to the enumeration pointer.
+// If the layout is wrong, the runtime probe in stats_manager_on_session_loaded will catch it.
+
+// Read the Values map entry count from RPGEnumeration
+// Try offsets near the enumeration struct to find the count
+static int rpgenum_get_count(void *enumeration) {
+    if (!enumeration) return 0;
+
+    // The LegacyMap doesn't have a simple count field like CNEM.
+    // Instead we'll probe for a reasonable structure.
+    // RPGEnumeration is actually a CNEM itself in the Windows code:
+    // It inherits from CNamedElementManager, so it HAS the same layout!
+    // Name at +0x5C (like ModifierList), Values as the managed array.
+    // Wait — looking at Windows Stats.h line 28-40:
+    //   struct RPGEnumeration : public CNamedElementManager<EnumInfo> { ... }
+    // So RPGEnumeration IS a CNamedElementManager! Same layout as ModifierLists.
+    // The "Values" are EnumInfo entries in the CNEM's Values array.
+    // Each EnumInfo has: {FixedString key, int32_t value}
+
+    // Since it's a CNEM, use CNEM_OFFSET_VALUES_SIZE
+    uint32_t size = 0;
+    if (!safe_read_u32((char*)enumeration + CNEM_OFFSET_VALUES_SIZE, &size)) {
+        return 0;
+    }
+    return (int)size;
+}
+
+// The EnumInfo struct inside RPGEnumeration values array:
+// struct EnumInfo { FixedString Label; int32_t Value; }
+// On ARM64: Label(4) + Value(4) = 8 bytes? Or Label(4) + pad(4) + Value(4) + pad(4)?
+// Actually the CNEM stores pointers to EnumInfo, so each element is EnumInfo*.
+// EnumInfo is likely: { FixedString Label (+0x00), int32_t Value (+0x04 or +0x08) }
+// For FixedString at +0x00 and int32_t at +0x04, total 8 bytes, no padding needed.
+#define ENUMINFO_OFFSET_LABEL 0x00
+#define ENUMINFO_OFFSET_VALUE 0x04
+
+const char* stats_enum_index_to_label(const char *enum_name, int32_t index) {
+    if (!enum_name || !stats_manager_ready()) return NULL;
+
+    void *enumeration = find_rpgenumeration_by_name(enum_name);
+    if (!enumeration) return NULL;
+
+    int count = rpgenum_get_count(enumeration);
+    for (int i = 0; i < count; i++) {
+        void *entry = get_manager_element(enumeration, i);
+        if (!entry) continue;
+
+        int32_t value = 0;
+        if (!safe_read_u32((char*)entry + ENUMINFO_OFFSET_VALUE, (uint32_t*)&value)) continue;
+
+        if (value == index) {
+            return read_fixed_string((char*)entry + ENUMINFO_OFFSET_LABEL);
+        }
+    }
+    return NULL;
+}
+
+int32_t stats_enum_label_to_index(const char *enum_name, const char *label) {
+    if (!enum_name || !label || !stats_manager_ready()) return -1;
+
+    void *enumeration = find_rpgenumeration_by_name(enum_name);
+    if (!enumeration) return -1;
+
+    int count = rpgenum_get_count(enumeration);
+    for (int i = 0; i < count; i++) {
+        void *entry = get_manager_element(enumeration, i);
+        if (!entry) continue;
+
+        const char *entry_label = read_fixed_string((char*)entry + ENUMINFO_OFFSET_LABEL);
+        if (entry_label && strcmp(entry_label, label) == 0) {
+            int32_t value = 0;
+            if (safe_read_u32((char*)entry + ENUMINFO_OFFSET_VALUE, (uint32_t*)&value)) {
+                return value;
+            }
+        }
+    }
+    return -1;
+}
+
+// Get modifier attributes by name
+int stats_get_modifier_attribute_count_by_name(const char *modifier_name) {
+    if (!modifier_name || !stats_manager_ready()) return -1;
+    int ml_index = find_modifier_list_by_name(modifier_name);
+    if (ml_index < 0) return -1;
+    return get_modifier_list_attribute_count(ml_index);
+}
+
+bool stats_get_modifier_attribute(const char *modifier_name, int index,
+                                   const char **out_attr_name, const char **out_type_name) {
+    if (!modifier_name || !out_attr_name || !out_type_name || !stats_manager_ready())
+        return false;
+
+    int ml_index = find_modifier_list_by_name(modifier_name);
+    if (ml_index < 0) return false;
+
+    void *modifier_lists = get_modifier_lists_manager();
+    if (!modifier_lists) return false;
+
+    void *ml = get_manager_element(modifier_lists, ml_index);
+    if (!ml) return false;
+
+    // ModifierList starts with CNEM<Modifier> Attributes at offset 0
+    void *modifier_ptr = get_manager_element(ml, index);
+    if (!modifier_ptr) return false;
+
+    // Read attribute name
+    *out_attr_name = read_fixed_string((char*)modifier_ptr + MODIFIER_OFFSET_NAME);
+
+    // Read EnumerationIndex to get type name from ModifierValueLists
+    int32_t enum_index = 0;
+    if (safe_read_u32((char*)modifier_ptr + MODIFIER_OFFSET_ENUM_INDEX, (uint32_t*)&enum_index)) {
+        void *mvl = get_modifier_value_lists_manager();
+        if (mvl && enum_index >= 0) {
+            void *enum_entry = get_manager_element(mvl, enum_index);
+            if (enum_entry) {
+                *out_type_name = read_fixed_string((char*)enum_entry + RPGENUM_OFFSET_NAME);
+            } else {
+                *out_type_name = NULL;
+            }
+        } else {
+            *out_type_name = NULL;
+        }
+    } else {
+        *out_type_name = NULL;
+    }
+
+    return (*out_attr_name != NULL);
+}
+
 // Get string from RPGStats.FixedStrings array by index
 // RPGStats.FixedStrings is TrackedCompactSet<FixedString>, which is like an array
 static const char* get_rpgstats_fixedstring(int32_t index) {

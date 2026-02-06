@@ -23,12 +23,14 @@
 #include "network_backend.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
-#include "../entity/entity_system.h"  // entity_get_binary_base()
+#include "../game/game_state.h"        // game_state_get_current()
+#include "../entity/entity_system.h"   // entity_get_binary_base(), entity_get_eoc_server()
 #include <dobby.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 // ============================================================================
 // Static State
@@ -52,6 +54,9 @@ static void *s_send_fn = NULL;  // Resolved SendToPeer function pointer
 
 // Forward declarations (Phase 4I)
 static void send_client_hello(void);
+
+// Forward declaration for deferred state reset (Issue #65)
+static void deferred_state_reset(void);
 
 // ============================================================================
 // Safe Memory Helpers
@@ -278,6 +283,9 @@ void net_hooks_remove(void) {
     s_hook_target_addr = NULL;
     s_send_vmt_probed = false;
     s_send_fn = NULL;
+
+    // Reset deferred state machine (Issue #65)
+    deferred_state_reset();
 }
 
 NetHookStatus net_hooks_get_status(void) {
@@ -367,6 +375,12 @@ bool net_hooks_capture_peer(void *eoc_server) {
 }
 
 bool net_hooks_register_message(void) {
+    // Idempotency guard: DobbyHook on same address twice is undefined
+    if (s_status.message_factory_hooked) {
+        LOG_NET_INFO("net_hooks_register_message: already hooked, skipping");
+        return true;
+    }
+
     if (!s_net_msg_factory) {
         LOG_NET_WARN("net_hooks_register_message: MessageFactory not captured");
         return false;
@@ -841,4 +855,185 @@ int net_hooks_sync_active_peers(void) {
     }
 
     return synced;
+}
+
+// ============================================================================
+// Deferred Initialization State Machine (Issue #65)
+//
+// Moves ~65 mach_vm_read_overwrite kernel calls out of the timing-sensitive
+// COsiris::Load path into the tick loop. On some machines, performing these
+// kernel calls during save load causes the game to abort the session.
+//
+// The state machine waits for the game to be in Running state for at least
+// DEFERRED_STABILITY_MS before attempting capture. On failure, it retries
+// with exponential backoff up to MAX_RETRIES times.
+// ============================================================================
+
+typedef enum {
+    DEFERRED_IDLE = 0,      // No init requested
+    DEFERRED_PENDING,       // Init requested, waiting for stability
+    DEFERRED_CAPTURING,     // About to perform capture (transient)
+    DEFERRED_COMPLETE,      // Successfully initialized
+    DEFERRED_FAILED         // All retries exhausted
+} DeferredState;
+
+#define DEFERRED_STABILITY_MS  500   // Wait 500ms in Running before capture
+#define DEFERRED_MAX_RETRIES   3     // Max retry attempts
+#define DEFERRED_BASE_DELAY_MS 1000  // Initial retry delay (doubles each time)
+
+static DeferredState s_deferred_state = DEFERRED_IDLE;
+static clock_t       s_deferred_running_since = 0;  // When Running state was first seen
+static int           s_deferred_retries = 0;
+static clock_t       s_deferred_retry_after = 0;    // Don't retry before this time
+
+static void deferred_state_reset(void) {
+    s_deferred_state = DEFERRED_IDLE;
+    s_deferred_running_since = 0;
+    s_deferred_retries = 0;
+    s_deferred_retry_after = 0;
+}
+
+/** Calculate backoff delay for a given retry count (0-based). */
+static int deferred_backoff_ms(int retry_count) {
+    int shift = (retry_count > 0) ? retry_count - 1 : 0;
+    return DEFERRED_BASE_DELAY_MS * (1 << shift);
+}
+
+void net_hooks_request_deferred_init(void) {
+    // Already complete — nothing to do
+    if (s_deferred_state == DEFERRED_COMPLETE) {
+        LOG_NET_DEBUG("net_hooks_request_deferred_init: already complete, skipping");
+        return;
+    }
+    // In progress — don't restart
+    if (s_deferred_state == DEFERRED_PENDING ||
+        s_deferred_state == DEFERRED_CAPTURING) {
+        LOG_NET_DEBUG("net_hooks_request_deferred_init: already in progress (state %d)",
+                      s_deferred_state);
+        return;
+    }
+    // Allow retry from FAILED state on save reload (Issue #65)
+    if (s_deferred_state == DEFERRED_FAILED) {
+        LOG_NET_INFO("net_hooks_request_deferred_init: retrying after previous failure");
+    }
+
+    // Check BG3SE_NO_NET env var
+    static int net_disabled = -1;
+    if (net_disabled < 0) net_disabled = (getenv("BG3SE_NO_NET") != NULL);
+    if (net_disabled) {
+        static bool warned = false;
+        if (!warned) {
+            LOG_NET_INFO("Network hooks DISABLED (BG3SE_NO_NET=1)");
+            warned = true;
+        }
+        s_deferred_state = DEFERRED_FAILED;
+        return;
+    }
+
+    // Skip if already initialized
+    if (s_status.protocol_list_hooked) {
+        LOG_NET_DEBUG("net_hooks_request_deferred_init: already hooked, skipping");
+        s_deferred_state = DEFERRED_COMPLETE;
+        return;
+    }
+
+    s_deferred_state = DEFERRED_PENDING;
+    s_deferred_running_since = 0;
+    s_deferred_retries = 0;
+    s_deferred_retry_after = 0;
+    LOG_NET_INFO("Network init DEFERRED to tick loop (Issue #65)");
+}
+
+bool net_hooks_deferred_tick(void) {
+    if (s_deferred_state == DEFERRED_IDLE ||
+        s_deferred_state == DEFERRED_COMPLETE ||
+        s_deferred_state == DEFERRED_FAILED) {
+        return false;
+    }
+
+    clock_t now = clock();
+
+    // PENDING: wait for Running state stability
+    if (s_deferred_state == DEFERRED_PENDING) {
+        ServerGameState state = game_state_get_current();
+        if (state != SERVER_STATE_RUNNING) {
+            // Not in Running yet — reset stability timer
+            s_deferred_running_since = 0;
+            return false;
+        }
+
+        if (s_deferred_running_since == 0) {
+            s_deferred_running_since = now;
+            return false;
+        }
+
+        double elapsed_ms = (double)(now - s_deferred_running_since) * 1000.0 / CLOCKS_PER_SEC;
+        if (elapsed_ms < DEFERRED_STABILITY_MS) {
+            return false;  // Keep waiting
+        }
+
+        // Check retry backoff
+        if (s_deferred_retry_after != 0) {
+            double retry_elapsed_ms = (double)(now - s_deferred_retry_after) * 1000.0 / CLOCKS_PER_SEC;
+            if (retry_elapsed_ms < deferred_backoff_ms(s_deferred_retries)) {
+                return false;  // Still in backoff
+            }
+        }
+
+        LOG_NET_INFO("Deferred net init: Running stable for %.0fms, attempting capture (attempt %d/%d)",
+                     elapsed_ms, s_deferred_retries + 1, DEFERRED_MAX_RETRIES);
+        s_deferred_state = DEFERRED_CAPTURING;
+    }
+
+    // CAPTURING: perform the actual initialization
+    if (s_deferred_state == DEFERRED_CAPTURING) {
+        void *eoc_server = entity_get_eoc_server();
+        if (!eoc_server) {
+            LOG_NET_WARN("Deferred net init: EocServer not available");
+            goto retry;
+        }
+
+        if (!net_hooks_capture_peer(eoc_server)) {
+            LOG_NET_WARN("Deferred net init: capture_peer failed");
+            goto retry;
+        }
+
+        if (!net_hooks_register_message()) {
+            LOG_NET_WARN("Deferred net init: register_message failed");
+            goto retry;
+        }
+
+        if (!net_hooks_insert_protocol()) {
+            LOG_NET_WARN("Deferred net init: insert_protocol failed");
+            goto retry;
+        }
+
+        LOG_NET_INFO("Deferred net init: COMPLETE (attempt %d)", s_deferred_retries + 1);
+        s_deferred_state = DEFERRED_COMPLETE;
+        return true;
+
+    retry:
+        s_deferred_retries++;
+        if (s_deferred_retries >= DEFERRED_MAX_RETRIES) {
+            LOG_NET_ERROR("Deferred net init: FAILED after %d attempts", DEFERRED_MAX_RETRIES);
+            s_deferred_state = DEFERRED_FAILED;
+            return false;
+        }
+
+        // Exponential backoff
+        s_deferred_retry_after = now;
+        s_deferred_running_since = 0;  // Re-check stability
+        s_deferred_state = DEFERRED_PENDING;
+        LOG_NET_INFO("Deferred net init: retry %d/%d in %dms",
+                     s_deferred_retries, DEFERRED_MAX_RETRIES,
+                     deferred_backoff_ms(s_deferred_retries));
+        return false;
+    }
+
+    return false;
+}
+
+bool net_hooks_is_ready(void) {
+    return s_deferred_state == DEFERRED_COMPLETE ||
+           s_status.protocol_list_hooked;
 }

@@ -21,7 +21,11 @@ src/
 ├── injector/       # Main injection logic (main.c)
 ├── input/          # System-level input capture
 │   └── input_hooks.m           # CGEventTap for keyboard/mouse
-├── lua/            # Lua API modules (lua_ext, lua_json, lua_osiris, lua_stats, lua_events, lua_logging)
+├── level/          # LevelManager, PhysicsScene, AiGrid access
+│   └── level_manager.c/h   # Singleton access, VMT-based physics dispatch
+├── audio/          # WWise sound engine access
+│   └── audio_manager.c/h   # SoundManager singleton, audio control
+├── lua/            # Lua API modules (lua_ext, lua_json, lua_osiris, lua_stats, lua_events, lua_logging, lua_level, lua_audio)
 ├── mod/            # Mod detection and loading
 ├── osiris/         # Osiris types, functions, pattern scanning
 ├── pak/            # LSPK v18 PAK file reading

@@ -87,6 +87,34 @@ void* get_spell_prototype_manager(void);
 void* get_status_prototype_manager(void);
 
 // ============================================================================
+// Cached Prototype Lookup (Ext.Stats.GetCachedSpell/Status/Passive/Interrupt)
+// ============================================================================
+
+/**
+ * Look up a cached spell prototype by name.
+ * @return Pointer to SpellPrototype, or NULL if not found
+ */
+void* prototype_get_cached_spell(const char *name);
+
+/**
+ * Look up a cached status prototype by name.
+ * @return Pointer to StatusPrototype, or NULL if not found
+ */
+void* prototype_get_cached_status(const char *name);
+
+/**
+ * Look up a cached passive prototype by name.
+ * @return Pointer to PassivePrototype, or NULL if not found
+ */
+void* prototype_get_cached_passive(const char *name);
+
+/**
+ * Look up a cached interrupt prototype by name.
+ * @return Pointer to InterruptPrototype, or NULL if not found
+ */
+void* prototype_get_cached_interrupt(const char *name);
+
+// ============================================================================
 // Prototype Sync Functions
 // ============================================================================
 

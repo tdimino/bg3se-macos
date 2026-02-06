@@ -360,6 +360,46 @@ static void* refmap_lookup(void* manager, uint32_t fs_key) {
 }
 
 // ============================================================================
+// Public Cached Prototype Lookup (Ext.Stats.GetCachedSpell/Status/Passive/Interrupt)
+// ============================================================================
+
+void* prototype_get_cached_spell(const char *name) {
+    if (!name) return NULL;
+    void *manager = get_spell_prototype_manager();
+    if (!manager) return NULL;
+    uint32_t fs_key = fixed_string_intern(name, -1);
+    if (fs_key == FS_NULL_INDEX || fs_key == 0 || fs_key == 0xFFFFFFFF) return NULL;
+    return refmap_lookup(manager, fs_key);
+}
+
+void* prototype_get_cached_status(const char *name) {
+    if (!name) return NULL;
+    void *manager = get_status_prototype_manager();
+    if (!manager) return NULL;
+    uint32_t fs_key = fixed_string_intern(name, -1);
+    if (fs_key == FS_NULL_INDEX || fs_key == 0 || fs_key == 0xFFFFFFFF) return NULL;
+    return refmap_lookup(manager, fs_key);
+}
+
+void* prototype_get_cached_passive(const char *name) {
+    if (!name) return NULL;
+    void *manager = get_passive_prototype_manager();
+    if (!manager) return NULL;
+    uint32_t fs_key = fixed_string_intern(name, -1);
+    if (fs_key == FS_NULL_INDEX || fs_key == 0 || fs_key == 0xFFFFFFFF) return NULL;
+    return refmap_lookup(manager, fs_key);
+}
+
+void* prototype_get_cached_interrupt(const char *name) {
+    if (!name) return NULL;
+    void *manager = get_interrupt_prototype_manager();
+    if (!manager) return NULL;
+    uint32_t fs_key = fixed_string_intern(name, -1);
+    if (fs_key == FS_NULL_INDEX || fs_key == 0 || fs_key == 0xFFFFFFFF) return NULL;
+    return refmap_lookup(manager, fs_key);
+}
+
+// ============================================================================
 // RefMap Insertion Helper
 // ============================================================================
 

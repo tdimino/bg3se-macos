@@ -2,9 +2,9 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.31
+## Current Status: v0.36.33
 
-**Overall Feature Parity: ~88%** (based on comprehensive API function count analysis)
+**Overall Feature Parity: ~90%** (based on comprehensive API function count analysis)
 
 **Working Features:**
 - DYLD injection and Dobby hooking infrastructure
@@ -37,7 +37,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Json` | ✅ Full (2) | ✅ Parse, Stringify | **100%** | 1 |
 | `Ext.IO` | ✅ Full (4) | ✅ LoadFile, SaveFile, AddPathOverride, GetPathOverride (4) | **100%** | 1 |
 | `Ext.Entity` | ✅ Full (26) | ⚠️ Get, GetByHandle, **Dual EntityWorld**, components, enumeration (22) | **85%** | 2 |
-| `Ext.Stats` | ✅ Full (52) | ✅ Get, GetAll, Create, Sync (all), property read/write (18) | **35%** | 3 |
+| `Ext.Stats` | ✅ Full (52) | ✅ Get, GetAll, Create, Sync, Enum lookup, Modifier attributes, Prototype cache (30) | **58%** | 3 |
 | `Ext.Events` | ✅ Full (~33) | ✅ 33 events (13 lifecycle + 17 engine + 2 functor + 1 network) + Subscribe/Unsubscribe/Prevent | **100%** | 2.5 |
 | `Ext.Timer` | ✅ Full (13) | ✅ WaitFor, WaitForRealtime, Cancel, Pause, Resume, IsPaused, MonotonicTime, MicrosecTime, ClockEpoch, ClockTime, GameTime, DeltaTime, Ticks, IsGamePaused, +6 persistent (20) | **100%** | 2.3 |
 | `Ext.Debug` | ✅ Full (8) | ✅ Memory introspection (11 macOS-specific) | **100%** | 2.3 |
@@ -49,8 +49,8 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Net` | ✅ Full | ✅ Phase 4I Complete (handshake, version negotiation, full multiplayer transport) | **95%** | 6 |
 | `Ext.UI` | ✅ Full (9) | ❌ Not impl | **0%** | 8 |
 | `Ext.IMGUI` | ✅ Full (7+) | ✅ Complete widget system (40 types) - All widgets, events, Metal backend | **100%** | 8 |
-| `Ext.Level` | ✅ Full (21) | ❌ Not impl | **0%** | 9 |
-| `Ext.Audio` | ✅ Full (17) | ❌ Not impl | **0%** | 10 |
+| `Ext.Level` | ✅ Full (21) | ⚠️ RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, singleton accessors (9) | **43%** | 9 |
+| `Ext.Audio` | ✅ Full (17) | ✅ PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, RTPC (set/get/reset), LoadEvent, UnloadEvent (13) | **76%** | 10 |
 | `Ext.Localization` | ✅ Full (2) | ⚠️ GetLanguage + safe stubs (1/2) | **50%** | 10 |
 | `Ext.StaticData` | ✅ Full (5) | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription), ForceCapture, HashLookup | **100%** | 10 |
 | `Ext.Resource` | ✅ Full (2) | ✅ Get, GetAll, GetTypes, GetCount, IsReady (5) | **100%** | 10 |
@@ -1497,8 +1497,8 @@ Full debugging experience with breakpoints, stepping, and variable inspection.
 |----|---------|--------|--------|-------|
 | D1 | Noesis UI (Ext.UI) | High | ❌ Not Started | [#35](https://github.com/tdimino/bg3se-macos/issues/35) |
 | D2 | IMGUI Debug Overlay | High | ✅ Complete (v0.36.21) - All 40 widget types | [#36](https://github.com/tdimino/bg3se-macos/issues/36) |
-| D3 | Physics/Raycasting (Ext.Level) | High | ❌ Not Started | [#37](https://github.com/tdimino/bg3se-macos/issues/37) |
-| D4 | Audio (Ext.Audio) | Medium | ❌ Not Started | [#38](https://github.com/tdimino/bg3se-macos/issues/38) |
+| D3 | Physics/Raycasting (Ext.Level) | High | ⚠️ 9 functions (43%, offsets need runtime verification) | [#37](https://github.com/tdimino/bg3se-macos/issues/37) |
+| D4 | Audio (Ext.Audio) | Medium | ⚠️ 13 functions (76%, VMT indices need runtime verification) | [#38](https://github.com/tdimino/bg3se-macos/issues/38) |
 | D5 | Localization (Ext.Localization) | Low | ❌ Not Started | [#39](https://github.com/tdimino/bg3se-macos/issues/39) |
 | D6 | Static Data (Ext.StaticData) | Medium | 🔶 Blocked by #44 | [#40](https://github.com/tdimino/bg3se-macos/issues/40) |
 | D7 | Resource/Template Management | Medium | ✅ Complete (v0.36.2) | [#41](https://github.com/tdimino/bg3se-macos/issues/41) |
@@ -1520,6 +1520,8 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.33 | 2026-02-06 | **Deferred Net Init (Issue #65)** - Move ~65 mach_vm_read_overwrite kernel calls from COsiris::Load to tick loop, fixing game startup failure on some machines. State machine with 500ms stability gate and exponential backoff retry. |
+| v0.36.32 | 2026-02-06 | **Parity Push to 90%** - Ext.Stats expansion (12 new functions: enum lookup, modifier attributes, prototype cache), Ext.Level (9 functions: raycasting, overlap tests, tile queries), Ext.Audio (13 functions: WWise playback, state/switch, RTPC, event management) |
 | v0.36.31 | 2026-02-06 | **NetChannel API Phase 4I** - Handshake + version negotiation: JSON hello exchange, CanSendExtenderMessages gating, Ext.Net.IsReady/PeerVersion, auto-switch timing fix (Issue #6) |
 | v0.36.30 | 2026-02-06 | **NetChannel API Phase 4H** - Peer resolution + broadcast + auto-detect: GUID-to-peer lookup, peer iteration broadcast, ActivePeerIds sync, implicit handshake (Issue #6) |
 | v0.36.29 | 2026-02-06 | **NetChannel API Phase 4G** - Bidirectional transport: em_serialize via BitstreamSerializer VMT dispatch (WriteBytes/ReadBytes), outbound send via GameServer VMT SendToPeer (index 28), RakNet backend with JSON wire format, network_backend_set_raknet() (Issue #6) |
@@ -1642,13 +1644,14 @@ See `agent_docs/acceleration.md` for detailed methodology |
 **Complex Integrations (25-50% acceleration, 4+ weeks):**
 | Issue | Feature | Acceleration | Key Technique |
 |-------|---------|--------------|---------------|
-| **#37 Ext.Level** | Physics/Raycast | **50%** | Find physics engine, port LevelLib.inl |
+| **#37 Ext.Level** | Physics/Raycast | **43%** | 9 functions implemented, offsets need runtime verification |
 | **#35 Ext.UI** | Noesis UI | **25%** | Deep game UI hooks required |
 
 **Completed:**
 | Issue | Feature | Status |
 |-------|---------|--------|
 | ~~#6~~ | NetChannel API | ✅ DONE (v0.36.31, Phase 4I) |
+| ~~#65~~ | Game startup failure | ✅ FIXED (v0.36.33, deferred net init) |
 | ~~#15~~ | Client Lua State | ✅ DONE (v0.36.4) |
 | ~~#32~~ | Stats Sync | ✅ DONE |
 | ~~#40~~ | StaticData | ✅ DONE (auto-capture) |
@@ -1710,7 +1713,7 @@ FeatManager::GetFeats prologue @ 0x101b752b4:
 | Order | Issue | Acceleration | Why This Order |
 |-------|-------|--------------|----------------|
 | 9 | ~~#36 Ext.IMGUI~~ | ✅ Complete | All 40 widget types (v0.36.21) |
-| 10 | **#38 Ext.Audio** | 45% | WWise documented |
+| 10 | **#38 Ext.Audio** | 76% | 13 functions, VMT indices need verification |
 | 11 | **#42 Debugger** | 60% | DAP reference exists |
 | 12 | ~~#7 IDE Types~~ | ✅ Complete | GenerateIdeHelpers API |
 
@@ -1718,7 +1721,7 @@ FeatManager::GetFeats prologue @ 0x101b752b4:
 
 | Order | Issue | Acceleration | Why Last |
 |-------|-------|--------------|----------|
-| 13 | **#37 Ext.Level** | 50% | Physics RE needed |
+| 13 | **#37 Ext.Level** | 43% | 9 functions, needs runtime offset verification |
 | 14 | **#35 Ext.UI** | 25% | Deep Noesis hooks |
 | 15 | ~~#6 Ext.Net~~ | ⚠️ Phase 1 DONE | Phase 2-3 pending |
 

@@ -247,6 +247,52 @@ StatsObjectPtr stats_create(const char *name, const char *type, const char *temp
 bool stats_is_shadow_stat(StatsObjectPtr obj);
 
 // ============================================================================
+// Enum Lookup (ModifierValueLists)
+// ============================================================================
+
+/**
+ * Convert a stats enum index to its label string.
+ *
+ * @param enum_name Enum type name (e.g., "DamageType", "WeaponType")
+ * @param index Enum index value
+ * @return Label string, or NULL if not found
+ */
+const char* stats_enum_index_to_label(const char *enum_name, int32_t index);
+
+/**
+ * Convert a stats enum label to its index.
+ *
+ * @param enum_name Enum type name (e.g., "DamageType", "WeaponType")
+ * @param label Enum label string
+ * @return Index value, or -1 if not found
+ */
+int32_t stats_enum_label_to_index(const char *enum_name, const char *label);
+
+// ============================================================================
+// Modifier Attributes
+// ============================================================================
+
+/**
+ * Get modifier attributes as an iteration.
+ *
+ * @param modifier_name Modifier list name (e.g., "Weapon", "Armor")
+ * @param index Attribute index
+ * @param out_attr_name Output: attribute name
+ * @param out_type_name Output: attribute type name
+ * @return true if attribute exists at index, false if out of range
+ */
+bool stats_get_modifier_attribute(const char *modifier_name, int index,
+                                   const char **out_attr_name, const char **out_type_name);
+
+/**
+ * Get number of attributes for a modifier list.
+ *
+ * @param modifier_name Modifier list name
+ * @return Number of attributes, or -1 if not found
+ */
+int stats_get_modifier_attribute_count_by_name(const char *modifier_name);
+
+// ============================================================================
 // Debugging
 // ============================================================================
 

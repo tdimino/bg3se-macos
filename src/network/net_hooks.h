@@ -137,4 +137,44 @@ void *net_hooks_get_game_server(void);
  */
 int net_hooks_sync_active_peers(void);
 
+// ============================================================================
+// Deferred Initialization (Issue #65)
+//
+// Moves ~65 mach_vm_read_overwrite kernel calls out of the timing-sensitive
+// fake_Load path and into the tick loop (fake_Event). This prevents the
+// game from bouncing back to LoadSession on some machines.
+//
+// Usage:
+//   fake_Load:  net_hooks_request_deferred_init()
+//   fake_Event: net_hooks_deferred_tick()
+// ============================================================================
+
+/**
+ * Request deferred network initialization.
+ * Does NOT perform any kernel calls — just sets a flag.
+ * The actual capture/hook/insert happens in net_hooks_deferred_tick().
+ */
+void net_hooks_request_deferred_init(void);
+
+/**
+ * Tick function for deferred initialization.
+ * Call from the fake_Event tick loop (every Osiris event).
+ *
+ * State machine:
+ *   IDLE → request_deferred_init() → PENDING
+ *   PENDING → waits for Running state >= 500ms → CAPTURING
+ *   CAPTURING → performs capture_peer + register_message + insert_protocol
+ *   COMPLETE or FAILED → no-op
+ *
+ * @return true if initialization completed this tick
+ */
+bool net_hooks_deferred_tick(void);
+
+/**
+ * Check if deferred initialization has completed successfully.
+ *
+ * @return true if net hooks are fully initialized
+ */
+bool net_hooks_is_ready(void);
+
 #endif /* NET_HOOKS_H */

@@ -139,6 +139,14 @@ extern "C" {
 #include "lua_net.h"
 #include "net_hooks.h"
 
+// Level system (Ext.Level: physics, tiles)
+#include "level_manager.h"
+#include "lua_level.h"
+
+// Audio system (Ext.Audio: WWise engine)
+#include "audio_manager.h"
+#include "lua_audio.h"
+
 // Enable hooks (set to 0 to disable for testing)
 #define ENABLE_HOOKS 1
 
@@ -740,6 +748,12 @@ static void register_ext_api(lua_State *L) {
     // Ext.Net namespace (network messaging - Issue #6)
     // Note: is_server is determined by context, for now use true as we're server-side
     lua_net_register(L, -1, true);
+
+    // Ext.Level namespace (physics raycasting, tile queries)
+    lua_level_register(L, -1);
+
+    // Ext.Audio namespace (WWise audio engine control)
+    lua_audio_register(L, -1);
 
     // Set Ext as global
     lua_setglobal(L, "Ext");
@@ -1909,16 +1923,10 @@ static int fake_Load(void *thisPtr, void *smartBuf) {
             }
         }
 
-        // Capture network pointers from EocServer (Phase 4D)
-        // Must run after EntityWorld discovery since both need EocServer
-        void *eoc_server = entity_get_eoc_server();
-        if (eoc_server && !net_hooks_get_status().protocol_list_hooked) {
-            LOG_NET_INFO("Attempting network capture from EocServer...");
-            if (net_hooks_capture_peer(eoc_server)) {
-                net_hooks_register_message();
-                net_hooks_insert_protocol();
-            }
-        }
+        // Request deferred network initialization (Issue #65)
+        // Actual capture moves to tick loop to avoid ~65 mach_vm_read_overwrite
+        // kernel calls during the timing-sensitive save load window.
+        net_hooks_request_deferred_init();
 
         // Load mod scripts after save is loaded (if not already loaded)
         // This handles the case where InitGame wasn't called (loading existing save)
@@ -2315,6 +2323,10 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
         // Process pending network messages (Issue #6: NetChannel API)
         // Note: In full implementation, client_L would be the client Lua state
         lua_net_process_messages(L, L);  // Both server and client in same process for now
+
+        // Deferred network initialization (Issue #65)
+        // Performs net capture/hook/insert here instead of during fake_Load
+        net_hooks_deferred_tick();
     }
 
     // Capture COsiris pointer if we haven't already
@@ -2706,6 +2718,14 @@ static void install_hooks(void) {
                 // Initialize resource manager (for Ext.Resource)
                 resource_manager_init(binary_base);
                 LOG_CORE_INFO("Resource manager initialized");
+
+                // Initialize level manager (for Ext.Level)
+                level_manager_init(binary_base);
+                LOG_CORE_INFO("Level manager initialized");
+
+                // Initialize audio manager (for Ext.Audio)
+                audio_manager_init(binary_base);
+                LOG_CORE_INFO("Audio manager initialized");
 
                 // Initialize localization system
                 localization_init(binary_base);

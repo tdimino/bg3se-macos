@@ -488,6 +488,179 @@ static int lua_stats_getallstats(lua_State *L) {
     return lua_stats_getall(L);
 }
 
+// Ext.Stats.GetStats(type?) -> array of stat names
+// Windows API name (alias for GetAll)
+static int lua_stats_getstats(lua_State *L) {
+    return lua_stats_getall(L);
+}
+
+// Ext.Stats.SetPersistence(name, persist) -> nil
+// Deprecated in Windows BG3SE, log warning and return
+static int lua_stats_setpersistence(lua_State *L) {
+    luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TBOOLEAN);
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.SetPersistence() is deprecated and has no effect");
+        warned = true;
+    }
+    return 0;
+}
+
+// Ext.Stats.GetStatsManager() -> integer (raw RPGStats pointer)
+static int lua_stats_getstatsmanager(lua_State *L) {
+    void *raw = stats_manager_get_raw();
+    if (raw) {
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)raw);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetCachedSpell(name) -> table {Address, Name, Type} or nil
+static int lua_stats_get_cached_spell(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    void *proto = prototype_get_cached_spell(name);
+    if (proto) {
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)proto);
+        lua_setfield(L, -2, "Address");
+        lua_pushstring(L, name);
+        lua_setfield(L, -2, "Name");
+        lua_pushstring(L, "SpellPrototype");
+        lua_setfield(L, -2, "Type");
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetCachedStatus(name) -> table {Address, Name, Type} or nil
+static int lua_stats_get_cached_status(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    void *proto = prototype_get_cached_status(name);
+    if (proto) {
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)proto);
+        lua_setfield(L, -2, "Address");
+        lua_pushstring(L, name);
+        lua_setfield(L, -2, "Name");
+        lua_pushstring(L, "StatusPrototype");
+        lua_setfield(L, -2, "Type");
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetCachedPassive(name) -> table {Address, Name, Type} or nil
+static int lua_stats_get_cached_passive(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    void *proto = prototype_get_cached_passive(name);
+    if (proto) {
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)proto);
+        lua_setfield(L, -2, "Address");
+        lua_pushstring(L, name);
+        lua_setfield(L, -2, "Name");
+        lua_pushstring(L, "PassivePrototype");
+        lua_setfield(L, -2, "Type");
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetCachedInterrupt(name) -> table {Address, Name, Type} or nil
+static int lua_stats_get_cached_interrupt(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    void *proto = prototype_get_cached_interrupt(name);
+    if (proto) {
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)proto);
+        lua_setfield(L, -2, "Address");
+        lua_pushstring(L, name);
+        lua_setfield(L, -2, "Name");
+        lua_pushstring(L, "InterruptPrototype");
+        lua_setfield(L, -2, "Type");
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.EnumIndexToLabel(enumName, index) -> string or nil
+static int lua_stats_enum_index_to_label(lua_State *L) {
+    const char *enum_name = luaL_checkstring(L, 1);
+    int32_t index = (int32_t)luaL_checkinteger(L, 2);
+    const char *label = stats_enum_index_to_label(enum_name, index);
+    if (label) {
+        lua_pushstring(L, label);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.EnumLabelToIndex(enumName, label) -> integer or nil
+static int lua_stats_enum_label_to_index(lua_State *L) {
+    const char *enum_name = luaL_checkstring(L, 1);
+    const char *label = luaL_checkstring(L, 2);
+    int32_t index = stats_enum_label_to_index(enum_name, label);
+    if (index >= 0) {
+        lua_pushinteger(L, index);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// Ext.Stats.GetModifierAttributes(modifierName) -> table {attrName=typeName, ...} or nil
+static int lua_stats_get_modifier_attributes(lua_State *L) {
+    const char *modifier_name = luaL_checkstring(L, 1);
+    int count = stats_get_modifier_attribute_count_by_name(modifier_name);
+    if (count < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_newtable(L);
+    for (int i = 0; i < count; i++) {
+        const char *attr_name = NULL, *type_name = NULL;
+        if (stats_get_modifier_attribute(modifier_name, i, &attr_name, &type_name)) {
+            if (attr_name) {
+                lua_pushstring(L, type_name ? type_name : "Unknown");
+                lua_setfield(L, -2, attr_name);
+            }
+        }
+    }
+    return 1;
+}
+
+// Ext.Stats.AddAttribute() - Stub (rare API, requires careful memory management)
+static int lua_stats_add_attribute(lua_State *L) {
+    (void)L;
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.AddAttribute() is not yet implemented on macOS");
+        warned = true;
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// Ext.Stats.AddEnumerationValue() - Stub (rare API)
+static int lua_stats_add_enumeration_value(lua_State *L) {
+    (void)L;
+    static bool warned = false;
+    if (!warned) {
+        LOG_STATS_DEBUG("Ext.Stats.AddEnumerationValue() is not yet implemented on macOS");
+        warned = true;
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 // Ext.Stats.GetFixedStringStatus() -> table with status info
 static int lua_stats_get_fixedstring_status(lua_State *L) {
     lua_newtable(L);
@@ -704,6 +877,18 @@ static const luaL_Reg stats_functions[] = {
     {"Get", lua_stats_get},
     {"GetAll", lua_stats_getall},
     {"GetAllStats", lua_stats_getallstats},  // Alias for compatibility
+    {"GetStats", lua_stats_getstats},  // Windows API name (alias for GetAll)
+    {"SetPersistence", lua_stats_setpersistence},  // Deprecated (Windows compat)
+    {"GetStatsManager", lua_stats_getstatsmanager},  // Raw RPGStats pointer
+    {"GetCachedSpell", lua_stats_get_cached_spell},
+    {"GetCachedStatus", lua_stats_get_cached_status},
+    {"GetCachedPassive", lua_stats_get_cached_passive},
+    {"GetCachedInterrupt", lua_stats_get_cached_interrupt},
+    {"EnumIndexToLabel", lua_stats_enum_index_to_label},
+    {"EnumLabelToIndex", lua_stats_enum_label_to_index},
+    {"GetModifierAttributes", lua_stats_get_modifier_attributes},
+    {"AddAttribute", lua_stats_add_attribute},  // Stub
+    {"AddEnumerationValue", lua_stats_add_enumeration_value},  // Stub
     {"Sync", lua_stats_sync},
     {"Create", lua_stats_create},
     {"IsReady", lua_stats_isready},

@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.36.29 | **Parity:** ~88% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.36.33 | **Parity:** ~90% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -78,7 +78,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 - **Ext.Osiris** - RegisterListener, NewCall/NewQuery/NewEvent (server context guards)
 - **Context System** - Ext.IsServer/IsClient/GetContext, two-phase bootstrap (v0.36.4)
 - **Ext.Entity** - GUID lookup, **1,999 components registered** (462 layouts: 169 verified + 293 generated), **1,730 sizes** (1,577 Ghidra + 153 Windows-only, 87% coverage), GetByHandle, **Dual EntityWorld Complete** (client + server auto-captured)
-- **Ext.Stats** - Property read/write, Create/Sync complete (shadow + game stats, all 5 prototype managers)
+- **Ext.Stats** - Property read/write, Create/Sync complete, **Enum lookup** (EnumIndexToLabel/LabelToIndex), **Modifier attributes**, **Prototype cache** (GetCachedSpell/Status/Passive/Interrupt), GetStats, GetStatsManager
 - **Ext.Events** - 33 events with priority ordering, Once flag, Prevent pattern (13 lifecycle + 17 engine + 2 functor + 1 network events)
 - **Ext.Timer** - **20 functions**: WaitFor, WaitForRealtime, Cancel/Pause/Resume, GameTime/DeltaTime/Ticks, **Persistent timers** (save/load support)
 - **Ext.Vars** - PersistentVars, User Variables, Mod Variables
@@ -89,7 +89,9 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 - **Ext.Debug** - Memory introspection (ReadPtr, ProbeStruct, HexDump)
 - **Ext.IMGUI** - **Complete widget system** (40 widget types): NewWindow, AddText, AddButton, AddCheckbox, AddInputText, AddCombo, AddSlider, AddColorEdit, AddProgressBar, AddTree, AddTable, AddTabBar, AddMenu, handle-based objects, event callbacks (OnClick, OnChange, OnClose, OnExpand, OnCollapse)
 - **Ext.Mod** - Mod information (5 functions): IsModLoaded, GetLoadOrder, GetMod, GetBaseMod, GetModManager
-- **Ext.Net** - Network messaging (6 functions): PostMessageToServer, PostMessageToUser, PostMessageToClient, BroadcastMessage, Version, IsHost, **Request/Reply Callbacks**, **RakNet Backend** (Phase 4G)
+- **Ext.Level** - **9 functions**: RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, GetCurrentLevel, GetPhysicsScene, GetAiGrid, IsReady
+- **Ext.Audio** - **13 functions**: PostEvent, Stop, PauseAllSounds, ResumeAllSounds, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent, GetSoundObjectId, IsReady
+- **Ext.Net** - Network messaging (8 functions): PostMessageToServer, PostMessageToUser, PostMessageToClient, BroadcastMessage, Version, IsHost, IsReady, PeerVersion, **Request/Reply Callbacks**, **RakNet Backend** (Phase 4I)
 - **Net.CreateChannel** - High-level NetChannel API for multiplayer mod sync (SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, SendToClient, Broadcast)
 
 ## Conventions
