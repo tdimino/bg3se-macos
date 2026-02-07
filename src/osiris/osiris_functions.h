@@ -21,6 +21,7 @@ extern "C" {
 
 #define MAX_CACHED_FUNCTIONS 4096
 #define FUNC_HASH_SIZE 8192
+#define FUNC_NAME_HASH_SIZE 8192
 #define MAX_SEEN_FUNC_IDS 256
 
 // ============================================================================
@@ -102,6 +103,23 @@ uint32_t osi_func_lookup_id(const char *name);
  * @return 1 on success, 0 if not found
  */
 int osi_func_get_info(const char *name, uint8_t *out_arity, uint8_t *out_type);
+
+/**
+ * Get the encoded OsirisFunctionHandle for a function by name.
+ * @return Encoded handle, or 0 if not found/not yet computed
+ */
+uint32_t osi_func_get_handle(const char *name);
+
+/**
+ * Set the encoded handle for a cached function.
+ */
+void osi_func_cache_set_handle(uint32_t funcId, uint32_t handle);
+
+/**
+ * Probe and dump OsiFunctionDef layout for the first N cached functions.
+ * Writes hex dumps to log for offset discovery/validation.
+ */
+void osi_func_probe_layout(int count);
 
 /**
  * Update a known event's function ID when discovered at runtime.

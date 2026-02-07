@@ -8,7 +8,12 @@
 ## Module Structure
 ```
 src/
-├── core/           # Logging, version info
+├── core/           # Logging, version info, crash diagnostics
+│   ├── logging.c/h       # Structured logging with callbacks
+│   ├── crashlog.c/h      # mmap ring buffer, SIGSEGV handler, breadcrumbs
+│   ├── mach_exception.c/h # Mach exception handler (EXC_BAD_ACCESS before CrashReporter)
+│   ├── mach_exc_stubs/   # MIG-generated stubs from mach_exc.defs
+│   └── safe_memory.c/h   # Safe mach_vm_read wrappers
 ├── entity/         # Entity Component System (modular)
 │   ├── entity_system.c/h  # Core ECS, Lua bindings
 │   ├── guid_lookup.c/h    # GUID parsing, HashMap operations
@@ -27,13 +32,17 @@ src/
 │   └── audio_manager.c/h   # SoundManager singleton, audio control
 ├── lua/            # Lua API modules (lua_ext, lua_json, lua_osiris, lua_stats, lua_events, lua_logging, lua_level, lua_audio)
 ├── mod/            # Mod detection and loading
-├── osiris/         # Osiris types, functions, pattern scanning
+├── osiris/         # Osiris types, functions, handle encoding, pattern scanning
 ├── pak/            # LSPK v18 PAK file reading
 └── stats/          # RPGStats system access (stats_manager)
 ```
 
 ## Key Files
-- `src/injector/main.c` - Core injection, Dobby hooks, Osi.* namespace, Lua state
+- `src/injector/main.c` - Core injection, Dobby hooks, Osi.* namespace, Lua state, OsirisFunctionHandle dispatch
+- `src/core/crashlog.c` - Crash-resilient logging (mmap ring buffer, SIGSEGV handler, breadcrumbs)
+- `src/core/mach_exception.c` - Mach exception handler (catches PAC failures before CrashReporter)
+- `src/osiris/osiris_types.h` - OsiFunctionHandle encoding/decoding, function types, argument structs
+- `src/osiris/osiris_functions.c` - Function cache, type reading from game memory, struct probe
 - `src/mod/mod_loader.c` - Mod detection from modsettings.lsx, PAK loading
 - `src/lua/lua_*.c` - Ext.* API implementations
 - `src/stats/stats_manager.c` - RPGStats global access, stat property resolution

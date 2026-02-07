@@ -6,6 +6,7 @@
 #include "logging.h"
 #include "safe_memory.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 
@@ -19,6 +20,9 @@ static int g_funcCacheCount = 0;
 
 // Hash table for fast ID lookup (-1 = empty, else index into g_funcCache)
 static int16_t g_funcIdHashTable[FUNC_HASH_SIZE];
+
+// Hash table for fast name lookup (-1 = empty, else index into g_funcCache)
+static int16_t g_funcNameHashTable[FUNC_NAME_HASH_SIZE];
 
 // Tracked function IDs (for analysis)
 static uint32_t g_seenFuncIds[MAX_SEEN_FUNC_IDS];
@@ -42,6 +46,17 @@ static KnownEvent *s_knownEvents = NULL;
 static inline int func_id_hash(uint32_t funcId) {
     // Simple hash - use lower bits, handling type flag
     return (int)((funcId ^ (funcId >> 13)) & (FUNC_HASH_SIZE - 1));
+}
+
+/**
+ * Hash function for function name lookup (djb2 variant)
+ */
+static inline int func_name_hash(const char *name) {
+    uint32_t h = 5381;
+    for (int i = 0; name[i] && i < 64; i++) {
+        h = ((h << 5) + h) + (uint8_t)name[i];
+    }
+    return (int)((h ^ (h >> 13)) & (FUNC_NAME_HASH_SIZE - 1));
 }
 
 /**
@@ -251,9 +266,12 @@ static const char *extract_func_name_from_def(void *funcDef) {
 // ============================================================================
 
 void osi_func_cache_init(void) {
-    // Initialize hash table
+    // Initialize hash tables
     for (int i = 0; i < FUNC_HASH_SIZE; i++) {
         g_funcIdHashTable[i] = -1;
+    }
+    for (int i = 0; i < FUNC_NAME_HASH_SIZE; i++) {
+        g_funcNameHashTable[i] = -1;
     }
     g_funcCacheCount = 0;
     g_seenFuncIdCount = 0;
@@ -294,13 +312,29 @@ void osi_func_cache(const char *name, uint32_t funcId, uint8_t arity, uint8_t ty
     cf->id = funcId;
     cf->arity = arity;
     cf->type = type;
+    cf->handle = 0;
 
-    // Add to hash table (simple - just store first match at hash location)
+    // Add to ID hash table (simple - just store first match at hash location)
     if (g_funcIdHashTable[hash] < 0) {
         g_funcIdHashTable[hash] = (int16_t)g_funcCacheCount;
     }
 
+    // Add to name hash table for O(1) name→index lookups
+    int nameHash = func_name_hash(cf->name);
+    if (g_funcNameHashTable[nameHash] < 0) {
+        g_funcNameHashTable[nameHash] = (int16_t)g_funcCacheCount;
+    }
+
     g_funcCacheCount++;
+}
+
+void osi_func_cache_set_handle(uint32_t funcId, uint32_t handle) {
+    for (int i = 0; i < g_funcCacheCount; i++) {
+        if (g_funcCache[i].id == funcId) {
+            g_funcCache[i].handle = handle;
+            return;
+        }
+    }
 }
 
 // Diagnostic counter to limit verbose logging
@@ -347,17 +381,64 @@ int osi_func_cache_by_id(uint32_t funcId) {
             }
             uint8_t arity = (paramCount <= 20) ? (uint8_t)paramCount : 0;
 
-            /* Type is not directly in this struct - default to 0 (unknown) */
-            uint8_t type = 0;
+            /* Read FunctionType from funcDef + 0x28 (Windows layout: Osiris.h)
+             * Validated by safe_memory_read — same pattern as paramCount above.
+             * Fallback: guess from name prefix (QRY_=Query, DB_=Database, etc.) */
+            uint32_t rawType = 0;
+            uint8_t type = osi_func_guess_type(name);  // Smart fallback from name prefix
+            if (safe_memory_read_u32((mach_vm_address_t)funcDef + 0x28, &rawType)) {
+                if (rawType == OSI_FUNC_UNKNOWN) {
+                    LOG_OSIRIS_DEBUG("funcId=0x%08x '%s': type=UNKNOWN at +0x28, using guess=%s",
+                                    funcId, name, osi_func_type_str(type));
+                } else if (rawType >= OSI_FUNC_EVENT && rawType <= OSI_FUNC_USERQUERY) {
+                    type = (uint8_t)rawType;
+                } else {
+                    LOG_OSIRIS_DEBUG("funcId=0x%08x '%s': invalid type %u at +0x28, using guess=%s",
+                                    funcId, name, rawType, osi_func_type_str(type));
+                }
+            }
+
+            /* Read Key[4] from funcDef + 0x2C to compute the real handle.
+             * Key[0]=type, Key[1]=Part2, Key[2]=funcId, Key[3]=Part4
+             * Cross-validate Key[0] against the type we read from +0x28. */
+            uint32_t keys[4] = {0};
+            uint32_t handle = 0;
+            if (safe_memory_read((mach_vm_address_t)funcDef + 0x2C,
+                                 keys, sizeof(keys))) {
+                /* Cross-validate: Key[0] should match type from +0x28.
+                 * If they differ, the ARM64 layout is different from Windows. */
+                if (keys[0] != type && keys[0] <= OSI_FUNC_USERQUERY) {
+                    if (s_diagLogCount < MAX_DIAG_LOGS) {
+                        LOG_OSIRIS_WARN("funcId=0x%08x '%s': Key[0]=%u != type=%u at +0x28 "
+                                       "(ARM64 offset mismatch?)", funcId, name, keys[0], type);
+                    }
+                    /* Use fallback — offsets are probably wrong */
+                    handle = osi_encode_handle(type, 0, funcId, 0);
+                } else if (keys[0] > OSI_FUNC_USERQUERY) {
+                    if (s_diagLogCount < MAX_DIAG_LOGS) {
+                        LOG_OSIRIS_WARN("funcId=0x%08x '%s': Key[0]=%u out of range "
+                                       "(offset 0x2C wrong?)", funcId, name, keys[0]);
+                    }
+                    handle = osi_encode_handle(type, 0, funcId, 0);
+                } else {
+                    handle = osi_encode_handle(keys[0], keys[1], keys[2], keys[3]);
+                }
+            } else {
+                /* Fallback: encode from type + raw funcId */
+                handle = osi_encode_handle(type, 0, funcId, 0);
+            }
 
             /* Log success for first few */
             if (s_diagLogCount < MAX_DIAG_LOGS) {
-                LOG_OSIRIS_DEBUG("SUCCESS: funcId=0x%08x -> '%s' (arity=%d)",
-                           funcId, name, arity);
+                LOG_OSIRIS_DEBUG("SUCCESS: funcId=0x%08x -> '%s' (arity=%d, type=%s[%d], handle=0x%08x)",
+                           funcId, name, arity, osi_func_type_str(type), type, handle);
                 s_diagLogCount++;
             }
 
             osi_func_cache(name, funcId, arity, type);
+            if (handle != 0) {
+                osi_func_cache_set_handle(funcId, handle);
+            }
             return 1;
         } else if (s_diagLogCount < MAX_DIAG_LOGS) {
             /* Log failure - but don't try to dump memory unsafely */
@@ -474,7 +555,14 @@ uint32_t osi_func_lookup_id(const char *name) {
         }
     }
 
-    // Search dynamic cache
+    // Fast path: name hash table
+    int hash = func_name_hash(name);
+    int16_t idx = g_funcNameHashTable[hash];
+    if (idx >= 0 && strcmp(g_funcCache[idx].name, name) == 0) {
+        return g_funcCache[idx].id;
+    }
+
+    // Slow path: linear search (hash collision)
     for (int i = 0; i < g_funcCacheCount; i++) {
         if (strcmp(g_funcCache[i].name, name) == 0) {
             return g_funcCache[i].id;
@@ -498,12 +586,41 @@ int osi_func_get_info(const char *name, uint8_t *out_arity, uint8_t *out_type) {
         }
     }
 
-    // Search dynamic cache
+    // Fast path: name hash table
+    int hash = func_name_hash(name);
+    int16_t idx = g_funcNameHashTable[hash];
+    if (idx >= 0 && strcmp(g_funcCache[idx].name, name) == 0) {
+        if (out_arity) *out_arity = g_funcCache[idx].arity;
+        if (out_type) *out_type = g_funcCache[idx].type;
+        return 1;
+    }
+
+    // Slow path: linear search (hash collision)
     for (int i = 0; i < g_funcCacheCount; i++) {
         if (strcmp(g_funcCache[i].name, name) == 0) {
             if (out_arity) *out_arity = g_funcCache[i].arity;
             if (out_type) *out_type = g_funcCache[i].type;
             return 1;
+        }
+    }
+
+    return 0;
+}
+
+uint32_t osi_func_get_handle(const char *name) {
+    if (!name) return 0;
+
+    // Fast path: name hash table
+    int hash = func_name_hash(name);
+    int16_t idx = g_funcNameHashTable[hash];
+    if (idx >= 0 && strcmp(g_funcCache[idx].name, name) == 0) {
+        return g_funcCache[idx].handle;
+    }
+
+    // Slow path: linear search (hash collision)
+    for (int i = 0; i < g_funcCacheCount; i++) {
+        if (strcmp(g_funcCache[i].name, name) == 0) {
+            return g_funcCache[i].handle;
         }
     }
 
@@ -555,4 +672,92 @@ void osi_func_track_seen(uint32_t funcId, uint8_t arity) {
 
 int osi_func_get_seen_count(void) {
     return g_seenFuncIdCount;
+}
+
+// ============================================================================
+// Struct Probe (on-demand layout discovery)
+// ============================================================================
+
+void osi_func_probe_layout(int count) {
+    if (!s_pfn_pFunctionData || !s_ppOsiFunctionMan) {
+        LOG_OSIRIS_WARN("PROBE: runtime pointers not set");
+        return;
+    }
+
+    /* Read OsiFunctionMan pointer — same pattern as osi_func_cache_by_id.
+     * Bug fix: was using safe_memory_read(*s_ppOsiFunctionMan, ...) which reads
+     * FROM the OsiFunctionMan object (getting its VMT), not the pointer TO it.
+     * That caused pFunctionData(garbage_this, ...) → PAC failure → SIGSEGV. */
+    void *funcMan = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)s_ppOsiFunctionMan, &funcMan)
+        || !funcMan) {
+        LOG_OSIRIS_WARN("PROBE: failed to read OsiFunctionMan");
+        return;
+    }
+
+    LOG_OSIRIS_INFO("PROBE: funcMan=%p, probing %d/%d cached functions",
+                    funcMan, count, g_funcCacheCount);
+
+    int probed = 0;
+    for (int i = 0; i < g_funcCacheCount && probed < count; i++) {
+        CachedFunction *cf = &g_funcCache[i];
+
+        /* Validate funcId before calling pFunctionData — skip obviously invalid IDs */
+        if (cf->id == 0 || cf->id == INVALID_FUNCTION_ID) {
+            LOG_OSIRIS_DEBUG("PROBE: skipping invalid funcId=0x%08x for '%s'", cf->id, cf->name);
+            continue;
+        }
+
+        void *funcDef = s_pfn_pFunctionData(funcMan, cf->id);
+        if (!funcDef) continue;
+
+        /* Validate funcDef pointer before reading from it */
+        SafeMemoryInfo fdi = safe_memory_check_address((mach_vm_address_t)funcDef);
+        if (!fdi.is_valid || !fdi.is_readable) {
+            LOG_OSIRIS_WARN("PROBE: funcDef=%p not readable for '%s'", funcDef, cf->name);
+            continue;
+        }
+
+        // Dump 0x80 bytes as hex (128B covers potential ARM64 padding beyond Windows layout)
+        uint8_t raw[0x80];
+        if (!safe_memory_read((mach_vm_address_t)funcDef, raw, sizeof(raw))) {
+            LOG_OSIRIS_WARN("PROBE: can't read 0x80 bytes at %p for '%s'", funcDef, cf->name);
+            continue;
+        }
+
+        // Format hex dump
+        char hexline[256];
+        LOG_OSIRIS_INFO("PROBE [%d] '%s' funcDef=%p id=0x%08x type=%s handle=0x%08x",
+                        probed, cf->name, funcDef, cf->id,
+                        osi_func_type_str(cf->type), cf->handle);
+
+        for (int off = 0; off < 0x80; off += 16) {
+            int pos = snprintf(hexline, sizeof(hexline), "  +0x%02x: ", off);
+            for (int j = 0; j < 16 && off + j < 0x80; j++) {
+                pos += snprintf(hexline + pos, sizeof(hexline) - pos, "%02x ", raw[off + j]);
+            }
+            // Annotate interesting offsets (assuming Windows layout — verify with probe)
+            if (off == 0x28) {
+                uint32_t type_val = *(uint32_t *)(raw + 0x28);
+                pos += snprintf(hexline + pos, sizeof(hexline) - pos,
+                               " | +0x28(Type?)=%u(%s)", type_val, osi_func_type_str((uint8_t)type_val));
+            }
+            if (off == 0x20) {
+                uint32_t node_or_param = *(uint32_t *)(raw + 0x20);
+                pos += snprintf(hexline + pos, sizeof(hexline) - pos,
+                               " | +0x20(ParamCount?)=%u", node_or_param);
+            }
+            if (off == 0x30) {
+                // Key[0..3] at 0x2C-0x3B if Windows layout holds on ARM64
+                uint32_t k0 = *(uint32_t *)(raw + 0x2C);
+                uint32_t k2 = *(uint32_t *)(raw + 0x34);
+                pos += snprintf(hexline + pos, sizeof(hexline) - pos,
+                               " | Key[0]?=%u Key[2/funcId]?=0x%08x", k0, k2);
+            }
+            LOG_OSIRIS_INFO("%s", hexline);
+        }
+        probed++;
+    }
+
+    LOG_OSIRIS_INFO("PROBE: dumped %d/%d functions", probed, count);
 }

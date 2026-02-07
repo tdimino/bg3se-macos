@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.38
+## Current Status: v0.36.40
 
 **Overall Feature Parity: ~92%** (based on comprehensive API function count analysis)
 
@@ -1520,12 +1520,14 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.39 | 2026-02-07 | **Issue #66: Handle Encoding + Crash Diagnostics** - Read FunctionType from OsiFunctionDef +0x28 (fixes funcType=0 bug), encode OsirisFunctionHandle from Key[0..3], crash-resilient mmap ring buffer + SIGSEGV handler + breadcrumbs, `!probe_osidef` console command |
 | v0.36.38 | 2026-02-06 | **Issue #66 Fix: Osiris Call Crash** - Hook RegisterDIVFunctions to capture DivFunctions::Call/Query (correct OsiArgumentDesc* signature). Fixes SIGSEGV on AddGold, TemplateAddTo, and all Osi.* calls on ARM64. |
 | v0.36.37 | 2026-02-06 | **Issue #65 Diagnostics + Net Parity** - BG3SE_NO_HOOKS env var, fallback deferred init in fake_InitGame, legacy NetMessage event, PlayerHasExtender (Issue #6) |
 | v0.36.36 | 2026-02-06 | **Issue #65 Diagnostics** - Added diagnostic timing and logging for user ShaiLaric's M4/Tahoe crash report |
 | v0.36.35 | 2026-02-06 | **Issue #65 Fix + Stats 100% Parity** - Deferred session init (all ~2,800 kernel calls moved to tick loop), state corruption fix in fake_InitGame, diagnostic timing, BG3SE_MINIMAL env var, build system auto-builds Dobby+Lua from source |
 | v0.36.34 | 2026-02-06 | **Ext.Stats 100% Parity** - 22 new items: Sync, CopyFrom, SetRawAttribute, ExecuteFunctors/ExecuteFunctor, PrepareFunctorParams, TreasureTable/TreasureCategory stubs, StatsObject methods |
 | v0.36.33 | 2026-02-06 | **Deferred Net Init (Issue #65)** - Move ~65 mach_vm_read_overwrite kernel calls from COsiris::Load to tick loop, fixing game startup failure on some machines. State machine with 500ms stability gate and exponential backoff retry. |
+| v0.36.40 | 2026-02-07 | **Mach Exception Handler** - Catches EXC_BAD_ACCESS/EXC_BAD_INSTRUCTION before CrashReporter via Mach exception ports + MIG stubs. Fixed `!probe_osidef` crash (safe_memory_read vs safe_memory_read_pointer). Three-tier crash diagnostics (Issue #66) |
 | v0.36.32 | 2026-02-06 | **Parity Push to 90%** - Ext.Stats expansion (12 new functions: enum lookup, modifier attributes, prototype cache), Ext.Level (9 functions: raycasting, overlap tests, tile queries), Ext.Audio (13 functions: WWise playback, state/switch, RTPC, event management) |
 | v0.36.31 | 2026-02-06 | **NetChannel API Phase 4I** - Handshake + version negotiation: JSON hello exchange, CanSendExtenderMessages gating, Ext.Net.IsReady/PeerVersion, auto-switch timing fix (Issue #6) |
 | v0.36.30 | 2026-02-06 | **NetChannel API Phase 4H** - Peer resolution + broadcast + auto-detect: GUID-to-peer lookup, peer iteration broadcast, ActivePeerIds sync, implicit handshake (Issue #6) |
@@ -1657,6 +1659,7 @@ See `agent_docs/acceleration.md` for detailed methodology |
 |-------|---------|--------|
 | ~~#6~~ | NetChannel API | ✅ DONE (v0.36.31, Phase 4I) |
 | ~~#65~~ | Game startup failure | ✅ FIXED (v0.36.33, deferred net init) |
+| ~~#66~~ | Osiris call crash + crash diagnostics | ✅ FIXED (v0.36.40, handle encoding + Mach exception handler) |
 | ~~#15~~ | Client Lua State | ✅ DONE (v0.36.4) |
 | ~~#32~~ | Stats Sync | ✅ DONE |
 | ~~#40~~ | StaticData | ✅ DONE (auto-capture) |

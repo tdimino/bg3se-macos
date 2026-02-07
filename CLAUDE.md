@@ -2,7 +2,7 @@
 
 macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parity with Windows BG3SE.
 
-**Version:** v0.36.38 | **Parity:** ~92% | **Target:** Full Windows BG3SE mod compatibility
+**Version:** v0.36.40 | **Parity:** ~92% | **Target:** Full Windows BG3SE mod compatibility
 
 ## Stack
 
@@ -12,8 +12,10 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 
 ## Structure
 
-- `src/injector/main.c` - Core injection, hooks, Lua state
+- `src/injector/main.c` - Core injection, hooks, Lua state, Osi dispatch
+- `src/core/crashlog.c` - Crash-resilient logging (mmap ring buffer, signal handler, breadcrumbs)
 - `src/lua/lua_*.c` - Ext.* API implementations
+- `src/osiris/` - Osiris types, function cache, handle encoding, pattern scanning
 - `src/stats/` - RPGStats system + prototype managers
 - `src/entity/` - Entity Component System (GUID lookup, components)
 - `ghidra/offsets/` - Reverse-engineered offsets documentation
@@ -74,7 +76,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 
 ## Current API Status
 
-- **Osi.*** - Dynamic metatable (40+ functions)
+- **Osi.*** - Dynamic metatable (40+ functions), **OsirisFunctionHandle encoding** (v0.36.39), crash-resilient dispatch with breadcrumbs
 - **Ext.Osiris** - RegisterListener, NewCall/NewQuery/NewEvent (server context guards)
 - **Context System** - Ext.IsServer/IsClient/GetContext, two-phase bootstrap (v0.36.4)
 - **Ext.Entity** - GUID lookup, **1,999 components registered** (462 layouts: 169 verified + 293 generated), **1,730 sizes** (1,577 Ghidra + 153 Windows-only, 87% coverage), GetByHandle, **Dual EntityWorld Complete** (client + server auto-captured)

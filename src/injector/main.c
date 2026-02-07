@@ -46,6 +46,7 @@ extern "C" {
 // Core modules
 #include "version.h"
 #include "logging.h"
+#include "crashlog.h"
 
 // Osiris modules
 #include "osiris_types.h"
@@ -1092,6 +1093,8 @@ static int osi_value_to_lua(lua_State *L, OsiArgumentValue *val) {
  * The function name is stored as upvalue 1.
  */
 static int osi_dynamic_call(lua_State *L) {
+    BREADCRUMB();
+
     // Get function name from upvalue
     const char *funcName = lua_tostring(L, lua_upvalueindex(1));
     if (!funcName) {
@@ -1249,11 +1252,27 @@ static int osi_dynamic_call(lua_State *L) {
     //
     // Issue #66: DivFunctions pointers use correct OsiArgumentDesc* signature.
     // InternalCall takes COsipParameterList* (different struct) → SIGSEGV on ARM64.
+    //
+    // Issue #66 fix: DivFunctions::Call/Query expect an encoded OsirisFunctionHandle,
+    // NOT a raw function ID. The handle packs type + funcId + Key parts into 32 bits.
+    // Passing raw funcId causes the engine to decode garbage type/funcId → SIGSEGV.
     int result = 0;
+
+    // Resolve the encoded OsirisFunctionHandle for dispatch
+    // This was computed from Key[0..3] during enumeration (osiris_functions.c)
+    uint32_t dispatchHandle = osi_func_get_handle(funcName);
+    if (dispatchHandle == 0) {
+        // Handle not yet computed — encode from known type + funcId as fallback
+        dispatchHandle = osi_encode_handle(funcType, 0, funcId, 0);
+        LOG_OSIRIS_DEBUG("Osi.%s: No cached handle, using fallback encode (handle=0x%08x)",
+                        funcName, dispatchHandle);
+    }
 
     // Select dispatch functions: prefer DivFunctions (correct type), fall back to Internal*
     DivCallProc queryFn = g_divQuery ? g_divQuery : (DivCallProc)pfn_InternalQuery;
     DivCallProc callFn = g_divCall ? g_divCall : NULL;
+
+    BREADCRUMB_ID(dispatchHandle);
 
     switch (funcType) {
         case OSI_FUNC_QUERY:
@@ -1261,9 +1280,9 @@ static int osi_dynamic_call(lua_State *L) {
         case OSI_FUNC_USERQUERY:
             // Query types
             if (queryFn) {
-                result = queryFn(funcId, args);
-                LOG_OSIRIS_DEBUG("Osi.%s: Query returned %d (via %s)", funcName, result,
-                                g_divQuery ? "DivQuery" : "InternalQuery");
+                result = queryFn(dispatchHandle, args);
+                LOG_OSIRIS_DEBUG("Osi.%s: Query returned %d (via %s, handle=0x%08x)", funcName, result,
+                                g_divQuery ? "DivQuery" : "InternalQuery", dispatchHandle);
 
                 if (result && numArgs > 0) {
                     int returnCount = 0;
@@ -1287,8 +1306,8 @@ static int osi_dynamic_call(lua_State *L) {
         case OSI_FUNC_SYSCALL:
             // Call types
             if (callFn) {
-                result = callFn(funcId, args);
-                LOG_OSIRIS_DEBUG("Osi.%s: Call returned %d (via DivCall)", funcName, result);
+                result = callFn(dispatchHandle, args);
+                LOG_OSIRIS_DEBUG("Osi.%s: Call returned %d (via DivCall, handle=0x%08x)", funcName, result, dispatchHandle);
                 return 0;
             }
             break;
@@ -1297,8 +1316,8 @@ static int osi_dynamic_call(lua_State *L) {
         case OSI_FUNC_PROC:
             // Event/Proc types
             if (callFn) {
-                result = callFn(funcId, args);
-                LOG_OSIRIS_DEBUG("Osi.%s: Event/Proc dispatch returned %d (via DivCall)", funcName, result);
+                result = callFn(dispatchHandle, args);
+                LOG_OSIRIS_DEBUG("Osi.%s: Event/Proc dispatch returned %d (via DivCall, handle=0x%08x)", funcName, result, dispatchHandle);
                 return 0;
             }
             break;
@@ -1306,9 +1325,9 @@ static int osi_dynamic_call(lua_State *L) {
         case OSI_FUNC_DATABASE:
             // Database can be data insert or user query
             if (queryFn) {
-                result = queryFn(funcId, args);
+                result = queryFn(dispatchHandle, args);
                 if (result) {
-                    LOG_OSIRIS_DEBUG("Osi.%s: Database query returned %d", funcName, result);
+                    LOG_OSIRIS_DEBUG("Osi.%s: Database query returned %d (handle=0x%08x)", funcName, result, dispatchHandle);
                     if (numArgs > 0) {
                         int returnCount = 0;
                         for (int i = 0; i < numArgs; i++) {
@@ -1323,8 +1342,8 @@ static int osi_dynamic_call(lua_State *L) {
             }
             // Fall through to try as insert
             if (callFn) {
-                result = callFn(funcId, args);
-                LOG_OSIRIS_DEBUG("Osi.%s: Database insert returned %d", funcName, result);
+                result = callFn(dispatchHandle, args);
+                LOG_OSIRIS_DEBUG("Osi.%s: Database insert returned %d (handle=0x%08x)", funcName, result, dispatchHandle);
                 return 0;
             }
             break;
@@ -1332,9 +1351,12 @@ static int osi_dynamic_call(lua_State *L) {
         case OSI_FUNC_UNKNOWN:
         default:
             // Unknown type - try query first, then call
-            LOG_OSIRIS_DEBUG("Osi.%s: Unknown type %d, trying query then call", funcName, funcType);
+            // WARNING: This path is dangerous (Issue #66) — ideally funcType should
+            // always be known from OsiFunctionDef.Type read during enumeration.
+            LOG_OSIRIS_WARN("Osi.%s: Unknown type %d — using fallback dispatch (handle=0x%08x)",
+                           funcName, funcType, dispatchHandle);
             if (queryFn) {
-                result = queryFn(funcId, args);
+                result = queryFn(dispatchHandle, args);
                 if (result) {
                     LOG_OSIRIS_DEBUG("Osi.%s: Query (fallback) succeeded", funcName);
                     if (numArgs > 0) {
@@ -1350,7 +1372,7 @@ static int osi_dynamic_call(lua_State *L) {
                 }
             }
             if (callFn) {
-                result = callFn(funcId, args);
+                result = callFn(dispatchHandle, args);
                 if (result) {
                     LOG_OSIRIS_DEBUG("Osi.%s: Call (fallback) succeeded", funcName);
                     return 0;
@@ -2169,6 +2191,7 @@ static void set_arg_real(OsiArgumentDesc *arg, float value) {
  * Output values are written back to args
  */
 static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args) {
+    BREADCRUMB_ID(funcId);
     // Prefer DivFunctions::Query (correct OsiArgumentDesc* signature, Issue #66)
     if (g_divQuery) {
         return g_divQuery(funcId, args);
@@ -2194,8 +2217,15 @@ static int osiris_query(const char *funcName, OsiArgumentDesc *args) {
         return 0;
     }
 
-    LOG_OSIRIS_DEBUG("Calling %s (id=0x%x)", funcName, funcId);
-    return osiris_query_by_id(funcId, args);
+    // Use encoded handle for dispatch (Issue #66)
+    uint32_t handle = osi_func_get_handle(funcName);
+    if (handle == 0) {
+        uint8_t arity = 0, funcType = OSI_FUNC_QUERY;
+        osi_func_get_info(funcName, &arity, &funcType);
+        handle = osi_encode_handle(funcType, 0, funcId, 0);
+    }
+    LOG_OSIRIS_DEBUG("Querying %s (id=0x%x, handle=0x%08x)", funcName, funcId, handle);
+    return osiris_query_by_id(handle, args);
 }
 
 /**
@@ -2203,6 +2233,7 @@ static int osiris_query(const char *funcName, OsiArgumentDesc *args) {
  * Returns 1 on success, 0 on failure
  */
 static int osiris_call_by_id(uint32_t funcId, OsiArgumentDesc *args) {
+    BREADCRUMB_ID(funcId);
     // Prefer DivFunctions::Call (correct OsiArgumentDesc* signature, Issue #66)
     if (g_divCall) {
         return g_divCall(funcId, args);
@@ -2232,8 +2263,15 @@ static int osiris_call(const char *funcName, OsiArgumentDesc *args) {
         return 0;
     }
 
-    LOG_OSIRIS_DEBUG("Calling %s (id=0x%x)", funcName, funcId);
-    return osiris_call_by_id(funcId, args);
+    // Use encoded handle for dispatch (Issue #66)
+    uint32_t handle = osi_func_get_handle(funcName);
+    if (handle == 0) {
+        uint8_t arity = 0, funcType = OSI_FUNC_CALL;
+        osi_func_get_info(funcName, &arity, &funcType);
+        handle = osi_encode_handle(funcType, 0, funcId, 0);
+    }
+    LOG_OSIRIS_DEBUG("Calling %s (id=0x%x, handle=0x%08x)", funcName, funcId, handle);
+    return osiris_call_by_id(handle, args);
 }
 
 // ============================================================================
@@ -3013,6 +3051,9 @@ static void bg3se_init(void) {
 
     // Initialize function cache module
     osi_func_cache_init();
+
+    // Initialize crash-resilient logging (mmap ring buffer + signal handler)
+    crashlog_init();
 
     LOG_CORE_INFO("=== %s v%s initialized ===", BG3SE_NAME, BG3SE_VERSION);
     LOG_CORE_INFO("Running in process: %s (PID: %d)", getprogname(), getpid());

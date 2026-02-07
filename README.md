@@ -100,7 +100,7 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 
 ## Status
 
-**Version:** v0.36.38 | **Feature Parity:** ~92%
+**Version:** v0.36.40 | **Feature Parity:** ~92%
 
 | Feature | Status |
 |---------|--------|

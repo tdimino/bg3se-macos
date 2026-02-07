@@ -13,6 +13,50 @@ Each entry includes:
 
 ---
 
+## [v0.36.40] - 2026-02-07
+
+**Parity:** ~92% | **Category:** Mach Exception Handler | **Issues:** #66
+
+### Added
+- **Mach exception handler** (`src/core/mach_exception.c`): Catches `EXC_BAD_ACCESS` (PAC failures, SIGSEGV) and `EXC_BAD_INSTRUCTION` (SIGILL) via Mach exception ports **before** CrashReporter or POSIX signal handlers fire. Writes exception type, fault address, ARM64 register state (PC, LR, SP, FP, X0-X3, X8, X16-X17), and breadcrumb trail to `crash.log`. Returns `KERN_FAILURE` so CrashReporter still generates `.ips` files.
+- **MIG-generated stubs** (`src/core/mach_exc_stubs/`): Pre-generated from `mach_exc.defs` via Apple's `mig` tool — no build-time dependency on MIG.
+
+### Fixed
+- **Issue #66: `!probe_osidef` crash (SIGSEGV).** `osi_func_probe_layout()` used `safe_memory_read()` instead of `safe_memory_read_pointer()` when reading through `void **ppOsiFunctionMan`, passing the VMT pointer as `this` and causing a PAC failure. Fixed to use the correct pointer indirection pattern.
+
+### Technical
+- Listener thread (`BG3SE-ExcHandler`) runs `mach_msg()` loop with MIG-generated `mach_exc_server()` dispatch
+- `task_swap_exception_ports()` atomically saves old ports (CrashReporter) for forwarding
+- Three-tier crash diagnostics: Mach handler (first) → POSIX signal handler (second) → CrashReporter `.ips` (third)
+- `crashlog_get_crash_fd()` accessor exposes pre-opened crash file to exception handler
+- Clean shutdown via `mach_port_destruct()` + `pthread_join` + old port restoration
+
+---
+
+## [v0.36.39] - 2026-02-07
+
+**Parity:** ~92% | **Category:** Osiris Handle Encoding + Crash Diagnostics | **Issues:** #66
+
+### Fixed
+- **Issue #66: funcType=0 caused dangerous query-first fallback.** All dynamically discovered Osiris functions had type hardcoded to 0 (UNKNOWN), causing the dispatcher to try Query first then Call. For Call-type functions like `AddGold`, this could corrupt arguments or SIGSEGV. Fix: read `FunctionType` directly from the game's `OsiFunctionDef` struct at offset +0x28 via safe memory APIs.
+- **Issue #66: Raw funcId passed instead of encoded OsirisFunctionHandle.** Windows BG3SE packs type + funcId + Key parts into a 32-bit handle for `DivFunctions::Call/Query`. Our code was passing the raw enumeration index. Fix: read `Key[0..3]` from funcDef +0x2C, encode handle via `osi_encode_handle()`, and pass to all dispatch paths.
+
+### Added
+- **Crash-resilient logging module** (`src/core/crashlog.c`): mmap'd 16KB ring buffer (MAP_SHARED, survives SIGSEGV), SIGSEGV/SIGBUS/SIGABRT signal handler with SA_ONSTACK + sigaltstack, breadcrumb trail (32-entry lock-free ring tracking dispatch path). All signal handler code is async-signal-safe.
+- **OsirisFunctionHandle encoding** (`osiris_types.h`): `osi_encode_handle()`, `osi_decode_func_id()`, `osi_decode_func_type()` inline functions matching Windows BG3SE handle layout.
+- **`!probe_osidef [N]` console command:** On-demand hex dump of OsiFunctionDef structs for ARM64 offset discovery and validation.
+- **Breadcrumb macros** (`BREADCRUMB()`, `BREADCRUMB_ID()`): Placed at `osi_dynamic_call`, `osiris_query_by_id`, `osiris_call_by_id` for crash forensics.
+
+### Technical
+- `CachedFunction` extended with `handle` field for pre-computed dispatch handles
+- `osi_func_get_handle()` / `osi_func_cache_set_handle()` for handle lookup and storage
+- Ring buffer file: `~/Library/Application Support/BG3SE/crash_ring_<pid>.bin`
+- Crash report file: `~/Library/Application Support/BG3SE/crash.log`
+- Crashlog registered as log callback for WARN+ on Osiris/Hooks/Core modules
+- Pre-load `backtrace()` at init to avoid dyld_stub_binder deadlock in signal handler
+
+---
+
 ## [v0.36.38] - 2026-02-06
 
 **Parity:** ~92% | **Category:** Critical Osiris Crash Fix | **Issues:** #66

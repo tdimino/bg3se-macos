@@ -43,6 +43,19 @@ typedef enum {
     OSI_FUNC_USERQUERY = 8   // User-defined queries
 } OsiFunctionType;
 
+// Guess function type from name prefix (safer default than UNKNOWN)
+static inline uint8_t osi_func_guess_type(const char *name) {
+    if (!name) return OSI_FUNC_CALL;
+    if (name[0] == 'Q' && name[1] == 'R' && name[2] == 'Y' && name[3] == '_')
+        return OSI_FUNC_QUERY;
+    if (name[0] == 'P' && name[1] == 'R' && name[2] == 'O' && name[3] == 'C' && name[4] == '_')
+        return OSI_FUNC_PROC;
+    if (name[0] == 'D' && name[1] == 'B' && name[2] == '_')
+        return OSI_FUNC_DATABASE;
+    // Default to CALL — the UNKNOWN path (try query then call) can SIGSEGV
+    return OSI_FUNC_CALL;
+}
+
 // Helper to convert function type to string
 static inline const char *osi_func_type_str(uint8_t type) {
     switch (type) {
@@ -106,7 +119,37 @@ typedef struct {
     uint8_t arity;
     uint8_t type;  // OsiFunctionType
     uint32_t id;
+    uint32_t handle;  // Encoded OsirisFunctionHandle (0 = not yet computed)
 } CachedFunction;
+
+// ============================================================================
+// OsirisFunctionHandle Encoding
+// ============================================================================
+// Windows BG3SE packs Key[0..3] into a 32-bit handle for DivFunctions dispatch.
+// Layout: bits 0-2 = type, bits 3-27 = funcId (type<4) or 3-19 + 20-27 (type>=4),
+// bit 31 = Part4.
+
+// Encode Key[0..3] into a 32-bit handle
+static inline uint32_t osi_encode_handle(uint32_t type, uint32_t part2,
+                                          uint32_t funcId, uint32_t part4) {
+    uint32_t h = (type & 7) | ((part4 & 1) << 31);
+    if (type < 4)
+        h |= (funcId & 0x1FFFFFF) << 3;       // 25-bit funcId
+    else
+        h |= ((funcId & 0x1FFFF) << 3) | ((part2 & 0xFF) << 20);
+    return h;
+}
+
+// Decode funcId from packed handle
+static inline uint32_t osi_decode_func_id(uint32_t handle) {
+    uint8_t type = handle & 7;
+    return (type < 4) ? (handle >> 3) & 0x1FFFFFF : (handle >> 3) & 0x1FFFF;
+}
+
+// Decode function type from packed handle
+static inline uint8_t osi_decode_func_type(uint32_t handle) {
+    return handle & 7;
+}
 
 // ============================================================================
 // Known Event Entry

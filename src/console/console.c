@@ -14,6 +14,7 @@
 #include "../overlay/overlay.h"
 #include "../lifetime/lifetime.h"
 #include "../entity/component_typeid.h"
+#include "../osiris/osiris_functions.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -395,6 +396,7 @@ static int dispatch_console_command(lua_State *L, const char *line, int client_s
         console_printf("  !events - Show event handler counts");
         console_printf("  !status - Show BG3SE status");
         console_printf("  !typeids - Show TypeId resolution status");
+        console_printf("  !probe_osidef [N] - Dump OsiFunctionDef layout for N functions (default 5)");
         for (int i = 0; i < s_command_count; i++) {
             console_printf("  !%s", s_commands[i].name);
         }
@@ -428,6 +430,20 @@ static int dispatch_console_command(lua_State *L, const char *line, int client_s
     // Built-in !typeids command
     if (strcmp(cmd_name, "typeids") == 0) {
         component_typeid_dump_to_console();
+        return 1;
+    }
+
+    // Built-in !probe_osidef command (Issue #66: discover OsiFunctionDef layout)
+    if (strcmp(cmd_name, "probe_osidef") == 0) {
+        int count = 5;  // Default: probe first 5 functions
+        char *count_arg = strtok(NULL, " \t");
+        if (count_arg && count_arg[0]) {
+            count = atoi(count_arg);
+            if (count <= 0) count = 5;
+            if (count > 50) count = 50;
+        }
+        console_printf("Probing OsiFunctionDef layout for %d functions (check log)...", count);
+        osi_func_probe_layout(count);
         return 1;
     }
 

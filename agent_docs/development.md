@@ -144,6 +144,31 @@ echo '!probe 0x12345678 0x100' > ~/Library/Application\ Support/BG3SE/commands.t
 echo '!help' > ~/Library/Application\ Support/BG3SE/commands.txt
 ```
 
+### Built-in Console Commands
+
+| Command | Description |
+|---------|-------------|
+| `!help` | Show all available commands |
+| `!events` | Show event handler counts |
+| `!status` | Show BG3SE status (socket, clients, commands) |
+| `!typeids` | Show TypeId resolution status |
+| `!probe_osidef [N]` | Hex dump OsiFunctionDef layout for N functions (default 5) |
+
+### Crash Diagnostics (v0.36.39+)
+
+Crash-safe files in `~/Library/Application Support/BG3SE/`:
+
+| File | Purpose |
+|------|---------|
+| `crash_ring_<pid>.bin` | mmap'd 16KB ring buffer (survives SIGSEGV) |
+| `crash.log` | Signal handler output: signal, fault addr, breadcrumbs, backtrace |
+
+```bash
+# After a crash, check these:
+hexdump -C ~/Library/Application\ Support/BG3SE/crash_ring_*.bin | tail -40
+cat ~/Library/Application\ Support/BG3SE/crash.log
+```
+
 ### Global Debug Helpers
 
 These shortcuts are available in the console:

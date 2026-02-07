@@ -291,6 +291,57 @@ When stuck on a reverse engineering problem:
 □ Did I add safety checks before dereferencing?
 ```
 
+## Crash Diagnostics (v0.36.39+)
+
+BG3SE includes crash-resilient logging that survives SIGSEGV/SIGBUS/SIGABRT crashes.
+
+### Crash Files
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `crash.log` | `~/Library/Application Support/BG3SE/crash.log` | Signal handler output (backtrace, breadcrumbs) |
+| `crash_ring_<pid>.bin` | `~/Library/Application Support/BG3SE/crash_ring_*.bin` | mmap'd ring buffer (WARN+ log messages, survives crash) |
+| `latest.log` | `~/Library/Application Support/BG3SE/logs/latest.log` | Normal session log (may be incomplete if crash) |
+
+### Post-Crash Investigation
+
+```bash
+# 1. Check crash log for signal info + backtrace
+cat ~/Library/Application\ Support/BG3SE/crash.log
+
+# 2. Inspect ring buffer for last messages before crash
+hexdump -C ~/Library/Application\ Support/BG3SE/crash_ring_*.bin | tail -40
+
+# 3. Look for breadcrumb trail (shows exact dispatch path)
+grep "Breadcrumb" ~/Library/Application\ Support/BG3SE/crash.log
+```
+
+### Breadcrumb Trail
+
+The crash handler dumps a breadcrumb ring showing the last 32 function entries before the crash. Each entry includes `__func__` name, a funcId/handle, and a timestamp. Useful for tracing which Osiris dispatch path was active when the crash occurred.
+
+### OsiFunctionDef Probe (`!probe_osidef`)
+
+On-demand console command to dump raw OsiFunctionDef structs:
+
+```bash
+echo '!probe_osidef 10' | nc -U /tmp/bg3se.sock
+```
+
+Outputs hex dumps with annotated Type (+0x28) and Key[2]/funcId (+0x30) fields. Use to verify ARM64 struct layout matches Windows offsets.
+
+### Osiris Handle Encoding
+
+DivFunctions::Call/Query expect encoded 32-bit `OsirisFunctionHandle`, not raw funcId:
+- Bits 0-2: FunctionType (1=Event, 2=Query, 3=Call, 4=Database, 5=Proc)
+- Bits 3-27: funcId (for type < 4, 25-bit)
+- Bit 31: Part4
+
+If a crash occurs in the Osiris dispatch path, check:
+1. Is the handle correctly encoded? (look for `handle=0x` in logs)
+2. Does the funcType match the function? (`type=0` is the old bug)
+3. Are Key[0..3] offsets correct for ARM64? (use `!probe_osidef` to verify)
+
 ## Related Documentation
 
 - `agent_docs/meridian-persona.md` - RE persona and approach

@@ -109,12 +109,16 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/network
     ${CMAKE_SOURCE_DIR}/src/level
     ${CMAKE_SOURCE_DIR}/src/audio
+    ${CMAKE_SOURCE_DIR}/src/core/mach_exc_stubs
 )
 
 add_library(bg3se SHARED
     src/injector/main.c
     src/core/logging.c
     src/core/safe_memory.c
+    src/core/crashlog.c
+    src/core/mach_exception.c
+    src/core/mach_exc_stubs/mach_excServer.c
     src/lua/lua_ext.c
     src/lua/lua_ide_helpers.c
     src/lua/lua_json.c
