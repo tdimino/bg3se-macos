@@ -13,6 +13,21 @@ Each entry includes:
 
 ---
 
+## [v0.36.38] - 2026-02-06
+
+**Parity:** ~92% | **Category:** Critical Osiris Crash Fix | **Issues:** #66
+
+### Fixed
+- **Issue #66: Osiris function calls crash with SIGSEGV on ARM64.** `AddGold()`, `TemplateAddTo()`, and all Osi.* calls caused hard crashes. Root cause: `InternalCall` expects `COsipParameterList*` but we were passing `OsiArgumentDesc*` (wrong struct type). Fix: hook `COsiris::RegisterDIVFunctions` to capture `DivFunctions::Call` and `DivFunctions::Query` pointers, which correctly accept `OsiArgumentDesc*`. This matches Windows BG3SE's dispatch strategy (OsirisWrappers.cpp:38).
+
+### Technical
+- Added `DivFunctions` struct, `DivCallProc` typedef to `osiris_types.h`
+- New Dobby hook on `COsiris::RegisterDIVFunctions` (exported symbol at offset 0x46348 in libOsiris.dylib)
+- All Osi.* dispatch paths (Query, Call, SysCall, Event, Proc, Database) now route through `g_divQuery`/`g_divCall` with `pfn_InternalQuery`/`pfn_InternalCall` as fallback
+- Hook count increased from 3 to 4 (InitGame, Load, Event, RegisterDIVFunctions)
+
+---
+
 ## [v0.36.37] - 2026-02-06
 
 **Parity:** ~92% | **Category:** Issue #65 Diagnostics + Net Parity | **Issues:** #65, #6

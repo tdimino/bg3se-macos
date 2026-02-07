@@ -188,6 +188,13 @@ static pFunctionDataFn pfn_pFunctionData = NULL;
 static void *g_OsiFunctionMan = NULL;
 static void *g_COsiris = NULL;  // Captured from hook calls
 
+// DivFunctions: Call/Query pointers captured from RegisterDIVFunctions hook.
+// These use the correct OsiArgumentDesc* signature (Issue #66 fix).
+// InternalCall uses COsipParameterList* — wrong type, causes SIGSEGV.
+static DivCallProc g_divCall = NULL;
+static DivCallProc g_divQuery = NULL;
+static void *orig_RegisterDIVFunctions = NULL;
+
 // Global pointer to OsiFunctionMan from libOsiris
 static void **g_pOsiFunctionMan = NULL;  // Points to the global _OsiFunctionMan
 
@@ -1235,23 +1242,30 @@ static int osi_dynamic_call(lua_State *L) {
 
     // Call the appropriate function based on type
     // Per Windows BG3SE Function.inl dispatch logic:
-    // - Query, SysQuery, UserQuery → InternalQuery
-    // - Call, SysCall → InternalCall
-    // - Event, Proc → Event dispatch
+    // - Query, SysQuery, UserQuery → DivFunctions::Query (or InternalQuery fallback)
+    // - Call, SysCall → DivFunctions::Call (or InternalCall fallback)
+    // - Event, Proc → DivFunctions::Call
     // - Database → Special handling (can be data insert or user query)
+    //
+    // Issue #66: DivFunctions pointers use correct OsiArgumentDesc* signature.
+    // InternalCall takes COsipParameterList* (different struct) → SIGSEGV on ARM64.
     int result = 0;
+
+    // Select dispatch functions: prefer DivFunctions (correct type), fall back to Internal*
+    DivCallProc queryFn = g_divQuery ? g_divQuery : (DivCallProc)pfn_InternalQuery;
+    DivCallProc callFn = g_divCall ? g_divCall : NULL;
 
     switch (funcType) {
         case OSI_FUNC_QUERY:
         case OSI_FUNC_SYSQUERY:
         case OSI_FUNC_USERQUERY:
-            // Query types - use InternalQuery
-            if (pfn_InternalQuery) {
-                result = pfn_InternalQuery(funcId, args);
-                LOG_OSIRIS_DEBUG("Osi.%s: InternalQuery returned %d", funcName, result);
+            // Query types
+            if (queryFn) {
+                result = queryFn(funcId, args);
+                LOG_OSIRIS_DEBUG("Osi.%s: Query returned %d (via %s)", funcName, result,
+                                g_divQuery ? "DivQuery" : "InternalQuery");
 
                 if (result && numArgs > 0) {
-                    // Query succeeded - return all argument values (OUT params filled)
                     int returnCount = 0;
                     for (int i = 0; i < numArgs; i++) {
                         osi_value_to_lua(L, &args[i].value);
@@ -1260,11 +1274,9 @@ static int osi_dynamic_call(lua_State *L) {
                     LOG_OSIRIS_DEBUG("Osi.%s: Returning %d values from query", funcName, returnCount);
                     return returnCount;
                 } else if (result) {
-                    // Query succeeded but no args - return true
                     lua_pushboolean(L, 1);
                     return 1;
                 } else {
-                    // Query failed - return nil
                     lua_pushnil(L);
                     return 1;
                 }
@@ -1273,30 +1285,28 @@ static int osi_dynamic_call(lua_State *L) {
 
         case OSI_FUNC_CALL:
         case OSI_FUNC_SYSCALL:
-            // Call types - use InternalCall
-            if (pfn_InternalCall) {
-                result = pfn_InternalCall(funcId, (void *)args);
-                LOG_OSIRIS_DEBUG("Osi.%s: InternalCall returned %d", funcName, result);
-                // Calls don't return values
+            // Call types
+            if (callFn) {
+                result = callFn(funcId, args);
+                LOG_OSIRIS_DEBUG("Osi.%s: Call returned %d (via DivCall)", funcName, result);
                 return 0;
             }
             break;
 
         case OSI_FUNC_EVENT:
         case OSI_FUNC_PROC:
-            // Event/Proc types - these trigger events, use InternalCall
-            if (pfn_InternalCall) {
-                result = pfn_InternalCall(funcId, (void *)args);
-                LOG_OSIRIS_DEBUG("Osi.%s: Event/Proc dispatch returned %d", funcName, result);
+            // Event/Proc types
+            if (callFn) {
+                result = callFn(funcId, args);
+                LOG_OSIRIS_DEBUG("Osi.%s: Event/Proc dispatch returned %d (via DivCall)", funcName, result);
                 return 0;
             }
             break;
 
         case OSI_FUNC_DATABASE:
             // Database can be data insert or user query
-            // For now, treat as query first, then call
-            if (pfn_InternalQuery) {
-                result = pfn_InternalQuery(funcId, args);
+            if (queryFn) {
+                result = queryFn(funcId, args);
                 if (result) {
                     LOG_OSIRIS_DEBUG("Osi.%s: Database query returned %d", funcName, result);
                     if (numArgs > 0) {
@@ -1312,8 +1322,8 @@ static int osi_dynamic_call(lua_State *L) {
                 }
             }
             // Fall through to try as insert
-            if (pfn_InternalCall) {
-                result = pfn_InternalCall(funcId, (void *)args);
+            if (callFn) {
+                result = callFn(funcId, args);
                 LOG_OSIRIS_DEBUG("Osi.%s: Database insert returned %d", funcName, result);
                 return 0;
             }
@@ -1321,10 +1331,10 @@ static int osi_dynamic_call(lua_State *L) {
 
         case OSI_FUNC_UNKNOWN:
         default:
-            // Unknown type - try query first, then call (fallback heuristic)
+            // Unknown type - try query first, then call
             LOG_OSIRIS_DEBUG("Osi.%s: Unknown type %d, trying query then call", funcName, funcType);
-            if (pfn_InternalQuery) {
-                result = pfn_InternalQuery(funcId, args);
+            if (queryFn) {
+                result = queryFn(funcId, args);
                 if (result) {
                     LOG_OSIRIS_DEBUG("Osi.%s: Query (fallback) succeeded", funcName);
                     if (numArgs > 0) {
@@ -1339,9 +1349,8 @@ static int osi_dynamic_call(lua_State *L) {
                     return 1;
                 }
             }
-            // Try as a call
-            if (pfn_InternalCall) {
-                result = pfn_InternalCall(funcId, (void *)args);
+            if (callFn) {
+                result = callFn(funcId, args);
                 if (result) {
                     LOG_OSIRIS_DEBUG("Osi.%s: Call (fallback) succeeded", funcName);
                     return 0;
@@ -1946,6 +1955,38 @@ static bool deferred_session_init_tick(void) {
 }
 
 /**
+ * Hooked COsiris::RegisterDIVFunctions - engine registers Call/Query dispatch
+ * Mangled name: _ZN7COsiris20RegisterDIVFunctionsEP19TOsirisInitFunction
+ *
+ * The DivFunctions struct contains Call and Query function pointers that
+ * correctly take OsiArgumentDesc* (unlike InternalCall which takes
+ * COsipParameterList* — a different struct that causes SIGSEGV on ARM64).
+ *
+ * Windows BG3SE hooks this same function: OsirisWrappers.cpp:38
+ */
+static void fake_RegisterDIVFunctions(void *thisPtr, DivFunctions *functions) {
+    LOG_HOOKS_INFO(">>> COsiris::RegisterDIVFunctions called (this=%p, funcs=%p)", thisPtr, (void*)functions);
+
+    if (functions) {
+        g_divCall = functions->call;
+        g_divQuery = functions->query;
+        LOG_HOOKS_INFO("  Captured DivFunctions: Call=%p, Query=%p",
+                       (void*)g_divCall, (void*)g_divQuery);
+        if (functions->error) {
+            LOG_HOOKS_DEBUG("  DivFunctions: Error=%p, Assert=%p",
+                           (void*)functions->error, (void*)functions->assert_fn);
+        }
+    } else {
+        LOG_HOOKS_WARN("  RegisterDIVFunctions called with NULL functions pointer");
+    }
+
+    // Call original
+    if (orig_RegisterDIVFunctions) {
+        ((void(*)(void*, DivFunctions*))orig_RegisterDIVFunctions)(thisPtr, functions);
+    }
+}
+
+/**
  * Hooked COsiris::InitGame - called when game initializes Osiris
  * Mangled name: _ZN7COsiris8InitGameEv
  * This is a member function, so 'this' pointer is first arg
@@ -2128,13 +2169,17 @@ static void set_arg_real(OsiArgumentDesc *arg, float value) {
  * Output values are written back to args
  */
 static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args) {
-    if (!pfn_InternalQuery) {
-        LOG_OSIRIS_DEBUG("ERROR: InternalQuery not resolved");
-        return 0;
+    // Prefer DivFunctions::Query (correct OsiArgumentDesc* signature, Issue #66)
+    if (g_divQuery) {
+        return g_divQuery(funcId, args);
     }
-
-    int result = pfn_InternalQuery(funcId, args);
-    return result;
+    // Fallback to InternalQuery (uses OsiArgumentDesc* too, but may not be available)
+    if (pfn_InternalQuery) {
+        return pfn_InternalQuery(funcId, args);
+    }
+    LOG_OSIRIS_DEBUG("ERROR: No query dispatch available (DivQuery=%p, InternalQuery=%p)",
+                     (void*)g_divQuery, (void*)pfn_InternalQuery);
+    return 0;
 }
 
 /**
@@ -2158,15 +2203,21 @@ static int osiris_query(const char *funcName, OsiArgumentDesc *args) {
  * Returns 1 on success, 0 on failure
  */
 static int osiris_call_by_id(uint32_t funcId, OsiArgumentDesc *args) {
-    if (!pfn_InternalCall) {
-        LOG_OSIRIS_DEBUG("ERROR: InternalCall not resolved");
-        return 0;
+    // Prefer DivFunctions::Call (correct OsiArgumentDesc* signature, Issue #66)
+    if (g_divCall) {
+        return g_divCall(funcId, args);
     }
-
-    // Note: InternalCall takes COsipParameterList, not OsiArgumentDesc
-    // For now, this may need adjustment based on actual signature
-    int result = pfn_InternalCall(funcId, (void *)args);
-    return result;
+    // WARNING: InternalCall takes COsipParameterList*, NOT OsiArgumentDesc*.
+    // This fallback path is UNSAFE and will likely crash on ARM64.
+    // It only exists for the case where RegisterDIVFunctions hasn't fired yet.
+    if (pfn_InternalCall) {
+        LOG_OSIRIS_WARN("osiris_call_by_id: falling back to InternalCall (wrong struct type!)");
+        int result = pfn_InternalCall(funcId, (void *)args);
+        return result;
+    }
+    LOG_OSIRIS_DEBUG("ERROR: No call dispatch available (DivCall=%p, InternalCall=%p)",
+                     (void*)g_divCall, (void*)pfn_InternalCall);
+    return 0;
 }
 
 /**
@@ -2681,6 +2732,14 @@ static void install_hooks(void) {
     void *loadAddr = dlsym(osiris, "_ZN7COsiris4LoadER12COsiSmartBuf");
     void *eventAddr = dlsym(osiris, "_ZN7COsiris5EventEjP16COsiArgumentDesc");
 
+    // RegisterDIVFunctions: engine registers Call/Query dispatch pointers here.
+    // We hook this to capture DivFunctions::Call/Query which take OsiArgumentDesc* (Issue #66).
+    // Try COsiris:: first (matches Windows BG3SE), fall back to CDIV::
+    void *regDivAddr = dlsym(osiris, "_ZN7COsiris20RegisterDIVFunctionsEP19TOsirisInitFunction");
+    if (!regDivAddr) {
+        regDivAddr = dlsym(osiris, "_ZN4CDIV20RegisterDIVFunctionsEP19TOsirisInitFunction");
+    }
+
     // Pattern scanner verification: create pattern from known function bytes
     if (text_start && text_size > 0 && eventAddr) {
         // Read first 8 bytes of COsiris::Event and convert to pattern
@@ -2764,7 +2823,20 @@ static void install_hooks(void) {
         LOG_HOOKS_DEBUG("  COsiris::Event not found, skipping");
     }
 
-    LOG_HOOKS_INFO("Hooks installed: %d/3", hook_count);
+    // Hook RegisterDIVFunctions - captures Call/Query dispatch pointers (Issue #66)
+    if (regDivAddr) {
+        int result = DobbyHook(regDivAddr, (void *)fake_RegisterDIVFunctions, &orig_RegisterDIVFunctions);
+        if (result == 0) {
+            LOG_HOOKS_INFO("  RegisterDIVFunctions hooked successfully (orig: %p)", orig_RegisterDIVFunctions);
+            hook_count++;
+        } else {
+            LOG_HOOKS_ERROR(" Failed to hook RegisterDIVFunctions (error: %d)", result);
+        }
+    } else {
+        LOG_HOOKS_WARN(" RegisterDIVFunctions not found — Osiris calls will use InternalCall fallback (may crash!)");
+    }
+
+    LOG_HOOKS_INFO("Hooks installed: %d/4", hook_count);
     hooks_installed = 1;
 
 init_subsystems:

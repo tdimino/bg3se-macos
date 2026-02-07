@@ -124,6 +124,26 @@ typedef struct {
 typedef KnownFunction KnownEvent;
 
 // ============================================================================
+// DivFunctions - Engine callback table for Osiris Call/Query dispatch
+// ============================================================================
+
+// Call/Query function pointer (both use the same signature)
+typedef int (*DivCallProc)(uint32_t funcId, OsiArgumentDesc *params);
+typedef void (*DivErrorMessageProc)(const char *message);
+typedef void (*DivAssertProc)(int successful, const char *message, int unknown2);
+
+// DivFunctions struct - registered by engine via COsiris::RegisterDIVFunctions
+// Windows BG3SE captures Call/Query from this struct for Osiris dispatch.
+// Layout from Windows BG3SE: BG3Extender/GameDefinitions/Osiris.h:265-276
+typedef struct {
+    void *unknown0;              // +0x00
+    DivCallProc call;            // +0x08: Call dispatch (takes OsiArgumentDesc*)
+    DivCallProc query;           // +0x10: Query dispatch (takes OsiArgumentDesc*)
+    DivErrorMessageProc error;   // +0x18: Error message callback
+    DivAssertProc assert_fn;     // +0x20: Assert callback
+} DivFunctions;
+
+// ============================================================================
 // Function Pointer Types
 // ============================================================================
 

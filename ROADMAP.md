@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.36
+## Current Status: v0.36.38
 
 **Overall Feature Parity: ~92%** (based on comprehensive API function count analysis)
 
@@ -1520,6 +1520,9 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.38 | 2026-02-06 | **Issue #66 Fix: Osiris Call Crash** - Hook RegisterDIVFunctions to capture DivFunctions::Call/Query (correct OsiArgumentDesc* signature). Fixes SIGSEGV on AddGold, TemplateAddTo, and all Osi.* calls on ARM64. |
+| v0.36.37 | 2026-02-06 | **Issue #65 Diagnostics + Net Parity** - BG3SE_NO_HOOKS env var, fallback deferred init in fake_InitGame, legacy NetMessage event, PlayerHasExtender (Issue #6) |
+| v0.36.36 | 2026-02-06 | **Issue #65 Diagnostics** - Added diagnostic timing and logging for user ShaiLaric's M4/Tahoe crash report |
 | v0.36.35 | 2026-02-06 | **Issue #65 Fix + Stats 100% Parity** - Deferred session init (all ~2,800 kernel calls moved to tick loop), state corruption fix in fake_InitGame, diagnostic timing, BG3SE_MINIMAL env var, build system auto-builds Dobby+Lua from source |
 | v0.36.34 | 2026-02-06 | **Ext.Stats 100% Parity** - 22 new items: Sync, CopyFrom, SetRawAttribute, ExecuteFunctors/ExecuteFunctor, PrepareFunctorParams, TreasureTable/TreasureCategory stubs, StatsObject methods |
 | v0.36.33 | 2026-02-06 | **Deferred Net Init (Issue #65)** - Move ~65 mach_vm_read_overwrite kernel calls from COsiris::Load to tick loop, fixing game startup failure on some machines. State machine with 500ms stability gate and exponential backoff retry. |
