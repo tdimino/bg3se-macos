@@ -686,6 +686,78 @@ static int lua_debug_is_tracing_events(lua_State *L) {
 }
 
 // ============================================================================
+// Mod Health Diagnostics (for !mod_diag)
+// ============================================================================
+
+/**
+ * Ext.Debug.ModHealthCount() - Get number of tracked mods
+ * @return integer
+ */
+static int lua_debug_mod_health_count(lua_State *L) {
+    lua_pushinteger(L, events_get_mod_health_count());
+    return 1;
+}
+
+/**
+ * Ext.Debug.ModHealthAll() - Get all mod health entries
+ * @return table of {name, handlers, errors, handled, disabled, last_error}
+ */
+static int lua_debug_mod_health_all(lua_State *L) {
+    int count = events_get_mod_health_count();
+    lua_createtable(L, count, 0);
+
+    for (int i = 0; i < count; i++) {
+        const char *name = events_get_mod_health_name(i);
+        uint32_t handlers = 0, errors = 0, handled = 0;
+        bool disabled = false;
+        events_get_mod_health_stats(i, &handlers, &errors, &handled, &disabled);
+        const char *last_error = events_get_mod_last_error(i);
+
+        lua_createtable(L, 0, 6);
+
+        lua_pushstring(L, name ? name : "unknown");
+        lua_setfield(L, -2, "name");
+
+        lua_pushinteger(L, handlers);
+        lua_setfield(L, -2, "handlers");
+
+        lua_pushinteger(L, errors);
+        lua_setfield(L, -2, "errors");
+
+        lua_pushinteger(L, handled);
+        lua_setfield(L, -2, "handled");
+
+        lua_pushboolean(L, disabled);
+        lua_setfield(L, -2, "disabled");
+
+        if (last_error) {
+            lua_pushstring(L, last_error);
+        } else {
+            lua_pushnil(L);
+        }
+        lua_setfield(L, -2, "last_error");
+
+        lua_rawseti(L, -2, i + 1);
+    }
+
+    return 1;
+}
+
+/**
+ * Ext.Debug.ModDisable(mod_name, disabled) - Soft-disable/enable a mod
+ * @param mod_name string
+ * @param disabled boolean
+ * @return boolean (true if mod found)
+ */
+static int lua_debug_mod_disable(lua_State *L) {
+    const char *mod_name = luaL_checkstring(L, 1);
+    bool disabled = lua_toboolean(L, 2);
+    bool found = events_set_mod_disabled(mod_name, disabled);
+    lua_pushboolean(L, found);
+    return 1;
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -765,6 +837,16 @@ void lua_ext_register_debug(lua_State *L, int ext_table_index) {
 
     lua_pushcfunction(L, lua_debug_is_tracing_events);
     lua_setfield(L, -2, "IsTracingEvents");
+
+    // Mod health diagnostics
+    lua_pushcfunction(L, lua_debug_mod_health_count);
+    lua_setfield(L, -2, "ModHealthCount");
+
+    lua_pushcfunction(L, lua_debug_mod_health_all);
+    lua_setfield(L, -2, "ModHealthAll");
+
+    lua_pushcfunction(L, lua_debug_mod_disable);
+    lua_setfield(L, -2, "ModDisable");
 
     // Set Ext.Debug = table
     lua_setfield(L, ext_table_index, "Debug");

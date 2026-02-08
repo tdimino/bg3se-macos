@@ -100,7 +100,7 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 
 ## Status
 
-**Version:** v0.36.41 | **Feature Parity:** ~92%
+**Version:** v0.36.42 | **Feature Parity:** ~92%
 
 | Feature | Status |
 |---------|--------|
@@ -110,7 +110,7 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Ext.Osiris | ✅ Event listeners, custom functions (NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions), **server context guards** |
 | Ext.Entity | ✅ GUID lookup, **Dual EntityWorld** (client + server), **1,999 components registered** (534 layouts: 169 verified + 365 generated), **1,577 ARM64 sizes** + **702 Windows estimates** = **1,730 total** (87% coverage) |
 | Ext.Stats | ✅ **100% parity** — 15,774 stats, Get/GetAll/Create/Sync, CopyFrom, SetRawAttribute, ExecuteFunctors, TreasureTable/TreasureCategory stubs |
-| Ext.Events | ✅ 33 events (13 lifecycle + 17 engine + 2 functor + 1 network) with Prevent pattern |
+| Ext.Events | ✅ 33 events (13 lifecycle + 17 engine + 2 functor + 1 network) with Prevent pattern, **runtime mod attribution** + `!mod_diag` |
 | Ext.IO | ✅ LoadFile, SaveFile, **AddPathOverride, GetPathOverride** |
 | Ext.Timer | ✅ WaitFor, WaitForRealtime, Cancel, Pause, Resume, **MicrosecTime, ClockEpoch, ClockTime, GameTime, DeltaTime, Ticks, Persistent timers (6 functions)** |
 | Ext.Vars | ✅ PersistentVars + User Variables + Mod Variables |
@@ -129,6 +129,7 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Lifetime Scoping | ✅ Prevents stale object access |
 | Context System | ✅ **Server/Client context awareness**, Ext.IsServer/IsClient/GetContext, two-phase bootstrap |
 | Debug Console | ✅ Socket + file + in-game overlay |
+| Crash Attribution | ✅ **Runtime mod tracking** — per-handler mod name, `!mod_diag` console, soft-disable, enhanced crash reports with mod context |
 | Testing | ✅ `!test` suite (71 tests), `!test_ingame` (22 tests), Debug.* helpers, Frida scripts |
 
 See [ROADMAP.md](ROADMAP.md) for detailed progress.
@@ -144,6 +145,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed progress.
 | **[docs/development.md](docs/development.md)** | Contributing, building features, debugging |
 | **[docs/contributor-workflow.md](docs/contributor-workflow.md)** | End-to-end guide: research, Ghidra, implementation |
 | **[docs/reverse-engineering.md](docs/reverse-engineering.md)** | Ghidra workflows, offset discovery |
+| **[docs/crash-attribution.md](docs/crash-attribution.md)** | Mod crash attribution: 3-layer diagnostics |
 | **[docs/troubleshooting.md](docs/troubleshooting.md)** | Common issues and solutions |
 | **[docs/arm64/](docs/arm64/)** | ARM64 hooking patterns, prevention strategies |
 | **[docs/solutions/](docs/solutions/)** | Documented problem solutions |

@@ -69,6 +69,7 @@ void crashlog_hexdump(int fd, const char *label, const void *data, size_t len);
 
 typedef struct {
     const char *func;       // __func__ string literal (always valid, read-only data)
+    const char *mod_name;   // Mod name (points to EventHandler.mod_name or static string)
     uint32_t extra;         // funcId or other context value
     uint32_t timestamp_low; // low 32 bits of mach_absolute_time()
 } BreadcrumbEntry;
@@ -81,12 +82,27 @@ static inline void breadcrumb_mark(const char *func, uint32_t extra) {
     extern uint32_t g_bc_idx;
     uint32_t idx = __atomic_fetch_add(&g_bc_idx, 1, __ATOMIC_RELAXED) & (BREADCRUMB_RING_SIZE - 1);
     g_breadcrumbs[idx].extra = extra;
+    g_breadcrumbs[idx].mod_name = NULL;
     g_breadcrumbs[idx].timestamp_low = (uint32_t)mach_absolute_time();
     __atomic_store_n(&g_breadcrumbs[idx].func, func, __ATOMIC_RELEASE);
 }
 
-#define BREADCRUMB()        breadcrumb_mark(__func__, 0)
-#define BREADCRUMB_ID(id)   breadcrumb_mark(__func__, (id))
+/**
+ * Record a breadcrumb with mod context.
+ */
+static inline void breadcrumb_mark_mod(const char *func, uint32_t extra, const char *mod) {
+    extern BreadcrumbEntry g_breadcrumbs[BREADCRUMB_RING_SIZE];
+    extern uint32_t g_bc_idx;
+    uint32_t idx = __atomic_fetch_add(&g_bc_idx, 1, __ATOMIC_RELAXED) & (BREADCRUMB_RING_SIZE - 1);
+    g_breadcrumbs[idx].extra = extra;
+    g_breadcrumbs[idx].mod_name = mod;
+    g_breadcrumbs[idx].timestamp_low = (uint32_t)mach_absolute_time();
+    __atomic_store_n(&g_breadcrumbs[idx].func, func, __ATOMIC_RELEASE);
+}
+
+#define BREADCRUMB()            breadcrumb_mark(__func__, 0)
+#define BREADCRUMB_ID(id)       breadcrumb_mark(__func__, (id))
+#define BREADCRUMB_MOD(id, mod) breadcrumb_mark_mod(__func__, (id), (mod))
 
 // ============================================================================
 // Accessors (for Mach exception handler)

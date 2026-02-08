@@ -13,6 +13,29 @@ Each entry includes:
 
 ---
 
+## [v0.36.42] - 2026-02-07
+
+**Parity:** ~92% | **Category:** Mod Crash Attribution | **Issues:** #66
+
+### Added
+- **Runtime mod attribution**: Every event handler now tracks which mod registered it by parsing Lua source paths (`Mods/<ModName>/ScriptExtender/`) at subscribe time. Mod context set around every `lua_pcall` via `mod_set_current()`.
+- **Per-mod health tracking**: `ModHealthEntry` tracks handlers_registered, errors_logged, events_handled, last_error, and soft_disabled per mod. Updated across all 14 `events_fire_*` functions.
+- **`!mod_diag` console command**: Shows per-mod health summary, error details (`!mod_diag errors`), and soft-disable/enable (`!mod_diag disable <ModName>`, `!mod_diag enable <ModName>`).
+- **Soft-disable**: Disabled mods' handlers are skipped at dispatch time without removal — re-enable restores them instantly. No restart needed for crash isolation.
+- **Enhanced crash reports**: Mach exception handler now outputs active mod name and per-mod health summary (handler counts + error counts) alongside breadcrumbs and register state.
+- **Breadcrumb mod context**: `BreadcrumbEntry` now carries `mod_name` field. `BREADCRUMB_MOD(id, mod)` macro for mod-aware breadcrumbs.
+- **Ext.Debug.ModHealthCount()**: Returns number of tracked mods.
+- **Ext.Debug.ModHealthAll()**: Returns table of all mod health entries (name, handlers, errors, handled, disabled, last_error).
+- **Ext.Debug.ModDisable(mod, bool)**: Programmatic soft-disable/enable.
+
+### Technical
+- `extract_mod_name_from_lua()` walks Lua callstack via `lua_getinfo(L, "S", &ar)`, parsing `@Mods/<Name>/ScriptExtender/` patterns. Falls back to `mod_get_current_name()` (bootstrap), then "console" or "unknown".
+- All 14 fire functions updated: events_fire, events_fire_tick, events_fire_game_state_changed, events_fire_key_input, events_fire_do_console_command, events_fire_lua_console_input, events_fire_turn_started, events_fire_turn_started_from_osiris, events_fire_turn_ended_from_osiris, events_fire_status_applied, events_fire_execute_functor, events_fire_after_execute_functor, events_fire_net_mod_message, events_fire_net_message, events_fire_log.
+- Crash report uses async-signal-safe manual decimal formatting for Mach exception handler output.
+- `MAX_MOD_HEALTH` = 128 tracked mods.
+
+---
+
 ## [v0.36.41] - 2026-02-07
 
 **Parity:** ~92% | **Category:** Comprehensive Test Suite | **Issues:** #67

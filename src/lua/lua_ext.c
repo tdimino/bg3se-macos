@@ -1584,6 +1584,44 @@ void lua_ext_register_global_helpers(lua_State *L) {
         "  Ext.Print('     {\"workspace.library\": [\"ExtIdeHelpers.lua\"]}')\n"
         "end)\n";
 
+    // Mod diagnostics command (!mod_diag)
+    static const char *console_cmd_mod_diag =
+        "Ext.RegisterConsoleCommand('mod_diag', function(cmd, sub, arg)\n"
+        "  local count = Ext.Debug.ModHealthCount and Ext.Debug.ModHealthCount() or 0\n"
+        "  if sub == 'disable' and arg then\n"
+        "    local ok = Ext.Debug.ModDisable and Ext.Debug.ModDisable(arg, true)\n"
+        "    if ok then Ext.Print('Disabled: ' .. arg)\n"
+        "    else Ext.Print('Mod not found: ' .. arg) end\n"
+        "    return\n"
+        "  end\n"
+        "  if sub == 'enable' and arg then\n"
+        "    local ok = Ext.Debug.ModDisable and Ext.Debug.ModDisable(arg, false)\n"
+        "    if ok then Ext.Print('Enabled: ' .. arg)\n"
+        "    else Ext.Print('Mod not found: ' .. arg) end\n"
+        "    return\n"
+        "  end\n"
+        "  if sub == 'errors' then\n"
+        "    Ext.Print('\\n=== Mod Errors ===')\n"
+        "    local info = Ext.Debug.ModHealthAll and Ext.Debug.ModHealthAll() or {}\n"
+        "    for _, m in ipairs(info) do\n"
+        "      if m.errors > 0 then\n"
+        "        Ext.Print(string.format('  %s: %d errors, last: %s',\n"
+        "          m.name, m.errors, m.last_error or '(none)'))\n"
+        "      end\n"
+        "    end\n"
+        "    return\n"
+        "  end\n"
+        "  Ext.Print('\\n=== Mod Health ===')\n"
+        "  local info = Ext.Debug.ModHealthAll and Ext.Debug.ModHealthAll() or {}\n"
+        "  for _, m in ipairs(info) do\n"
+        "    local status = m.disabled and ' [DISABLED]' or ''\n"
+        "    Ext.Print(string.format('  %-30s %3d handlers  %5d ok  %3d err%s',\n"
+        "      m.name, m.handlers, m.handled, m.errors, status))\n"
+        "  end\n"
+        "  Ext.Print(string.format('\\nTotal: %d mods tracked', #info))\n"
+        "  Ext.Print('Usage: !mod_diag [errors|disable <mod>|enable <mod>]')\n"
+        "end)\n";
+
     // Execute each command registration chunk
     const char *console_cmds[] = {
         console_cmd_probe, console_cmd_dumpstat, console_cmd_findstr,
@@ -1595,7 +1633,8 @@ void lua_ext_register_global_helpers(lua_State *L) {
         console_cmd_test_misc, console_cmd_test_register,
         // In-game tests
         console_cmd_test_ingame, console_cmd_test_ingame2, console_cmd_test_ingame_reg,
-        console_cmd_ide
+        console_cmd_ide,
+        console_cmd_mod_diag
     };
     for (size_t i = 0; i < sizeof(console_cmds) / sizeof(console_cmds[0]); i++) {
         if (luaL_dostring(L, console_cmds[i]) != LUA_OK) {

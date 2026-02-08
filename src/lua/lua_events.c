@@ -11,8 +11,10 @@
 
 #include "lua_events.h"
 #include "../core/logging.h"
+#include "../mod/mod_loader.h"
 
 #include <string.h>
+#include <mach/mach_time.h>
 
 // ============================================================================
 // Constants
@@ -31,6 +33,7 @@ typedef struct {
     int priority;           // Lower = first (default 100)
     int once;               // Auto-unsubscribe after first call
     uint64_t handler_id;    // Unique ID for unsubscription
+    char mod_name[64];      // Mod that registered this handler (for crash attribution)
 } EventHandler;
 
 typedef struct {
@@ -48,6 +51,22 @@ static uint64_t g_next_handler_id = 1;  // Global counter, never reuse
 static int g_dispatch_depth[EVENT_MAX] = {0};  // Reentrancy tracking
 static int g_initialized = 0;
 static bool g_trace_enabled = false;  // Event tracing for debugging
+
+// Per-mod health tracking (for crash attribution and !mod_diag)
+#define MAX_MOD_HEALTH 128
+
+typedef struct {
+    char mod_name[64];
+    uint32_t handlers_registered;
+    uint32_t errors_logged;
+    uint32_t events_handled;
+    uint64_t last_error_time;
+    char last_error[256];
+    bool soft_disabled;
+} ModHealthEntry;
+
+static ModHealthEntry g_mod_health[MAX_MOD_HEALTH];
+static int g_mod_health_count = 0;
 
 // Deferred unsubscriptions (processed after dispatch completes)
 static DeferredUnsubscribe g_deferred_unsubs[MAX_DEFERRED_OPERATIONS];
@@ -97,6 +116,112 @@ static const char *g_event_names[EVENT_MAX] = {
     "NetModMessage",          // Network mod message (Issue #6)
     "NetMessage"              // Legacy network message (no module, Issue #6)
 };
+
+// ============================================================================
+// Internal: Mod Name Extraction from Lua Callstack
+// ============================================================================
+
+/**
+ * Extract mod name from the Lua callstack.
+ * Walks the stack looking for source paths matching "Mods/<ModName>/ScriptExtender/".
+ * Falls back to mod_get_current_name() for bootstrap-time registrations.
+ * If nothing found, uses "unknown".
+ */
+static void extract_mod_name_from_lua(lua_State *L, char *out, size_t out_size) {
+    out[0] = '\0';
+
+    // First try mod_get_current_name() — active during bootstrap
+    const char *current = mod_get_current_name();
+    if (current && current[0]) {
+        strncpy(out, current, out_size - 1);
+        out[out_size - 1] = '\0';
+        return;
+    }
+
+    // Walk the Lua callstack looking for mod source paths
+    lua_Debug ar;
+    for (int level = 1; level < 10; level++) {
+        if (!lua_getstack(L, level, &ar)) break;
+        lua_getinfo(L, "S", &ar);
+
+        if (!ar.source || ar.source[0] == '=') continue;
+
+        // Look for "Mods/<ModName>/ScriptExtender/" pattern
+        const char *mods_prefix = strstr(ar.source, "Mods/");
+        if (!mods_prefix) mods_prefix = strstr(ar.source, "Mods\\");
+        if (mods_prefix) {
+            const char *name_start = mods_prefix + 5;  // skip "Mods/"
+            const char *name_end = strchr(name_start, '/');
+            if (!name_end) name_end = strchr(name_start, '\\');
+            if (name_end && (size_t)(name_end - name_start) < out_size) {
+                size_t len = (size_t)(name_end - name_start);
+                if (len >= out_size) len = out_size - 1;
+                memcpy(out, name_start, len);
+                out[len] = '\0';
+                return;
+            }
+        }
+    }
+
+    // Check if this is from the console (string input)
+    if (lua_getstack(L, 1, &ar)) {
+        lua_getinfo(L, "S", &ar);
+        if (ar.source && (ar.source[0] == '=' || strstr(ar.source, "string"))) {
+            strncpy(out, "console", out_size - 1);
+            out[out_size - 1] = '\0';
+            return;
+        }
+    }
+
+    strncpy(out, "unknown", out_size - 1);
+    out[out_size - 1] = '\0';
+}
+
+// ============================================================================
+// Internal: Per-Mod Health Tracking
+// ============================================================================
+
+/**
+ * Find or create a health entry for a mod.
+ */
+static ModHealthEntry *mod_health_get_or_create(const char *mod_name) {
+    if (!mod_name || !mod_name[0]) mod_name = "unknown";
+
+    for (int i = 0; i < g_mod_health_count; i++) {
+        if (strcmp(g_mod_health[i].mod_name, mod_name) == 0) {
+            return &g_mod_health[i];
+        }
+    }
+
+    if (g_mod_health_count >= MAX_MOD_HEALTH) return NULL;
+
+    ModHealthEntry *entry = &g_mod_health[g_mod_health_count++];
+    memset(entry, 0, sizeof(*entry));
+    strncpy(entry->mod_name, mod_name, sizeof(entry->mod_name) - 1);
+    return entry;
+}
+
+/**
+ * Record a successful event dispatch for a mod.
+ */
+static void mod_health_record_success(const char *mod_name) {
+    ModHealthEntry *entry = mod_health_get_or_create(mod_name);
+    if (entry) entry->events_handled++;
+}
+
+/**
+ * Record an error for a mod.
+ */
+static void mod_health_record_error(const char *mod_name, const char *error_msg) {
+    ModHealthEntry *entry = mod_health_get_or_create(mod_name);
+    if (!entry) return;
+    entry->errors_logged++;
+    entry->last_error_time = (uint64_t)mach_absolute_time();
+    if (error_msg) {
+        strncpy(entry->last_error, error_msg, sizeof(entry->last_error) - 1);
+        entry->last_error[sizeof(entry->last_error) - 1] = '\0';
+    }
+}
 
 // ============================================================================
 // Internal: Priority Sort
@@ -214,10 +339,18 @@ void events_fire(lua_State *L, BG3SEEventType event) {
             continue;
         }
 
+        // Skip soft-disabled mods
+        ModHealthEntry *health = mod_health_get_or_create(h->mod_name);
+        if (health && health->soft_disabled) continue;
+
+        // Set mod context for crash attribution
+        mod_set_current(h->mod_name, NULL, NULL);
+
         // Get callback from registry
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -227,10 +360,17 @@ void events_fire(lua_State *L, BG3SEEventType event) {
         // Protected call to prevent cascade failures
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("Error in %s handler (id=%llu): %s",
-                       g_event_names[event], h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("Error in %s handler (id=%llu, mod=%s): %s",
+                       g_event_names[event], h->handler_id,
+                       h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        // Clear mod context
+        mod_set_current(NULL, NULL, NULL);
 
         // Handle Once flag - queue for deferred removal
         if (h->once) {
@@ -267,10 +407,18 @@ void events_fire_tick(lua_State *L, float delta_time) {
             continue;
         }
 
+        // Skip soft-disabled mods
+        ModHealthEntry *health = mod_health_get_or_create(h->mod_name);
+        if (health && health->soft_disabled) continue;
+
+        // Set mod context for crash attribution
+        mod_set_current(h->mod_name, NULL, NULL);
+
         // Get callback from registry
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -282,10 +430,15 @@ void events_fire_tick(lua_State *L, float delta_time) {
         // Protected call
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("Tick handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("Tick handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         // Handle Once flag
         if (h->once) {
@@ -324,10 +477,17 @@ void events_fire_game_state_changed(lua_State *L, int fromState, int toState) {
             continue;
         }
 
+        // Skip soft-disabled mods
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         // Get callback from registry
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -341,10 +501,15 @@ void events_fire_game_state_changed(lua_State *L, int fromState, int toState) {
         // Protected call
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("GameStateChanged handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("GameStateChanged handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         // Handle Once flag
         if (h->once) {
@@ -379,6 +544,11 @@ void events_fire_key_input(lua_State *L, int keyCode, bool pressed, int modifier
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (lua_isfunction(L, -1)) {
             // Create event data table
@@ -398,9 +568,12 @@ void events_fire_key_input(lua_State *L, int keyCode, bool pressed, int modifier
 
             if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
                 const char *err = lua_tostring(L, -1);
-                LOG_EVENTS_ERROR("KeyInput handler %llu error: %s",
-                           (unsigned long long)h->handler_id, err ? err : "unknown");
+                LOG_EVENTS_ERROR("KeyInput handler %llu (mod=%s) error: %s",
+                           (unsigned long long)h->handler_id, h->mod_name, err ? err : "unknown");
+                mod_health_record_error(h->mod_name, err);
                 lua_pop(L, 1);
+            } else {
+                mod_health_record_success(h->mod_name);
             }
 
             if (h->once) {
@@ -412,6 +585,8 @@ void events_fire_key_input(lua_State *L, int keyCode, bool pressed, int modifier
         } else {
             lua_pop(L, 1);
         }
+
+        mod_set_current(NULL, NULL, NULL);
     }
 
     g_dispatch_depth[EVENT_KEY_INPUT]--;
@@ -442,9 +617,16 @@ bool events_fire_do_console_command(lua_State *L, const char *command) {
             continue;
         }
 
+        // Skip soft-disabled mods
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -461,10 +643,12 @@ bool events_fire_do_console_command(lua_State *L, const char *command) {
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("DoConsoleCommand handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("DoConsoleCommand handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
         } else {
+            mod_health_record_success(h->mod_name);
             // Check if handler set Prevent = true
             lua_rawgeti(L, LUA_REGISTRYINDEX, event_ref);
             lua_getfield(L, -1, "Prevent");
@@ -474,6 +658,7 @@ bool events_fire_do_console_command(lua_State *L, const char *command) {
             lua_pop(L, 2);  // Prevent value and event table
         }
         luaL_unref(L, LUA_REGISTRYINDEX, event_ref);
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -513,9 +698,15 @@ bool events_fire_lua_console_input(lua_State *L, const char *input) {
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -532,10 +723,12 @@ bool events_fire_lua_console_input(lua_State *L, const char *input) {
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("LuaConsoleInput handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("LuaConsoleInput handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
         } else {
+            mod_health_record_success(h->mod_name);
             // Check if handler set Prevent = true
             lua_rawgeti(L, LUA_REGISTRYINDEX, event_ref);
             lua_getfield(L, -1, "Prevent");
@@ -545,6 +738,8 @@ bool events_fire_lua_console_input(lua_State *L, const char *input) {
             lua_pop(L, 2);  // Prevent value and event table
         }
         luaL_unref(L, LUA_REGISTRYINDEX, event_ref);
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -592,6 +787,46 @@ void events_set_trace_enabled(bool enabled) {
 
 bool events_get_trace_enabled(void) {
     return g_trace_enabled;
+}
+
+// ============================================================================
+// Public API: Mod Health (for crash reports and !mod_diag)
+// ============================================================================
+
+int events_get_mod_health_count(void) {
+    return g_mod_health_count;
+}
+
+const char *events_get_mod_health_name(int index) {
+    if (index < 0 || index >= g_mod_health_count) return NULL;
+    return g_mod_health[index].mod_name;
+}
+
+void events_get_mod_health_stats(int index, uint32_t *handlers, uint32_t *errors,
+                                  uint32_t *handled, bool *disabled) {
+    if (index < 0 || index >= g_mod_health_count) return;
+    if (handlers) *handlers = g_mod_health[index].handlers_registered;
+    if (errors) *errors = g_mod_health[index].errors_logged;
+    if (handled) *handled = g_mod_health[index].events_handled;
+    if (disabled) *disabled = g_mod_health[index].soft_disabled;
+}
+
+const char *events_get_mod_last_error(int index) {
+    if (index < 0 || index >= g_mod_health_count) return NULL;
+    if (g_mod_health[index].last_error[0] == '\0') return NULL;
+    return g_mod_health[index].last_error;
+}
+
+bool events_set_mod_disabled(const char *mod_name, bool disabled) {
+    for (int i = 0; i < g_mod_health_count; i++) {
+        if (strcmp(g_mod_health[i].mod_name, mod_name) == 0) {
+            g_mod_health[i].soft_disabled = disabled;
+            LOG_EVENTS_INFO("Mod '%s' %s", mod_name,
+                       disabled ? "DISABLED (soft)" : "ENABLED");
+            return true;
+        }
+    }
+    return false;
 }
 
 // ============================================================================
@@ -654,13 +889,22 @@ static int lua_event_subscribe(lua_State *L) {
     g_handlers[event][idx].once = once;
     g_handlers[event][idx].handler_id = handler_id;
 
+    // Capture mod name from Lua callstack for crash attribution
+    extract_mod_name_from_lua(L, g_handlers[event][idx].mod_name,
+                              sizeof(g_handlers[event][idx].mod_name));
+
+    // Track per-mod handler registration
+    ModHealthEntry *health = mod_health_get_or_create(g_handlers[event][idx].mod_name);
+    if (health) health->handlers_registered++;
+
     // Re-sort by priority
     sort_handlers_by_priority(event);
 
     // Log subscription (not for Tick - too noisy)
     if (event != EVENT_TICK) {
-        LOG_EVENTS_DEBUG("Subscribed to %s (id=%llu, priority=%d, once=%d)",
-                   g_event_names[event], handler_id, priority, once);
+        LOG_EVENTS_DEBUG("Subscribed to %s (id=%llu, priority=%d, once=%d, mod=%s)",
+                   g_event_names[event], handler_id, priority, once,
+                   g_handlers[event][idx].mod_name);
     }
 
     // Return handler ID
@@ -824,9 +1068,15 @@ void events_fire_turn_started(lua_State *L, uint64_t entity, int round) {
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -839,10 +1089,15 @@ void events_fire_turn_started(lua_State *L, uint64_t entity, int round) {
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("TurnStarted handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("TurnStarted handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -880,9 +1135,15 @@ void events_fire_turn_started_from_osiris(lua_State *L, const char *characterGui
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -897,10 +1158,15 @@ void events_fire_turn_started_from_osiris(lua_State *L, const char *characterGui
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("TurnStarted (Osiris) handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("TurnStarted (Osiris) handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -934,9 +1200,15 @@ void events_fire_turn_ended_from_osiris(lua_State *L, const char *characterGuid)
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -951,10 +1223,15 @@ void events_fire_turn_ended_from_osiris(lua_State *L, const char *characterGuid)
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("TurnEnded (Osiris) handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("TurnEnded (Osiris) handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -989,9 +1266,15 @@ void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statu
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -1006,10 +1289,15 @@ void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statu
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("StatusApplied handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("StatusApplied handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -1047,9 +1335,15 @@ void events_fire_execute_functor(lua_State *L, int ctxType, void *functors, void
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -1064,10 +1358,15 @@ void events_fire_execute_functor(lua_State *L, int ctxType, void *functors, void
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("ExecuteFunctor handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("ExecuteFunctor handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -1100,9 +1399,15 @@ void events_fire_after_execute_functor(lua_State *L, int ctxType, void *functors
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -1117,10 +1422,15 @@ void events_fire_after_execute_functor(lua_State *L, int ctxType, void *functors
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("AfterExecuteFunctor handler error (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("AfterExecuteFunctor handler error (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -1165,9 +1475,15 @@ void events_fire_net_mod_message(lua_State *L, const char *channel, const char *
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -1197,10 +1513,15 @@ void events_fire_net_mod_message(lua_State *L, const char *channel, const char *
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("Error in NetModMessage handler (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("Error in NetModMessage handler (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -1241,9 +1562,15 @@ void events_fire_net_message(lua_State *L, const char *channel, const char *payl
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -1261,10 +1588,15 @@ void events_fire_net_message(lua_State *L, const char *channel, const char *payl
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("Error in NetMessage handler (id=%llu): %s",
-                       h->handler_id, err ? err : "unknown");
+            LOG_EVENTS_ERROR("Error in NetMessage handler (id=%llu, mod=%s): %s",
+                       h->handler_id, h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
@@ -1314,9 +1646,15 @@ bool events_fire_log(lua_State *L, const char *level, const char *module, const 
             continue;
         }
 
+        ModHealthEntry *mh = mod_health_get_or_create(h->mod_name);
+        if (mh && mh->soft_disabled) continue;
+
+        mod_set_current(h->mod_name, NULL, NULL);
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
+            mod_set_current(NULL, NULL, NULL);
             continue;
         }
 
@@ -1343,9 +1681,15 @@ bool events_fire_log(lua_State *L, const char *level, const char *module, const 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             // Don't use LOG_EVENTS_ERROR here - would cause recursion!
-            fprintf(stderr, "[BG3SE] Log event handler error: %s\n", err ? err : "unknown");
+            fprintf(stderr, "[BG3SE] Log event handler error (mod=%s): %s\n",
+                    h->mod_name, err ? err : "unknown");
+            mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
+        } else {
+            mod_health_record_success(h->mod_name);
         }
+
+        mod_set_current(NULL, NULL, NULL);
 
         // Check if Prevent was set
         lua_rawgeti(L, LUA_REGISTRYINDEX, event_ref);
@@ -1476,196 +1820,70 @@ static void handle_turn_started(lua_State *L, uint64_t entity) {
     events_fire_turn_started(L, entity, 0);  // Round extracted from component if needed
 }
 
+/**
+ * Helper macro for oneframe event handler dispatch with mod attribution.
+ * All oneframe handlers share the same structure: dispatch to each handler
+ * with soft-disable, mod context, and health tracking.
+ */
+#define ONEFRAME_DISPATCH(EVENT_TYPE, FIELD_NAME, ENTITY_VAR) \
+    do { \
+        if (g_handler_counts[EVENT_TYPE] == 0) return; \
+        g_dispatch_depth[EVENT_TYPE]++; \
+        for (int i = 0; i < g_handler_counts[EVENT_TYPE]; i++) { \
+            EventHandler *h = &g_handlers[EVENT_TYPE][i]; \
+            if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue; \
+            ModHealthEntry *mh = mod_health_get_or_create(h->mod_name); \
+            if (mh && mh->soft_disabled) continue; \
+            mod_set_current(h->mod_name, NULL, NULL); \
+            lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref); \
+            if (lua_isfunction(L, -1)) { \
+                lua_newtable(L); \
+                lua_pushinteger(L, (lua_Integer)(ENTITY_VAR)); \
+                lua_setfield(L, -2, FIELD_NAME); \
+                if (lua_pcall(L, 1, 0, 0) != LUA_OK) { \
+                    mod_health_record_error(h->mod_name, lua_tostring(L, -1)); \
+                    lua_pop(L, 1); \
+                } else { \
+                    mod_health_record_success(h->mod_name); \
+                } \
+            } else { \
+                lua_pop(L, 1); \
+            } \
+            mod_set_current(NULL, NULL, NULL); \
+            if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) { \
+                g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_TYPE, h->handler_id}; \
+            } \
+        } \
+        g_dispatch_depth[EVENT_TYPE]--; \
+        if (g_dispatch_depth[EVENT_TYPE] == 0) process_deferred_unsubscribes(L, EVENT_TYPE); \
+    } while (0)
+
 static void handle_turn_ended(lua_State *L, uint64_t entity) {
-    // Fire TurnEnded event
-    if (g_handler_counts[EVENT_TURN_ENDED] == 0) return;
-
-    g_dispatch_depth[EVENT_TURN_ENDED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_TURN_ENDED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_TURN_ENDED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_TURN_ENDED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_TURN_ENDED]--;
-    if (g_dispatch_depth[EVENT_TURN_ENDED] == 0) process_deferred_unsubscribes(L, EVENT_TURN_ENDED);
+    ONEFRAME_DISPATCH(EVENT_TURN_ENDED, "Entity", entity);
 }
 
 static void handle_combat_started(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_COMBAT_STARTED] == 0) return;
-
-    g_dispatch_depth[EVENT_COMBAT_STARTED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_COMBAT_STARTED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_COMBAT_STARTED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "CombatId");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_COMBAT_STARTED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_COMBAT_STARTED]--;
-    if (g_dispatch_depth[EVENT_COMBAT_STARTED] == 0) process_deferred_unsubscribes(L, EVENT_COMBAT_STARTED);
+    ONEFRAME_DISPATCH(EVENT_COMBAT_STARTED, "CombatId", entity);
 }
 
 static void handle_combat_left(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_COMBAT_ENDED] == 0) return;
-
-    g_dispatch_depth[EVENT_COMBAT_ENDED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_COMBAT_ENDED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_COMBAT_ENDED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_COMBAT_ENDED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_COMBAT_ENDED]--;
-    if (g_dispatch_depth[EVENT_COMBAT_ENDED] == 0) process_deferred_unsubscribes(L, EVENT_COMBAT_ENDED);
+    ONEFRAME_DISPATCH(EVENT_COMBAT_ENDED, "Entity", entity);
 }
 
 static void handle_status_applied(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_STATUS_APPLIED] == 0) return;
-
-    g_dispatch_depth[EVENT_STATUS_APPLIED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_STATUS_APPLIED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_STATUS_APPLIED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            // TODO: Extract StatusId from component data
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_STATUS_APPLIED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_STATUS_APPLIED]--;
-    if (g_dispatch_depth[EVENT_STATUS_APPLIED] == 0) process_deferred_unsubscribes(L, EVENT_STATUS_APPLIED);
+    ONEFRAME_DISPATCH(EVENT_STATUS_APPLIED, "Entity", entity);
 }
 
 static void handle_status_removed(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_STATUS_REMOVED] == 0) return;
-
-    g_dispatch_depth[EVENT_STATUS_REMOVED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_STATUS_REMOVED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_STATUS_REMOVED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_STATUS_REMOVED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_STATUS_REMOVED]--;
-    if (g_dispatch_depth[EVENT_STATUS_REMOVED] == 0) process_deferred_unsubscribes(L, EVENT_STATUS_REMOVED);
+    ONEFRAME_DISPATCH(EVENT_STATUS_REMOVED, "Entity", entity);
 }
 
 static void handle_equipment_changed(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_EQUIPMENT_CHANGED] == 0) return;
-
-    g_dispatch_depth[EVENT_EQUIPMENT_CHANGED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_EQUIPMENT_CHANGED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_EQUIPMENT_CHANGED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_EQUIPMENT_CHANGED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_EQUIPMENT_CHANGED]--;
-    if (g_dispatch_depth[EVENT_EQUIPMENT_CHANGED] == 0) process_deferred_unsubscribes(L, EVENT_EQUIPMENT_CHANGED);
+    ONEFRAME_DISPATCH(EVENT_EQUIPMENT_CHANGED, "Entity", entity);
 }
 
 static void handle_level_up(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_LEVEL_UP] == 0) return;
-
-    g_dispatch_depth[EVENT_LEVEL_UP]++;
-    for (int i = 0; i < g_handler_counts[EVENT_LEVEL_UP]; i++) {
-        EventHandler *h = &g_handlers[EVENT_LEVEL_UP][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            // TODO: Extract PreviousLevel and NewLevel from component
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_LEVEL_UP, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_LEVEL_UP]--;
-    if (g_dispatch_depth[EVENT_LEVEL_UP] == 0) process_deferred_unsubscribes(L, EVENT_LEVEL_UP);
+    ONEFRAME_DISPATCH(EVENT_LEVEL_UP, "Entity", entity);
 }
 
 // ============================================================================
@@ -1673,220 +1891,35 @@ static void handle_level_up(lua_State *L, uint64_t entity) {
 // ============================================================================
 
 static void handle_died(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_DIED] == 0) return;
-
-    g_dispatch_depth[EVENT_DIED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_DIED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_DIED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_DIED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_DIED]--;
-    if (g_dispatch_depth[EVENT_DIED] == 0) process_deferred_unsubscribes(L, EVENT_DIED);
+    ONEFRAME_DISPATCH(EVENT_DIED, "Entity", entity);
 }
 
 static void handle_downed(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_DOWNED] == 0) return;
-
-    g_dispatch_depth[EVENT_DOWNED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_DOWNED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_DOWNED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_DOWNED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_DOWNED]--;
-    if (g_dispatch_depth[EVENT_DOWNED] == 0) process_deferred_unsubscribes(L, EVENT_DOWNED);
+    ONEFRAME_DISPATCH(EVENT_DOWNED, "Entity", entity);
 }
 
 static void handle_resurrected(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_RESURRECTED] == 0) return;
-
-    g_dispatch_depth[EVENT_RESURRECTED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_RESURRECTED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_RESURRECTED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_RESURRECTED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_RESURRECTED]--;
-    if (g_dispatch_depth[EVENT_RESURRECTED] == 0) process_deferred_unsubscribes(L, EVENT_RESURRECTED);
+    ONEFRAME_DISPATCH(EVENT_RESURRECTED, "Entity", entity);
 }
 
 static void handle_spell_cast(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_SPELL_CAST] == 0) return;
-
-    g_dispatch_depth[EVENT_SPELL_CAST]++;
-    for (int i = 0; i < g_handler_counts[EVENT_SPELL_CAST]; i++) {
-        EventHandler *h = &g_handlers[EVENT_SPELL_CAST][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            // TODO: Extract SpellId from component
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_SPELL_CAST, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_SPELL_CAST]--;
-    if (g_dispatch_depth[EVENT_SPELL_CAST] == 0) process_deferred_unsubscribes(L, EVENT_SPELL_CAST);
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST, "Entity", entity);
 }
 
 static void handle_spell_cast_finished(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_SPELL_CAST_FINISHED] == 0) return;
-
-    g_dispatch_depth[EVENT_SPELL_CAST_FINISHED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_SPELL_CAST_FINISHED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_SPELL_CAST_FINISHED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_SPELL_CAST_FINISHED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_SPELL_CAST_FINISHED]--;
-    if (g_dispatch_depth[EVENT_SPELL_CAST_FINISHED] == 0) process_deferred_unsubscribes(L, EVENT_SPELL_CAST_FINISHED);
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_FINISHED, "Entity", entity);
 }
 
 static void handle_hit_notification(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_HIT_NOTIFICATION] == 0) return;
-
-    g_dispatch_depth[EVENT_HIT_NOTIFICATION]++;
-    for (int i = 0; i < g_handler_counts[EVENT_HIT_NOTIFICATION]; i++) {
-        EventHandler *h = &g_handlers[EVENT_HIT_NOTIFICATION][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_HIT_NOTIFICATION, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_HIT_NOTIFICATION]--;
-    if (g_dispatch_depth[EVENT_HIT_NOTIFICATION] == 0) process_deferred_unsubscribes(L, EVENT_HIT_NOTIFICATION);
+    ONEFRAME_DISPATCH(EVENT_HIT_NOTIFICATION, "Entity", entity);
 }
 
 static void handle_short_rest_started(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_SHORT_REST_STARTED] == 0) return;
-
-    g_dispatch_depth[EVENT_SHORT_REST_STARTED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_SHORT_REST_STARTED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_SHORT_REST_STARTED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_SHORT_REST_STARTED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_SHORT_REST_STARTED]--;
-    if (g_dispatch_depth[EVENT_SHORT_REST_STARTED] == 0) process_deferred_unsubscribes(L, EVENT_SHORT_REST_STARTED);
+    ONEFRAME_DISPATCH(EVENT_SHORT_REST_STARTED, "Entity", entity);
 }
 
 static void handle_approval_changed(lua_State *L, uint64_t entity) {
-    if (g_handler_counts[EVENT_APPROVAL_CHANGED] == 0) return;
-
-    g_dispatch_depth[EVENT_APPROVAL_CHANGED]++;
-    for (int i = 0; i < g_handler_counts[EVENT_APPROVAL_CHANGED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_APPROVAL_CHANGED][i];
-        if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) continue;
-
-        lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
-        if (lua_isfunction(L, -1)) {
-            lua_newtable(L);
-            lua_pushinteger(L, (lua_Integer)entity);
-            lua_setfield(L, -2, "Entity");
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        if (h->once && g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
-            g_deferred_unsubs[g_deferred_unsub_count++] = (DeferredUnsubscribe){EVENT_APPROVAL_CHANGED, h->handler_id};
-        }
-    }
-    g_dispatch_depth[EVENT_APPROVAL_CHANGED]--;
-    if (g_dispatch_depth[EVENT_APPROVAL_CHANGED] == 0) process_deferred_unsubscribes(L, EVENT_APPROVAL_CHANGED);
+    ONEFRAME_DISPATCH(EVENT_APPROVAL_CHANGED, "Entity", entity);
 }
 
 void events_poll_oneframe_components(lua_State *L) {

@@ -21,6 +21,8 @@
 #include "mach_exception.h"
 #include "crashlog.h"
 #include "logging.h"
+#include "../lua/lua_events.h"
+#include "../mod/mod_loader.h"
 
 #include <mach/mach.h>
 #include <mach/task.h>
@@ -180,7 +182,54 @@ kern_return_t catch_mach_exception_raise(
         uint32_t extra = g_breadcrumbs[idx].extra;
         if (extra != 0) {
             exc_write_hex(fd, " id=", extra);
-        } else {
+        }
+
+        const char *mod = g_breadcrumbs[idx].mod_name;
+        if (mod && mod[0]) {
+            exc_write_str(fd, " mod=");
+            exc_write_str(fd, mod);
+        }
+        exc_write_str(fd, "\n");
+    }
+
+    /* Active mod context (from mod_set_current during dispatch) */
+    const char *active_mod = mod_get_current_name();
+    if (active_mod && active_mod[0]) {
+        exc_write_str(fd, "\n--- Active Mod ---\n");
+        exc_write_str(fd, "  ");
+        exc_write_str(fd, active_mod);
+        exc_write_str(fd, "\n");
+    }
+
+    /* Mod health summary (per-mod error counts) */
+    int mod_count = events_get_mod_health_count();
+    if (mod_count > 0) {
+        exc_write_str(fd, "\n--- Mod Health Summary ---\n");
+        for (int i = 0; i < mod_count && i < 32; i++) {
+            const char *name = events_get_mod_health_name(i);
+            if (!name) continue;
+            uint32_t handlers = 0, errors = 0, handled = 0;
+            bool disabled = false;
+            events_get_mod_health_stats(i, &handlers, &errors, &handled, &disabled);
+            exc_write_str(fd, "  ");
+            exc_write_str(fd, name);
+            exc_write_str(fd, ": ");
+            /* Simple decimal output for key stats */
+            char numbuf[32];
+            int nlen = 0;
+            uint32_t v = handlers;
+            if (v == 0) { numbuf[nlen++] = '0'; }
+            else { char tmp[16]; int t = 0; while (v) { tmp[t++] = '0' + (v % 10); v /= 10; } while (t > 0) numbuf[nlen++] = tmp[--t]; }
+            numbuf[nlen] = '\0';
+            exc_write_str(fd, numbuf);
+            exc_write_str(fd, " handlers, ");
+            nlen = 0; v = errors;
+            if (v == 0) { numbuf[nlen++] = '0'; }
+            else { char tmp[16]; int t = 0; while (v) { tmp[t++] = '0' + (v % 10); v /= 10; } while (t > 0) numbuf[nlen++] = tmp[--t]; }
+            numbuf[nlen] = '\0';
+            exc_write_str(fd, numbuf);
+            exc_write_str(fd, " errors");
+            if (disabled) exc_write_str(fd, " [DISABLED]");
             exc_write_str(fd, "\n");
         }
     }

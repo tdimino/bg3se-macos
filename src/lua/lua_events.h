@@ -285,6 +285,37 @@ bool events_fire_log(lua_State *L, const char *level, const char *module, const 
 void events_init_log_callback(lua_State *L);
 
 // ============================================================================
+// Mod Health API (for crash attribution and !mod_diag)
+// ============================================================================
+
+/**
+ * Get number of tracked mods.
+ */
+int events_get_mod_health_count(void);
+
+/**
+ * Get mod name by health index.
+ */
+const char *events_get_mod_health_name(int index);
+
+/**
+ * Get mod health statistics.
+ */
+void events_get_mod_health_stats(int index, uint32_t *handlers, uint32_t *errors,
+                                  uint32_t *handled, bool *disabled);
+
+/**
+ * Get last error message for a mod.
+ */
+const char *events_get_mod_last_error(int index);
+
+/**
+ * Soft-disable/enable a mod's event handlers.
+ * Returns true if mod was found.
+ */
+bool events_set_mod_disabled(const char *mod_name, bool disabled);
+
+// ============================================================================
 // Event Tracing (Debug)
 // ============================================================================
 

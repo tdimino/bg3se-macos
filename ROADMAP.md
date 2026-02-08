@@ -2,7 +2,7 @@
 
 This document tracks the development roadmap for achieving feature parity with Windows BG3SE (Norbyte's Script Extender).
 
-## Current Status: v0.36.41
+## Current Status: v0.36.42
 
 **Overall Feature Parity: ~92%** (based on comprehensive API function count analysis)
 
@@ -1520,6 +1520,7 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.42 | 2026-02-07 | **Mod Crash Attribution** - Runtime mod tracking in all 30 event dispatch paths (14 fire functions + 15 oneframe handlers + ONEFRAME_DISPATCH macro), per-mod health stats, `!mod_diag` console command (health/errors/disable/enable), soft-disable for crash isolation, enhanced Mach exception reports with mod context, `Ext.Debug.ModHealthAll/ModDisable` APIs (Issue #66) |
 | v0.36.39 | 2026-02-07 | **Issue #66: Handle Encoding + Crash Diagnostics** - Read FunctionType from OsiFunctionDef +0x28 (fixes funcType=0 bug), encode OsirisFunctionHandle from Key[0..3], crash-resilient mmap ring buffer + SIGSEGV handler + breadcrumbs, `!probe_osidef` console command |
 | v0.36.38 | 2026-02-06 | **Issue #66 Fix: Osiris Call Crash** - Hook RegisterDIVFunctions to capture DivFunctions::Call/Query (correct OsiArgumentDesc* signature). Fixes SIGSEGV on AddGold, TemplateAddTo, and all Osi.* calls on ARM64. |
 | v0.36.37 | 2026-02-06 | **Issue #65 Diagnostics + Net Parity** - BG3SE_NO_HOOKS env var, fallback deferred init in fake_InitGame, legacy NetMessage event, PlayerHasExtender (Issue #6) |
