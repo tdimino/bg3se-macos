@@ -23,27 +23,12 @@
 // Base address assumption for offset calculation
 #define GHIDRA_BASE_ADDRESS 0x100000000ULL
 
-// Singleton pointer locations (double-pointer pattern: *g_pManager gives Manager*)
-// These are global addresses where the manager pointer is stored
-
-// PassivePrototypeManager* at 0x108aeccd8 (discovered via ADRP+LDR in GetPassivePrototype)
-#define OFFSET_PASSIVE_PROTOTYPE_MANAGER_PTR 0x108aeccd8ULL
-
-// BoostPrototypeManager::m_ptr at 0x108991528 (symbol table, not exported)
-#define OFFSET_BOOST_PROTOTYPE_MANAGER_PTR 0x108991528ULL
-
-// InterruptPrototypeManager pointer - need to find via GetPrototype function
-// GetPrototype at 0x101b9686c - analyze to find singleton
-// From EvaluateInterrupt ADRP patterns: 0x108aecce0, 0x108aecd70
-#define OFFSET_INTERRUPT_PROTOTYPE_MANAGER_PTR 0x108aecce0ULL
-
-// SpellPrototypeManager::m_ptr at 0x1089bac80 (discovered via GetSpellPrototype decompilation)
-// GetSpellPrototype at 0x10346e740: adrp x8,0x1089ba000; ldr x20,[x8, #0xc80] = 0x1089bac80
-#define OFFSET_SPELL_PROTOTYPE_MANAGER_PTR 0x1089bac80ULL
-
-// StatusPrototypeManager::m_ptr at 0x1089bdb30 (discovered via Ghidra symbol search)
-// Symbol: __ZN3eoc22StatusPrototypeManager5m_ptrE at 0x1089bdb30
-#define OFFSET_STATUS_PROTOTYPE_MANAGER_PTR 0x1089bdb30ULL
+#define OFFSET_BOOST_PROTOTYPE_MANAGER_PTR   0x108999538  /* eoc::BoostPrototypeManager::m_ptr */
+#define OFFSET_PASSIVE_PROTOTYPE_MANAGER_PTR 0x1089bc238  /* eoc::Passives::m_ptr */
+#define OFFSET_SPELL_PROTOTYPE_MANAGER_PTR   0x1089c2c90  /* eoc::SpellPrototypeManager::m_ptr */
+#define OFFSET_STATUS_PROTOTYPE_MANAGER_PTR  0x1089c5b40  /* eoc::StatusPrototypeManager::m_ptr */
+#define OFFSET_INTERRUPT_PROTOTYPE_MANAGER_PTR 0x1089ba900  /* eoc::InterruptPrototypeManager::m_ptr */
+#define OFFSET_SPELL_PROTOTYPE_INIT          0x101f6fef8  /* eoc::SpellPrototype::Init */
 
 // Additional globals from EvaluateInterrupt (may be related)
 #define OFFSET_MEMORY_MANAGER 0x108aefa98ULL  // Memory manager (appears in multiple functions)
