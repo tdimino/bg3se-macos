@@ -4,3 +4,6 @@
 [submodule "lib/imgui"]
 	path = lib/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "tools/vendor/insert_dylib"]
+	path = tools/vendor/insert_dylib
+	url = https://github.com/tyilo/insert_dylib.git

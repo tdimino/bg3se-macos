@@ -8,7 +8,8 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 
 - C17/C++20, Universal binary (arm64 + x86_64)
 - Dobby (inline hooking), Lua 5.4, lz4, zlib
-- DYLD_INSERT_LIBRARIES injection into libOsiris.dylib
+- Injection: `insert_dylib` static Mach-O patching (LC_LOAD_WEAK_DYLIB) — DYLD_INSERT_LIBRARIES is dead (crashes through Steam)
+- Launcher bypass: `defaults write com.larian.bg3 NoLauncher 1` (set automatically by harness)
 
 ## Structure
 
@@ -20,11 +21,45 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 - `src/entity/` - Entity Component System (GUID lookup, components)
 - `ghidra/offsets/` - Reverse-engineered offsets documentation
 
-## Commands
+## Modding Toolkit (22 Commands)
+
+```bash
+# Core pipeline
+PYTHONPATH=tools python3 -m bg3se_harness status            # Game/socket/patch state
+PYTHONPATH=tools python3 -m bg3se_harness launch --continue # Autonomous: auto-loads most recent save
+PYTHONPATH=tools python3 -m bg3se_harness test [filter]     # Full pipeline: build+patch+launch+continue+test → JSON
+
+# Game inspection
+PYTHONPATH=tools python3 -m bg3se_harness entity <GUID> [--component X]  # Inspect entity
+PYTHONPATH=tools python3 -m bg3se_harness stats <name> [--diff OTHER]    # RPG stats + comparison
+PYTHONPATH=tools python3 -m bg3se_harness components [--namespace eoc]   # List 1,999+ component types
+PYTHONPATH=tools python3 -m bg3se_harness probe <0xADDR> [--classify]    # Memory inspection
+
+# Development
+PYTHONPATH=tools python3 -m bg3se_harness run "<lua>"       # Inline Lua
+PYTHONPATH=tools python3 -m bg3se_harness eval script.lua   # File/stdin Lua (piping)
+PYTHONPATH=tools python3 -m bg3se_harness watch script.lua  # Hot-reload on save
+PYTHONPATH=tools python3 -m bg3se_harness screenshot        # Game window (1568px, JPEG, Claude Code safe)
+PYTHONPATH=tools python3 -m bg3se_harness dump spells       # Bulk extract game data
+PYTHONPATH=tools python3 -m bg3se_harness events --subscribe SessionLoaded  # Stream events (JSONL)
+
+# Diagnostics
+PYTHONPATH=tools python3 -m bg3se_harness crashlog          # Parse crash ring buffer (no socket)
+PYTHONPATH=tools python3 -m bg3se_harness benchmark "Ext.Stats.Get('WPN_Longsword')"  # Perf measurement
+PYTHONPATH=tools python3 -m bg3se_harness diff-test base.json curr.json   # Test regression comparison
+
+# RE + flags
+PYTHONPATH=tools python3 -m bg3se_harness flags             # 40 discovered game CLI flags
+PYTHONPATH=tools python3 -m bg3se_harness ghidra decompile <name|0xADDR>  # Ghidra RE bridge
+```
+
+Uses `insert_dylib` for injection + `defaults write com.larian.bg3 NoLauncher 1` for launcher bypass. See `docs/harness.md` for full docs.
+
+## Commands (Legacy)
 
 ```bash
 cd build && cmake .. && cmake --build .    # Build (auto-deploys to Steam folder)
-./scripts/launch_bg3.sh                     # Test (launches BG3)
+./scripts/launch_bg3.sh                     # Test (launches BG3 via DYLD_INSERT_LIBRARIES)
 ./build/bin/bg3se-console                   # Live Lua console
 
 # IMPORTANT: Check system time BEFORE checking logs (to filter old entries)
@@ -76,29 +111,9 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 
 ## Current API Status
 
-- **Osi.*** - Dynamic metatable (40+ functions), **OsirisFunctionHandle encoding** (v0.36.39), crash-resilient dispatch with breadcrumbs
-- **Ext.Osiris** - RegisterListener, NewCall/NewQuery/NewEvent (server context guards)
-- **Context System** - Ext.IsServer/IsClient/GetContext, two-phase bootstrap (v0.36.4)
-- **Ext.Entity** - GUID lookup, **1,999 components registered** (462 layouts: 169 verified + 293 generated), **1,730 sizes** (1,577 Ghidra + 153 Windows-only, 87% coverage), GetByHandle, **Dual EntityWorld Complete** (client + server auto-captured), **Entity Events** (Subscribe/OnCreate/OnDestroy + 8 variants, Unsubscribe — salted pool, deferred queue, per-entity hooks)
-- **Ext.Stats** - **100% Windows API parity** (52 functions): Get/GetAll/Create/Sync, CopyFrom, SetRawAttribute, ExecuteFunctors, TreasureTable/TreasureCategory stubs, all StatsObject methods
-- **Ext.Events** - 33 events with priority ordering, Once flag, Prevent pattern (13 lifecycle + 17 engine + 2 functor + 1 network events), **runtime mod attribution** (per-handler mod tracking, soft-disable, health stats)
-- **Ext.Timer** - **20 functions**: WaitFor, WaitForRealtime, Cancel/Pause/Resume, GameTime/DeltaTime/Ticks, **Persistent timers** (save/load support)
-- **Ext.Vars** - PersistentVars, User Variables, Mod Variables
-- **Ext.StaticData** - Immutable game data (**All 9 types**: Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription via ForceCapture)
-- **Ext.Resource** - Non-GUID resources (34 types: Visual, Material, Texture, Dialog, etc.)
-- **Ext.Template** - Game object templates (14 functions, 10 properties, type detection via VMT)
-- **Ext.Types** - Full reflection API (9 functions): GetAllTypes (~2050), GetTypeInfo, GetObjectType, TypeOf, IsA, Validate, GetComponentLayout, GetAllLayouts, **GenerateIdeHelpers** (VS Code IntelliSense)
-- **Ext.Debug** - Memory introspection (ReadPtr, ProbeStruct, HexDump), **mod diagnostics** (ModHealthCount, ModHealthAll, ModDisable)
-- **Ext.IMGUI** - **Complete widget system** (40 widget types): NewWindow, AddText, AddButton, AddCheckbox, AddInputText, AddCombo, AddSlider, AddColorEdit, AddProgressBar, AddTree, AddTable, AddTabBar, AddMenu, handle-based objects, event callbacks (OnClick, OnChange, OnClose, OnExpand, OnCollapse)
-- **Ext.Mod** - Mod information (5 functions): IsModLoaded, GetLoadOrder, GetMod, GetBaseMod, GetModManager
-- **Ext.Level** - **9 functions**: RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, GetCurrentLevel, GetPhysicsScene, GetAiGrid, IsReady
-- **Ext.Audio** - **13 functions**: PostEvent, Stop, PauseAllSounds, ResumeAllSounds, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent, GetSoundObjectId, IsReady
-- **Ext.Net** - Network messaging (8 functions): PostMessageToServer, PostMessageToUser, PostMessageToClient, BroadcastMessage, Version, IsHost, IsReady, PeerVersion, **Request/Reply Callbacks**, **RakNet Backend** (Phase 4I)
-- **Ext.RegisterNetListener** - Per-channel network message listener (MCM backbone)
-- **Net.CreateChannel** - High-level NetChannel API for multiplayer mod sync (SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, SendToClient, Broadcast)
-- **Ext.Utils** - Compatibility aliases (6 functions): Print, PrintWarning, PrintError, Version, MonotonicTime, GetGameState
-- **Ext.Math** - Math utilities: Random
-- **Ext.ModEvents** - Per-mod cross-mod event system: Subscribe, Throw, Unsubscribe (MCM compat)
+~94% Windows BG3SE parity. Key namespaces: Osi.* (40+ functions), Ext.Stats (100% parity, 52 functions), Ext.Entity (1,999 components), Ext.Events (33 events), Ext.IMGUI (40 widgets), Ext.Net (RakNet backend).
+
+@agent_docs/api-status.md — Full per-namespace breakdown. Read when implementing new APIs or checking parity.
 
 ## Conventions
 
@@ -150,6 +165,43 @@ For RE sessions, adopt the **Meridian** persona (see `agent_docs/meridian-person
 | `0x108991528` | BoostPrototypeManager |
 | `0x108a8f070` | ResourceManager::m_ptr |
 | `0x101f72754` | SpellPrototype::Init (populates from stats) |
+
+## BG3 CLI Flags (Discovered via RE)
+
+Extracted from macOS binary via `strings -a`. No public documentation exists. Full inventory: `ghidra/offsets/CLI_FLAGS.md`.
+
+**Launch & Save (P0):**
+- `-continueGame` — auto-continue most recent save (bypasses main menu)
+- `-loadSaveGame <name>` — load specific save game
+- `defaults write com.larian.bg3 NoLauncher 1` — bypass Larian WebKit launcher (set automatically by harness)
+
+**Note:** `-continueGame` and `-loadSaveGame` are mutually exclusive (enforced at `GameStateInit`).
+
+**Mod & Story:** `-module <name>`, `-modded`, `-storylog`, `-dynamicStory`, `-saveStoryState`, `-modEnv <env>`
+
+**Debug:** `-stats`, `-json`, `-osi`, `-crash`, `-syslog`, `-combatTimelines`, `-toggleCrowds`, `-testAIStart`, `-testLoadLevel`
+
+**System:** `-detailLevel <N>`, `-startInControllerMode`, `-enableClientNewECSScheduler`, `--logPath <path>`, `--cpuLimit <N>`
+
+**Save Debug (ECB):** `-useSaveSystemECBChecker`, `-saveSystemECBCheckerEnableLogging`, `-saveSystemECBCheckerEnableDetailedLogging`
+
+**Harness usage:** `bg3se-harness launch --continue` passes `-continueGame` automatically. `bg3se-harness flags` lists all 40 flags.
+
+## Ghidra HTTP Bridge
+
+When Ghidra is running with GhidraMCP plugin and BG3 binary loaded, 135+ RE endpoints at `http://127.0.0.1:8080/`.
+
+**MCP note:** The MCP wrapper may fail to connect to Claude Code. Use HTTP directly or via `bg3se-harness ghidra <command>`.
+
+```bash
+curl -s "http://127.0.0.1:8080/decompile_function?address=0x100bb53d8"   # Decompile
+curl -s "http://127.0.0.1:8080/strings?filter=continueGame"              # Search strings
+curl -s "http://127.0.0.1:8080/searchFunctions?query=GameStateInit"      # Search functions
+curl -s "http://127.0.0.1:8080/xrefs_to?address=0x108502635"            # XREFs
+curl -s "http://127.0.0.1:8080/list_functions?offset=0&limit=50"        # List functions
+```
+
+**CLI wrapper:** `bg3se-harness ghidra status|decompile|search-strings|search-functions|xrefs|list-functions|call-graph`
 
 ## Session Checklist
 
