@@ -40,8 +40,19 @@ set(BG3SE_LUA_SOURCES
     ${BG3SE_ROOT}/src/lua/lua_imgui.c
 )
 
-# Pre-built Lua library
+# Lua Library
 set(LUA_LIBRARY ${BG3SE_ROOT}/lib/lua/liblua-universal.a)
+if(NOT EXISTS "${LUA_LIBRARY}")
+    message(STATUS "liblua-universal.a not found, building...")
+    execute_process(
+        COMMAND bash ${BG3SE_ROOT}/lib/lua/build_universal.sh
+        WORKING_DIRECTORY ${BG3SE_ROOT}/lib/lua
+        RESULT_VARIABLE LUA_BUILD_RESULT
+    )
+    if(NOT LUA_BUILD_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to build Lua library (exit code: ${LUA_BUILD_RESULT})")
+    endif()
+endif()
 
 # Create executable
 add_executable(imgui_test
