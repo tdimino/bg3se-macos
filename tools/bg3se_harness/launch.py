@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 from .config import BG3_EXEC, HEALTH_TIMEOUT, HEALTH_TIMEOUT_CONTINUE, SOCKET_PATH
@@ -59,7 +62,57 @@ def launch(continue_game=False, load_save=None, extra_flags=None):
     )
     flags_desc = " ".join(cmd[4:]) if len(cmd) > 4 else "(no extra flags)"
     print(f"Launched BG3 (pid {proc.pid}) [{flags_desc}]", file=sys.stderr)
+
+    # Auto-dismiss "Press to Continue" splash screen.
+    # BG3 shows a Noesis UI modal after launcher close that blocks even with
+    # -continueGame. The SE socket isn't available yet, so we send a keypress
+    # via osascript after a delay. Runs in a daemon thread to not block.
+    if continue_game or load_save:
+        _dismiss_continue_screen(proc)
+
     return proc
+
+
+def _dismiss_continue_screen(proc, delay=8, retries=5):
+    """Dismiss 'Click to Continue' by activating BG3 window and sending input.
+
+    The splash is a Noesis UI modal that only responds to input directed at
+    the BG3 window. We must: (1) activate the window, (2) send Space/Enter.
+    Retries every 3s because the splash may appear at different times
+    depending on system load.
+    """
+    def dismisser():
+        for attempt in range(retries):
+            time.sleep(delay if attempt == 0 else 3)
+            if proc.poll() is not None:
+                return  # Process exited
+
+            # Activate BG3 window and send Space key targeted at it
+            subprocess.run(
+                ["osascript", "-e",
+                 'tell application "System Events"\n'
+                 '  set frontmost of process "Baldur\'s Gate 3" to true\n'
+                 '  delay 0.5\n'
+                 '  key code 49\n'  # Space
+                 'end tell'],
+                capture_output=True,
+            )
+            print(f"Sent Space to BG3 window (attempt {attempt + 1}/{retries})",
+                  file=sys.stderr)
+
+            # Check if socket is now alive (splash dismissed)
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect(SOCKET_PATH)
+                s.close()
+                print("SE socket alive — splash dismissed", file=sys.stderr)
+                return
+            except (ConnectionRefusedError, FileNotFoundError, OSError):
+                pass
+
+    thread = threading.Thread(target=dismisser, daemon=True)
+    thread.start()
 
 
 def default_timeout(continue_game=False, load_save=None):

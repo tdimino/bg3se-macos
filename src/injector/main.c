@@ -46,6 +46,7 @@ extern "C" {
 
 // Core modules
 #include "version.h"
+#include "version_detect.h"
 #include "logging.h"
 #include "crashlog.h"
 
@@ -2173,39 +2174,49 @@ static bool deferred_session_init_tick(void) {
     uint64_t t_start = (uint64_t)timer_get_monotonic_ms();
     LOG_GAME_INFO("Deferred session init starting...");
 
-    // Step 1: Entity world discovery
+    // Suspend entity event signal handlers during session init.
+    // ServerWorker may fire signals while we're re-discovering TypeIds
+    // and rebinding entity worlds — the handlers must not dispatch.
+    entity_events_set_transition(true);
+
+    // Steps 1-4 are address-dependent — skip if version mismatch
     uint64_t t0 = t_start;
-    if (!entity_system_ready()) {
-        LOG_ENTITY_DEBUG("Attempting EntityWorld discovery (deferred)...");
-        if (entity_discover_world()) {
-            LOG_ENTITY_DEBUG("EntityWorld discovered successfully!");
-        } else {
-            LOG_ENTITY_DEBUG("EntityWorld discovery failed - try Ext.Entity.Discover() later");
+    uint64_t t1 = t_start;
+
+    if (version_detect_addresses_safe()) {
+        // Step 1: Entity world discovery
+        t0 = t_start;
+        if (!entity_system_ready()) {
+            LOG_ENTITY_DEBUG("Attempting EntityWorld discovery (deferred)...");
+            if (entity_discover_world()) {
+                LOG_ENTITY_DEBUG("EntityWorld discovered successfully!");
+            } else {
+                LOG_ENTITY_DEBUG("EntityWorld discovery failed - try Ext.Entity.Discover() later");
+            }
         }
+        t1 = (uint64_t)timer_get_monotonic_ms();
+        LOG_GAME_INFO("  entity_discover_world: %llums", (unsigned long long)(t1 - t0));
+
+        // Step 2: TypeId discovery (~2,200 kernel calls)
+        t0 = t1;
+        entity_on_session_loaded();
+        t1 = (uint64_t)timer_get_monotonic_ms();
+        LOG_GAME_INFO("  entity_on_session_loaded: %llums", (unsigned long long)(t1 - t0));
+
+        // Step 3: Stats system validation
+        t0 = t1;
+        stats_manager_on_session_loaded();
+        t1 = (uint64_t)timer_get_monotonic_ms();
+        LOG_GAME_INFO("  stats_manager_on_session_loaded: %llums", (unsigned long long)(t1 - t0));
+
+        // Step 4: Static data capture
+        t0 = t1;
+        staticdata_post_init_capture();
+        t1 = (uint64_t)timer_get_monotonic_ms();
+        LOG_GAME_INFO("  staticdata_post_init_capture: %llums", (unsigned long long)(t1 - t0));
+    } else {
+        LOG_GAME_INFO("  Skipped entity/stats/staticdata init (version mismatch)");
     }
-    uint64_t t1 = (uint64_t)timer_get_monotonic_ms();
-    LOG_GAME_INFO("  entity_discover_world: %llums", (unsigned long long)(t1 - t0));
-
-    // Step 2: TypeId discovery (~2,200 kernel calls)
-    t0 = t1;
-    entity_on_session_loaded();
-    t1 = (uint64_t)timer_get_monotonic_ms();
-    LOG_GAME_INFO("  entity_on_session_loaded: %llums", (unsigned long long)(t1 - t0));
-
-    // Note: entity_events_bind() is called from entity_system.c during world discovery
-    // (both server and client). No need to call it again here.
-
-    // Step 3: Stats system validation
-    t0 = t1;
-    stats_manager_on_session_loaded();
-    t1 = (uint64_t)timer_get_monotonic_ms();
-    LOG_GAME_INFO("  stats_manager_on_session_loaded: %llums", (unsigned long long)(t1 - t0));
-
-    // Step 4: Static data capture
-    t0 = t1;
-    staticdata_post_init_capture();
-    t1 = (uint64_t)timer_get_monotonic_ms();
-    LOG_GAME_INFO("  staticdata_post_init_capture: %llums", (unsigned long long)(t1 - t0));
 
     // Step 5: Fire events + state transition
     events_fire(L, EVENT_STATS_STRUCTURE_LOADED);
@@ -2219,6 +2230,10 @@ static bool deferred_session_init_tick(void) {
     net_hooks_request_deferred_init();
 
     s_session_init_state = SESSION_INIT_COMPLETE;
+
+    // Resume entity event signal handlers — transition complete,
+    // all TypeIds re-discovered, worlds bound, state is Running.
+    entity_events_set_transition(false);
 
     uint64_t t_end = (uint64_t)timer_get_monotonic_ms();
     LOG_GAME_INFO("Deferred session init complete: %llums total",
@@ -3166,59 +3181,67 @@ init_subsystems:
                 LOG_CORE_INFO("Found BG3 executable (index %u): %s", i, name);
                 LOG_CORE_DEBUG("  Base: %p, Slide: 0x%lx", binary_base, (long)slide);
 
-                int result = entity_system_init(binary_base);
-                if (result == 0) {
-                    LOG_ENTITY_INFO("Entity system initialized (function pointers ready)");
+                // Gate all address-dependent init behind version check.
+                // If the game binary has been updated, our hardcoded TypeId/singleton
+                // addresses are stale and will cause crashes (Issue #73, #78).
+                if (!version_detect_addresses_safe()) {
+                    log_message("[WARN] [Init] Skipping address-dependent subsystems "
+                                "(game version mismatch). Lua API and console still work.");
                 } else {
-                    LOG_ENTITY_WARN("Entity system initialization failed: %d", result);
-                }
+                    int result = entity_system_init(binary_base);
+                    if (result == 0) {
+                        LOG_ENTITY_INFO("Entity system initialized (function pointers ready)");
+                    } else {
+                        LOG_ENTITY_WARN("Entity system initialization failed: %d", result);
+                    }
 
-                // Initialize stats manager
-                stats_manager_init(binary_base);
-                if (stats_manager_ready()) {
-                    LOG_STATS_INFO("Stats system initialized and ready");
-                } else {
-                    LOG_STATS_INFO("Stats system initialized (will be ready after game loads)");
-                }
+                    // Initialize stats manager
+                    stats_manager_init(binary_base);
+                    if (stats_manager_ready()) {
+                        LOG_STATS_INFO("Stats system initialized and ready");
+                    } else {
+                        LOG_STATS_INFO("Stats system initialized (will be ready after game loads)");
+                    }
 
-                // Initialize prototype managers (for Ext.Stats.Sync)
-                prototype_managers_init(binary_base);
-                if (prototype_managers_ready()) {
-                    LOG_STATS_INFO("Prototype managers initialized");
-                } else {
-                    LOG_STATS_INFO("Prototype managers initialized (singletons resolve at runtime)");
-                }
+                    // Initialize prototype managers (for Ext.Stats.Sync)
+                    prototype_managers_init(binary_base);
+                    if (prototype_managers_ready()) {
+                        LOG_STATS_INFO("Prototype managers initialized");
+                    } else {
+                        LOG_STATS_INFO("Prototype managers initialized (singletons resolve at runtime)");
+                    }
 
-                // Initialize static data manager (for Ext.StaticData)
-                staticdata_manager_init(binary_base);
-                LOG_CORE_INFO("StaticData manager initialized (managers captured via hooks)");
+                    // Initialize static data manager (for Ext.StaticData)
+                    staticdata_manager_init(binary_base);
+                    LOG_CORE_INFO("StaticData manager initialized (managers captured via hooks)");
 
-                // Initialize template manager (for Ext.Template)
-                template_manager_init(binary_base);
-                LOG_CORE_INFO("Template manager initialized (capture via Frida)");
+                    // Initialize template manager (for Ext.Template)
+                    template_manager_init(binary_base);
+                    LOG_CORE_INFO("Template manager initialized (capture via Frida)");
 
-                // Initialize resource manager (for Ext.Resource)
-                resource_manager_init(binary_base);
-                LOG_CORE_INFO("Resource manager initialized");
+                    // Initialize resource manager (for Ext.Resource)
+                    resource_manager_init(binary_base);
+                    LOG_CORE_INFO("Resource manager initialized");
 
-                // Initialize level manager (for Ext.Level)
-                level_manager_init(binary_base);
-                LOG_CORE_INFO("Level manager initialized");
+                    // Initialize level manager (for Ext.Level)
+                    level_manager_init(binary_base);
+                    LOG_CORE_INFO("Level manager initialized");
 
-                // Initialize audio manager (for Ext.Audio)
-                audio_manager_init(binary_base);
-                LOG_CORE_INFO("Audio manager initialized");
+                    // Initialize audio manager (for Ext.Audio)
+                    audio_manager_init(binary_base);
+                    LOG_CORE_INFO("Audio manager initialized");
 
-                // Initialize localization system
-                localization_init(binary_base);
-                LOG_CORE_INFO("Localization system initialized");
+                    // Initialize localization system
+                    localization_init(binary_base);
+                    LOG_CORE_INFO("Localization system initialized");
 
-                // Initialize functor hooks (ExecuteFunctor/AfterExecuteFunctor events)
-                if (functor_hooks_init(L)) {
-                    LOG_HOOKS_INFO("Functor hooks initialized");
-                } else {
-                    LOG_HOOKS_WARN("Functor hooks initialization failed (events won't fire)");
-                }
+                    // Initialize functor hooks (ExecuteFunctor/AfterExecuteFunctor events)
+                    if (functor_hooks_init(L)) {
+                        LOG_HOOKS_INFO("Functor hooks initialized");
+                    } else {
+                        LOG_HOOKS_WARN("Functor hooks initialization failed (events won't fire)");
+                    }
+                } // end version_detect_addresses_safe() gate
                 found = true;
             }
         }
@@ -3310,6 +3333,10 @@ static void image_added_callback(const struct mach_header *mh, intptr_t slide) {
  */
 __attribute__((constructor))
 static void bg3se_init(void) {
+    // Emergency kill switch — set BG3SE_DISABLE=1 to load dylib with zero side effects.
+    // Useful for diagnosing whether the crash is from our init or mere dylib presence.
+    if (getenv("BG3SE_DISABLE")) return;
+
     // Initialize logging
     log_init();
 
@@ -3349,7 +3376,26 @@ static void bg3se_init(void) {
     t1 = (uint64_t)timer_get_monotonic_ms();
     LOG_CORE_INFO("  init_lua: %llums", (unsigned long long)(t1 - t0));
 
-    // Enumerate loaded images
+    // Detect game binary version FIRST — before any address-dependent code runs.
+    // enumerate_loaded_images() calls entity_system_init() which uses hardcoded
+    // offsets. If the game version doesn't match, those offsets are wrong and
+    // using them causes SIGSEGV (Issue #73, #78).
+    t0 = t1;
+    version_detect_init(NULL);  // Auto-detect BG3 app bundle path
+    t1 = (uint64_t)timer_get_monotonic_ms();
+    LOG_CORE_INFO("  version_detect_init: %llums", (unsigned long long)(t1 - t0));
+    if (!version_detect_addresses_safe()) {
+        log_message("[WARN] ============================================");
+        log_message("[WARN] GAME VERSION MISMATCH DETECTED");
+        log_message("[WARN] Detected: %s | Expected: %s",
+                    version_detect_get_version() ? version_detect_get_version() : "unknown",
+                    BG3_KNOWN_VERSION);
+        log_message("[WARN] Address-dependent features will be disabled.");
+        log_message("[WARN] Lua API, console, and mod loading still work.");
+        log_message("[WARN] ============================================");
+    }
+
+    // Enumerate loaded images (calls entity_system_init if main binary found)
     t0 = t1;
     enumerate_loaded_images();
     t1 = (uint64_t)timer_get_monotonic_ms();

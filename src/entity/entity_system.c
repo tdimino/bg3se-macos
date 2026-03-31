@@ -13,6 +13,7 @@
 #include "component_property.h"
 #include "arm64_call.h"
 #include "logging.h"
+#include "../core/version_detect.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -968,6 +969,16 @@ int entity_system_init(void *main_binary_base) {
 
     g_MainBinaryBase = main_binary_base;
     LOG_ENTITY_DEBUG("Initializing with main binary base: %p", main_binary_base);
+
+    // Guard: skip all address-dependent initialization if game version doesn't match.
+    // Our hardcoded offsets (function pointers, TypeId addresses, singleton locations)
+    // are specific to one binary build. A different version = different addresses = crash.
+    if (!version_detect_addresses_safe()) {
+        LOG_ENTITY_DEBUG("Skipping address-dependent init — game version mismatch. "
+                         "Entity system will be limited (no component access, no TypeId discovery).");
+        g_Initialized = true;
+        return 0;
+    }
 
     // Calculate actual function address
     // Note: The offsets from Ghidra include the base load address (0x100000000)

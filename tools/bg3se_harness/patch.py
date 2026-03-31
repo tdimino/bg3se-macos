@@ -21,18 +21,36 @@ def _backup_path():
 
 
 def _sign_binary(path):
-    """Ad-hoc sign a Mach-O binary. Ignores bundle subcomponent issues."""
-    result = subprocess.run(
-        ["codesign", "-f", "-s", "-", str(path)],
-        capture_output=True, text=True,
-    )
-    # codesign may warn about subcomponents (log files in MacOS/) but still
-    # signs the binary successfully. Check if the binary is actually signed.
-    verify = subprocess.run(
-        ["codesign", "-d", str(path)],
-        capture_output=True, text=True,
-    )
-    return verify.returncode == 0
+    """Ad-hoc sign a Mach-O binary. Handles non-Mach-O files in MacOS/ dir."""
+    from pathlib import Path
+    macos_dir = Path(path).parent
+
+    # Temporarily move non-Mach-O files out of MacOS/ so codesign doesn't
+    # choke on them as unsigned subcomponents.
+    moved = []
+    for f in macos_dir.iterdir():
+        if f.name == Path(path).name:
+            continue
+        if f.suffix in ('.log', '.txt') or f.name.startswith('.bg3se'):
+            tmp = f.with_suffix(f.suffix + '.tmp_sign')
+            f.rename(tmp)
+            moved.append((tmp, f))
+
+    try:
+        subprocess.run(
+            ["codesign", "--deep", "-f", "-s", "-", str(path)],
+            capture_output=True, text=True,
+        )
+        verify = subprocess.run(
+            ["codesign", "-d", str(path)],
+            capture_output=True, text=True,
+        )
+        return verify.returncode == 0
+    finally:
+        # Restore moved files
+        for tmp, orig in moved:
+            if tmp.exists():
+                tmp.rename(orig)
 
 
 def is_patched():

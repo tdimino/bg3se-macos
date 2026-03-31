@@ -21,10 +21,12 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../core/safe_memory.h"
+#include "../core/version_detect.h"
 
 // ============================================================================
 // Configuration
@@ -177,7 +179,22 @@ static bool g_initialized = false;
 // Signal hook tracking (indexed by ComponentTypeIndex)
 static SignalHookInfo *g_signal_hooks = NULL;
 static int g_signal_hooks_capacity = 0;
-static lua_State *g_lua_state = NULL;  // Cached for signal handlers (updated each tick)
+
+// Thread-safe Lua state access — signal handlers fire on ServerWorker thread
+// while main thread manages state lifecycle. Use acquire/release ordering.
+static _Atomic(lua_State *) g_lua_state = NULL;
+
+// Transition guard — set during game state transitions (new game, load save)
+// to prevent signal handlers from dispatching while state is unstable
+static _Atomic(bool) g_in_transition = false;
+
+// Deferred free list for old connection buffers. When inject_connection()
+// grows a Signal's Connections array, the old buffer can't be freed immediately
+// because ServerWorker may be iterating it. Instead, push to this list and
+// free on the next main-thread tick.
+#define MAX_DEFERRED_FREES 256
+static void *g_deferred_frees[MAX_DEFERRED_FREES];
+static int g_deferred_free_count = 0;
 
 // ============================================================================
 // Pool Management
@@ -359,18 +376,24 @@ static void signal_storage_move(void *dst, void *src) {
 static void signal_construct_handler(void *self_storage, uint64_t entity_handle,
                                       void *entity_world, void *component) {
     (void)entity_world;  // EntityRef.World — not needed for dispatch
-    if (!entity_handle || !g_lua_state) return;
+    // Atomic load with acquire ordering — ensures we see the latest state
+    // written by the main thread. Local copy prevents TOCTOU race.
+    lua_State *L = atomic_load_explicit(&g_lua_state, memory_order_acquire);
+    if (!entity_handle || !L) return;
+    if (atomic_load_explicit(&g_in_transition, memory_order_acquire)) return;
     // data_[0] at FunctionStorage + 0x18 contains our type_index
     uint16_t type_index = (uint16_t)(*(uintptr_t*)((char*)self_storage + 0x18));
-    entity_events_on_create(type_index, entity_handle, component, g_lua_state);
+    entity_events_on_create(type_index, entity_handle, component, L);
 }
 
 static void signal_destroy_handler(void *self_storage, uint64_t entity_handle,
                                     void *entity_world, void *component) {
     (void)entity_world;  // EntityRef.World — not needed for dispatch
-    if (!entity_handle || !g_lua_state) return;
+    lua_State *L = atomic_load_explicit(&g_lua_state, memory_order_acquire);
+    if (!entity_handle || !L) return;
+    if (atomic_load_explicit(&g_in_transition, memory_order_acquire)) return;
     uint16_t type_index = (uint16_t)(*(uintptr_t*)((char*)self_storage + 0x18));
-    entity_events_on_destroy(type_index, entity_handle, component, g_lua_state);
+    entity_events_on_destroy(type_index, entity_handle, component, L);
 }
 
 /**
@@ -455,9 +478,18 @@ static bool inject_connection(void *callbacks, int signal_offset,
         void *new_conn = (void*)((uintptr_t)new_buf + (uintptr_t)conn_size * CONNECTION_SIZE);
         write_connection(new_conn, handler, type_index, our_registrant);
 
-        // Free old buffer (macOS BG3 uses system malloc — safe to free)
+        // Defer freeing old buffer — ServerWorker may still be iterating it.
+        // Buffers are freed on the next main-thread tick in fire_deferred().
         if (conn_buf) {
-            free(conn_buf);
+            if (g_deferred_free_count < MAX_DEFERRED_FREES) {
+                g_deferred_frees[g_deferred_free_count++] = conn_buf;
+            } else {
+                // Overflow: force-free oldest to make room (old enough to be safe)
+                free(g_deferred_frees[0]);
+                memmove(&g_deferred_frees[0], &g_deferred_frees[1],
+                        (MAX_DEFERRED_FREES - 1) * sizeof(void*));
+                g_deferred_frees[MAX_DEFERRED_FREES - 1] = conn_buf;
+            }
         }
 
         // Update Signal buf_ and capacity_ (heap is always writable)
@@ -803,6 +835,16 @@ void entity_events_init(void) {
 void entity_events_bind(void *entity_world, bool is_server) {
     if (!entity_world) return;
 
+    // Guard: CCR injection writes Connection structs into game memory at
+    // offsets derived from hardcoded addresses. On version mismatch, these
+    // offsets are wrong and writing corrupts the game's signal arrays,
+    // causing crashes in HotbarSystem::Update and similar ECS systems.
+    if (!version_detect_addresses_safe()) {
+        log_message("[WARN] [EntityEvents] Skipping CCR bind — game version mismatch. "
+                    "Entity event subscriptions (OnCreate/OnDestroy) will not work.");
+        return;
+    }
+
     // Validate CCR access BEFORE committing to this world
     void *ccr_buf = NULL;
     uint32_t ccr_size = 0;
@@ -983,8 +1025,17 @@ bool entity_events_unsubscribe(EntitySubscriptionId id, lua_State *L) {
 void entity_events_fire_deferred(lua_State *L) {
     if (!g_initialized || !L) return;
 
-    // Cache Lua state for signal handlers (updated each tick)
-    g_lua_state = L;
+    // Cache Lua state for signal handlers (updated each tick, atomic release)
+    atomic_store_explicit(&g_lua_state, L, memory_order_release);
+
+    // Flush deferred connection buffer frees — these are old Signal arrays
+    // that were replaced during inject_connection(). By now, any ServerWorker
+    // iteration that was using them has completed (at least one tick has passed).
+    for (int i = 0; i < g_deferred_free_count; i++) {
+        free(g_deferred_frees[i]);
+        g_deferred_frees[i] = NULL;
+    }
+    g_deferred_free_count = 0;
 
     // Swap deferred events to local copy FIRST (handlers may generate new events)
     DeferredEvent local_events[MAX_DEFERRED_EVENTS];
@@ -1035,7 +1086,7 @@ void entity_events_cleanup(lua_State *L) {
 
     // Null g_lua_state FIRST so signal handlers exit immediately if they fire
     // during hook removal (handlers check g_lua_state before dispatching)
-    g_lua_state = NULL;
+    atomic_store_explicit(&g_lua_state, NULL, memory_order_release);
 
     // Remove all signal hooks from the game's CCR
     // (before clearing state, while g_bound_world is still valid)
@@ -1087,7 +1138,14 @@ void entity_events_cleanup(lua_State *L) {
     }
 
     g_bound_world = NULL;
-    g_lua_state = NULL;
+    atomic_store_explicit(&g_lua_state, NULL, memory_order_release);
+
+    // Flush any remaining deferred frees during cleanup
+    for (int i = 0; i < g_deferred_free_count; i++) {
+        free(g_deferred_frees[i]);
+        g_deferred_frees[i] = NULL;
+    }
+    g_deferred_free_count = 0;
 
     log_message("[INFO] [EntityEvents] Cleaned up all subscriptions (%d signal hooks removed)",
                 hooks_removed);
@@ -1099,6 +1157,15 @@ int entity_events_subscription_count(void) {
 
 bool entity_events_is_bound(void) {
     return g_bound_world != NULL;
+}
+
+void entity_events_set_transition(bool in_transition) {
+    atomic_store_explicit(&g_in_transition, in_transition, memory_order_release);
+    if (in_transition) {
+        log_message("[INFO] [EntityEvents] Transition guard ON — signal handlers suspended");
+    } else {
+        log_message("[INFO] [EntityEvents] Transition guard OFF — signal handlers resumed");
+    }
 }
 
 // ============================================================================
