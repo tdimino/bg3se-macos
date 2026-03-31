@@ -484,11 +484,13 @@ static bool inject_connection(void *callbacks, int signal_offset,
             if (g_deferred_free_count < MAX_DEFERRED_FREES) {
                 g_deferred_frees[g_deferred_free_count++] = conn_buf;
             } else {
-                // Overflow: force-free oldest to make room (old enough to be safe)
-                free(g_deferred_frees[0]);
-                memmove(&g_deferred_frees[0], &g_deferred_frees[1],
-                        (MAX_DEFERRED_FREES - 1) * sizeof(void*));
-                g_deferred_frees[MAX_DEFERRED_FREES - 1] = conn_buf;
+                // Overflow: do NOT free — ServerWorker may still be iterating.
+                // This leaks the buffer, but that's safer than use-after-free.
+                // 256 overflows means 256 replaced connection arrays in one tick —
+                // something is very wrong if this fires.
+                log_message("[WARN] [EntityEvents] Deferred free list full (%d entries). "
+                            "Leaking old buffer %p to avoid use-after-free.",
+                            MAX_DEFERRED_FREES, conn_buf);
             }
         }
 

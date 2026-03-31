@@ -3335,7 +3335,8 @@ __attribute__((constructor))
 static void bg3se_init(void) {
     // Emergency kill switch — set BG3SE_DISABLE=1 to load dylib with zero side effects.
     // Useful for diagnosing whether the crash is from our init or mere dylib presence.
-    if (getenv("BG3SE_DISABLE")) return;
+    // Truthy check: "1", "true", "yes" disable. "0" or "" do NOT disable.
+    { const char *d = getenv("BG3SE_DISABLE"); if (d && d[0] && d[0] != '0') return; }
 
     // Initialize logging
     log_init();

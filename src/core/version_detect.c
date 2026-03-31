@@ -57,8 +57,10 @@ static bool plist_extract_string(const char *plist_path, const char *key,
     char *key_pos = strstr(buf, key_tag);
     if (!key_pos) { free(buf); return false; }
 
+    // Bound search: <string> must appear before the next <key>
+    char *next_key = strstr(key_pos + strlen(key_tag), "<key>");
     char *str_start = strstr(key_pos, "<string>");
-    if (!str_start) { free(buf); return false; }
+    if (!str_start || (next_key && str_start > next_key)) { free(buf); return false; }
     str_start += 8;  // len("<string>")
 
     char *str_end = strstr(str_start, "</string>");
