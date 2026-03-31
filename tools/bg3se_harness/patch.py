@@ -25,6 +25,14 @@ def _sign_binary(path):
     from pathlib import Path
     macos_dir = Path(path).parent
 
+    # Recover orphaned .tmp_sign files from a prior interrupted signing run
+    for orphan in macos_dir.glob('*.tmp_sign'):
+        orig = orphan.with_suffix('')
+        if not orig.exists():
+            orphan.rename(orig)
+        else:
+            orphan.unlink()
+
     # Temporarily move non-Mach-O files out of MacOS/ so codesign doesn't
     # choke on them as unsigned subcomponents.
     moved = []

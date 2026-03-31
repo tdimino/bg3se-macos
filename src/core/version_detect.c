@@ -173,7 +173,20 @@ bool version_detect_matches(void) {
 }
 
 bool version_detect_addresses_safe(void) {
-    // If we couldn't detect the version, be optimistic (don't break existing behavior)
-    if (!g_initialized || g_detected_version[0] == '\0') return true;
+    // Fail CLOSED: if we can't determine the version, assume mismatch.
+    // Better to run degraded than SIGSEGV from stale Dobby hooks.
+    // Override with BG3SE_FORCE_ADDRESSES=1 for power users.
+    if (!g_initialized || g_detected_version[0] == '\0') {
+        static bool warned = false;
+        const char *force = getenv("BG3SE_FORCE_ADDRESSES");
+        if (force && force[0] && force[0] != '0') return true;
+        if (!warned) {
+            log_message("[WARN] [VersionDetect] Could not determine game version. "
+                        "Address-dependent features disabled as safety precaution. "
+                        "Set BG3SE_FORCE_ADDRESSES=1 to override.");
+            warned = true;
+        }
+        return false;
+    }
     return g_version_matches;
 }

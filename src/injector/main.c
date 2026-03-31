@@ -2218,7 +2218,13 @@ static bool deferred_session_init_tick(void) {
         LOG_GAME_INFO("  Skipped entity/stats/staticdata init (version mismatch)");
     }
 
-    // Step 5: Fire events + state transition
+    // Resume entity event signal handlers BEFORE firing mod events.
+    // Address-dependent init (steps 1-4) is complete. If mod code in
+    // events_fire() crashes, the transition guard must already be cleared
+    // so entity events aren't permanently disabled for the session.
+    entity_events_set_transition(false);
+
+    // Step 5: Fire events + state transition (calls into mod Lua code)
     events_fire(L, EVENT_STATS_STRUCTURE_LOADED);
     events_fire(L, EVENT_STATS_LOADED);
     persist_restore_all(L);
@@ -2230,10 +2236,6 @@ static bool deferred_session_init_tick(void) {
     net_hooks_request_deferred_init();
 
     s_session_init_state = SESSION_INIT_COMPLETE;
-
-    // Resume entity event signal handlers — transition complete,
-    // all TypeIds re-discovered, worlds bound, state is Running.
-    entity_events_set_transition(false);
 
     uint64_t t_end = (uint64_t)timer_get_monotonic_ms();
     LOG_GAME_INFO("Deferred session init complete: %llums total",

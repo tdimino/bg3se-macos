@@ -88,17 +88,25 @@ def _dismiss_continue_screen(proc, delay=8, retries=5):
                 return  # Process exited
 
             # Activate BG3 window and send Space key targeted at it
-            subprocess.run(
-                ["osascript", "-e",
-                 'tell application "System Events"\n'
-                 '  set frontmost of process "Baldur\'s Gate 3" to true\n'
-                 '  delay 0.5\n'
-                 '  key code 49\n'  # Space
-                 'end tell'],
-                capture_output=True,
-            )
-            print(f"Sent Space to BG3 window (attempt {attempt + 1}/{retries})",
-                  file=sys.stderr)
+            try:
+                subprocess.run(
+                    ["osascript", "-e",
+                     'tell application "System Events"\n'
+                     '  set frontmost of process "Baldur\'s Gate 3" to true\n'
+                     '  delay 0.5\n'
+                     '  key code 49\n'  # Space
+                     'end tell'],
+                    capture_output=True,
+                    timeout=10,
+                )
+                print(f"Sent Space to BG3 window (attempt {attempt + 1}/{retries})",
+                      file=sys.stderr)
+            except subprocess.TimeoutExpired:
+                print(f"osascript timed out (attempt {attempt + 1}/{retries}) — "
+                      "check Accessibility permissions", file=sys.stderr)
+            except (FileNotFoundError, OSError) as e:
+                print(f"osascript failed: {e}", file=sys.stderr)
+                return
 
             # Check if socket is now alive (splash dismissed)
             try:

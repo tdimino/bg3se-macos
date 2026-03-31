@@ -23,6 +23,12 @@ if(NOT CMAKE_OSX_SYSROOT)
             list(GET _clt_sdks -1 _clt_latest)
             set(CMAKE_OSX_SYSROOT "${_clt_latest}" CACHE PATH "macOS SDK path (CommandLineTools fallback)")
             message(STATUS "Using CommandLineTools SDK: ${_clt_latest}")
+        else()
+            message(WARNING
+                "Could not detect macOS SDK. Install Xcode or CommandLineTools:\n"
+                "  xcode-select --install\n"
+                "Build may fail with 'tuple file not found' or similar C++ header errors.\n"
+                "You can set CMAKE_OSX_SYSROOT manually: cmake -DCMAKE_OSX_SYSROOT=/path/to/sdk ..")
         endif()
     endif()
 endif()
