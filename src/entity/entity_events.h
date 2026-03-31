@@ -171,6 +171,14 @@ int entity_events_subscription_count(void);
 bool entity_events_is_bound(void);
 
 /**
+ * Set/clear the transition guard.
+ * When set, signal handlers return immediately without dispatching events.
+ * Call with true before game state transitions (new game, load save)
+ * and false after transition completes (e.g., in entity_on_session_loaded).
+ */
+void entity_events_set_transition(bool in_transition);
+
+/**
  * Register Ext.Entity event functions with Lua state.
  * Replaces stub implementations with real C functions.
  */

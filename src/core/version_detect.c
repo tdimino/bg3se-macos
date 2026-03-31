@@ -1,0 +1,177 @@
+/**
+ * BG3SE-macOS - Game Binary Version Detection
+ *
+ * Detects BG3 version via Info.plist CFBundleShortVersionString.
+ * Compares against the known-good version to gate address-dependent features.
+ *
+ * Issue #73: Game hotfixes shift 2,000+ hardcoded addresses. Without version
+ * detection, dereferencing stale singleton pointers causes SIGSEGV.
+ */
+
+#include "version_detect.h"
+#include "logging.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// ============================================================================
+// State
+// ============================================================================
+
+static char g_detected_version[64] = {0};
+static bool g_initialized = false;
+static bool g_version_matches = true;  // Optimistic default
+
+// ============================================================================
+// Info.plist Parsing (lightweight, no Foundation dependency)
+// ============================================================================
+
+/**
+ * Extract a string value from an XML plist by key name.
+ * Simple text scanning — avoids pulling in Foundation framework from C code.
+ */
+static bool plist_extract_string(const char *plist_path, const char *key,
+                                  char *out, size_t out_size) {
+    FILE *f = fopen(plist_path, "r");
+    if (!f) return false;
+
+    // Read entire file (Info.plist is small, typically <4KB)
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    if (file_size <= 0 || file_size > 65536) {
+        fclose(f);
+        return false;
+    }
+    fseek(f, 0, SEEK_SET);
+
+    char *buf = malloc((size_t)file_size + 1);
+    if (!buf) { fclose(f); return false; }
+    size_t read = fread(buf, 1, (size_t)file_size, f);
+    buf[read] = '\0';
+    fclose(f);
+
+    // Search for <key>KEY</key> followed by <string>VALUE</string>
+    char key_tag[128];
+    snprintf(key_tag, sizeof(key_tag), "<key>%s</key>", key);
+    char *key_pos = strstr(buf, key_tag);
+    if (!key_pos) { free(buf); return false; }
+
+    char *str_start = strstr(key_pos, "<string>");
+    if (!str_start) { free(buf); return false; }
+    str_start += 8;  // len("<string>")
+
+    char *str_end = strstr(str_start, "</string>");
+    if (!str_end) { free(buf); return false; }
+
+    size_t len = (size_t)(str_end - str_start);
+    if (len >= out_size) len = out_size - 1;
+    memcpy(out, str_start, len);
+    out[len] = '\0';
+
+    free(buf);
+    return true;
+}
+
+// ============================================================================
+// Steam App Path Detection
+// ============================================================================
+
+/**
+ * Find the BG3 app bundle path via Steam's common install location.
+ */
+static const char *find_bg3_app_path(void) {
+    static char path[1024] = {0};
+    if (path[0]) return path;
+
+    // Standard Steam install location
+    const char *home = getenv("HOME");
+    if (!home) return NULL;
+
+    // Note: Steam folder is "Baldurs Gate 3" (no apostrophe)
+    // but the .app bundle is "Baldur's Gate 3.app" (with apostrophe)
+    snprintf(path, sizeof(path),
+             "%s/Library/Application Support/Steam/steamapps/common/"
+             "Baldurs Gate 3/Baldur's Gate 3.app", home);
+
+    // Check if Info.plist exists (more reliable than fopen on .app directory)
+    char plist_check[1280];
+    snprintf(plist_check, sizeof(plist_check), "%s/Contents/Info.plist", path);
+    FILE *f = fopen(plist_check, "r");
+    if (f) { fclose(f); return path; }
+
+    // Fallback: try without apostrophe
+    snprintf(path, sizeof(path),
+             "%s/Library/Application Support/Steam/steamapps/common/"
+             "Baldurs Gate 3/Baldurs Gate 3.app", home);
+    snprintf(plist_check, sizeof(plist_check), "%s/Contents/Info.plist", path);
+    f = fopen(plist_check, "r");
+    if (f) { fclose(f); return path; }
+
+    path[0] = '\0';
+    return NULL;
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+bool version_detect_init(const char *app_bundle_path) {
+    if (g_initialized) return g_detected_version[0] != '\0';
+
+    g_initialized = true;
+
+    // Find the app bundle
+    const char *bundle = app_bundle_path;
+    if (!bundle) bundle = find_bg3_app_path();
+    if (!bundle) {
+        log_message("[WARN] [VersionDetect] Could not find BG3 app bundle");
+        return false;
+    }
+
+    // Read Info.plist
+    char plist_path[1280];
+    snprintf(plist_path, sizeof(plist_path), "%s/Contents/Info.plist", bundle);
+
+    // Try CFBundleShortVersionString first (human-readable like "4.1.1.7209685")
+    if (!plist_extract_string(plist_path, "CFBundleShortVersionString",
+                               g_detected_version, sizeof(g_detected_version))) {
+        // Fallback: CFBundleVersion
+        if (!plist_extract_string(plist_path, "CFBundleVersion",
+                                   g_detected_version, sizeof(g_detected_version))) {
+            log_message("[WARN] [VersionDetect] Could not read version from %s", plist_path);
+            return false;
+        }
+    }
+
+    // Compare against known-good version
+    g_version_matches = (strcmp(g_detected_version, BG3_KNOWN_VERSION) == 0);
+
+    if (g_version_matches) {
+        log_message("[INFO] [VersionDetect] Game version: %s (matches known-good)",
+                    g_detected_version);
+    } else {
+        log_message("[WARN] [VersionDetect] Game version: %s (MISMATCH — expected %s). "
+                    "Address-dependent features may not work correctly. "
+                    "TypeId addresses, singleton pointers, and function offsets "
+                    "were verified for %s.",
+                    g_detected_version, BG3_KNOWN_VERSION, BG3_KNOWN_VERSION);
+    }
+
+    return true;
+}
+
+const char *version_detect_get_version(void) {
+    if (!g_initialized || g_detected_version[0] == '\0') return NULL;
+    return g_detected_version;
+}
+
+bool version_detect_matches(void) {
+    return g_version_matches;
+}
+
+bool version_detect_addresses_safe(void) {
+    // If we couldn't detect the version, be optimistic (don't break existing behavior)
+    if (!g_initialized || g_detected_version[0] == '\0') return true;
+    return g_version_matches;
+}

@@ -8,6 +8,7 @@
 #include "prototype_managers.h"
 #include "stats_manager.h"
 #include "logging.h"
+#include "../core/version_detect.h"
 #include "../strings/fixed_string.h"
 
 #include <stdio.h>
@@ -187,6 +188,14 @@ bool prototype_managers_init(void *main_binary_base) {
 
     LOG_STATS_DEBUG("[PrototypeManagers] === Initialization ===");
     LOG_STATS_DEBUG("[PrototypeManagers] Binary base: %p", main_binary_base);
+
+    // Guard: skip address-dependent initialization if game version doesn't match
+    if (!version_detect_addresses_safe()) {
+        LOG_STATS_INFO("[PrototypeManagers] Skipping init — game version mismatch "
+                       "(addresses may be stale). Prototype manager features disabled.");
+        g_Initialized = true;  // Mark as init'd to prevent retries
+        return true;
+    }
 
     // Resolve singleton pointer addresses from Ghidra offsets
 

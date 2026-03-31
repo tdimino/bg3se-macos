@@ -13,6 +13,28 @@ Each entry includes:
 
 ---
 
+## [v0.37.1] - 2026-03-31
+
+**Parity:** ~94% | **Category:** Crash Fixes, Build System, Safety | **Issues:** #78, #77, #73
+
+### Fixed
+- **Hotbar crash on new game start** (Issue #78): Thread-unsafe signal handlers in `entity_events.c` caused EXC_BAD_ACCESS on ServerWorker thread. Fixed with atomic `g_lua_state` (acquire/release ordering), deferred connection buffer freeing (prevents use-after-free during Signal iteration), and a transition guard that suspends signal dispatch during game state transitions.
+- **Build error on CommandLineTools-only systems** (Issue #77): Added CMake sysroot auto-detection via `xcrun --sdk macosx --show-sdk-path` with fallback to CommandLineTools SDK path. Fixes `'tuple' file not found` when building `.mm` files without full Xcode.
+- **SIGSEGV after game hotfix** (Issue #73): Added game version detection from `Info.plist`. When the detected version doesn't match the known-good version (`4.1.1.6995620`), address-dependent features (prototype managers) are disabled gracefully instead of crashing from stale singleton pointers.
+- **Python 3.9 compatibility**: Added `from __future__ import annotations` to `flags.py` — fixes `TypeError` from PEP 604 union syntax (`str | bool`) on macOS system Python 3.9.
+- **Code signing robustness**: `_sign_binary()` now temporarily moves non-Mach-O files (`.log`, `.bg3se-*`) out of `Contents/MacOS/` before `codesign` to prevent subcomponent warnings.
+
+### Added
+- **`version_detect.c/h`**: New game binary version detection subsystem. Reads `CFBundleShortVersionString` from BG3's `Info.plist`, compares against known-good version, logs warnings on mismatch.
+- **`entity_events_set_transition()`**: Public API for suspending/resuming entity event signal handlers during game state transitions.
+
+### Technical
+- `g_lua_state` in `entity_events.c` is now `_Atomic(lua_State*)` with `memory_order_acquire`/`memory_order_release` — eliminates ARM64 weak-memory-ordering race
+- Deferred free list (max 256 entries) for old Signal connection buffers — freed on next main-thread tick instead of immediately
+- Prototype managers skip address-dependent init when version mismatch detected
+
+---
+
 ## [v0.36.50] - 2026-02-11
 
 **Parity:** ~94% | **Category:** Osiris Crash Fix, Test Fixes, Init Timing | **Issues:** #66, #68

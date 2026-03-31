@@ -1,6 +1,32 @@
 cmake_minimum_required(VERSION 3.20)
 project(bg3se-macos VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
 
+# ============================================
+# SDK Detection (fixes 'tuple' not found on CommandLineTools-only systems)
+# ============================================
+if(NOT CMAKE_OSX_SYSROOT)
+    execute_process(
+        COMMAND xcrun --sdk macosx --show-sdk-path
+        OUTPUT_VARIABLE _detected_sdk
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _xcrun_rc
+    )
+    if(_xcrun_rc EQUAL 0 AND _detected_sdk)
+        set(CMAKE_OSX_SYSROOT "${_detected_sdk}" CACHE PATH "macOS SDK path (auto-detected)")
+        message(STATUS "Auto-detected macOS SDK: ${_detected_sdk}")
+    else()
+        # Fallback: probe the standard CommandLineTools path
+        file(GLOB _clt_sdks "/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk")
+        if(_clt_sdks)
+            list(SORT _clt_sdks)
+            list(GET _clt_sdks -1 _clt_latest)
+            set(CMAKE_OSX_SYSROOT "${_clt_latest}" CACHE PATH "macOS SDK path (CommandLineTools fallback)")
+            message(STATUS "Using CommandLineTools SDK: ${_clt_latest}")
+        endif()
+    endif()
+endif()
+
 # Set C/C++/Objective-C++ standards
 # Using C23 for __VA_OPT__ support in variadic macros (logging.h)
 set(CMAKE_C_STANDARD 23)
@@ -117,6 +143,7 @@ add_library(bg3se SHARED
     src/core/logging.c
     src/core/safe_memory.c
     src/core/crashlog.c
+    src/core/version_detect.c
     src/core/mach_exception.c
     src/core/mach_exc_stubs/mach_excServer.c
     src/lua/lua_ext.c

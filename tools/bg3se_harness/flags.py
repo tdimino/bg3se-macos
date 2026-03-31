@@ -4,6 +4,8 @@ All 38 flags discovered via binary string extraction from the macOS BG3 binary.
 See ghidra/offsets/CLI_FLAGS.md for full documentation including addresses.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
