@@ -33,7 +33,7 @@
 // ============================================================================
 
 #define MAX_SUBSCRIPTIONS     256   // Max concurrent subscriptions
-#define MAX_DEFERRED_EVENTS   512   // Max queued deferred events per tick
+#define MAX_DEFERRED_EVENTS   2048  // Max queued deferred events per tick (was 512, increased for heavy combat)
 #define MAX_COMPONENT_HOOKS   2048  // Max component types we can hook
 #define MAX_ENTITY_HOOKS_PER_TYPE 32 // Max per-entity hooks per component type
 #define MAX_GLOBAL_HOOKS_PER_TYPE 64 // Max global hooks per component type
@@ -696,25 +696,15 @@ static void dispatch_event(lua_State *L, uint16_t type_index,
         ComponentHook *hook = &g_hooks[idx];
         if (!hook->active || (hook->events & event) == 0) continue;
 
-        if (hook->flags & ENTITY_EVENT_FLAG_DEFERRED) {
-            // Queue for deferred dispatch
-            if (g_deferred_count < MAX_DEFERRED_EVENTS) {
-                g_deferred[g_deferred_count++] = (DeferredEvent){
-                    .entity = entity_handle,
-                    .type_index = type_index,
-                    .event = event,
-                    .sub_index = packed
-                };
-            }
-        } else {
-            call_lua_handler(L, hook, entity_handle, type_index, event, component);
-            if (hook->flags & ENTITY_EVENT_FLAG_ONCE) {
-                // Queue deferred unsubscription (don't modify during iteration)
-                if (g_deferred_unsub_count < MAX_SUBSCRIPTIONS) {
-                    g_deferred_unsubs[g_deferred_unsub_count++] = packed;
-                }
-                hook->events = 0;  // Stop matching immediately
-            }
+        // P0 FIX: Always defer — dispatch may fire from ServerWorker thread,
+        // and calling lua_pcall from a non-main thread corrupts the Lua stack.
+        if (g_deferred_count < MAX_DEFERRED_EVENTS) {
+            g_deferred[g_deferred_count++] = (DeferredEvent){
+                .entity = entity_handle,
+                .type_index = type_index,
+                .event = event,
+                .sub_index = packed
+            };
         }
     }
 
@@ -731,23 +721,14 @@ static void dispatch_event(lua_State *L, uint16_t type_index,
             ComponentHook *hook = &g_hooks[idx];
             if (!hook->active || (hook->events & event) == 0) continue;
 
-            if (hook->flags & ENTITY_EVENT_FLAG_DEFERRED) {
-                if (g_deferred_count < MAX_DEFERRED_EVENTS) {
-                    g_deferred[g_deferred_count++] = (DeferredEvent){
-                        .entity = entity_handle,
-                        .type_index = type_index,
-                        .event = event,
-                        .sub_index = packed
-                    };
-                }
-            } else {
-                call_lua_handler(L, hook, entity_handle, type_index, event, component);
-                if (hook->flags & ENTITY_EVENT_FLAG_ONCE) {
-                    if (g_deferred_unsub_count < MAX_SUBSCRIPTIONS) {
-                        g_deferred_unsubs[g_deferred_unsub_count++] = packed;
-                    }
-                    hook->events = 0;
-                }
+            // P0 FIX: Always defer (see above)
+            if (g_deferred_count < MAX_DEFERRED_EVENTS) {
+                g_deferred[g_deferred_count++] = (DeferredEvent){
+                    .entity = entity_handle,
+                    .type_index = type_index,
+                    .event = event,
+                    .sub_index = packed
+                };
             }
         }
         break;  // Found the entity entry
