@@ -60,6 +60,13 @@ static uintptr_t get_runtime_addr(uintptr_t ghidra_addr) {
 // Event Dispatch Helpers
 // =============================================================================
 
+// Returns non-zero if any subscriber exists for ExecuteFunctor or AfterExecuteFunctor.
+// Called from each hook before touching the Lua state — zero cost when no mods subscribe.
+static inline int has_functor_subscribers(void) {
+    return events_get_handler_count(EVENT_EXECUTE_FUNCTOR) +
+           events_get_handler_count(EVENT_AFTER_EXECUTE_FUNCTOR);
+}
+
 static void fire_execute_functor_event(StatsFunctorList* functors, void* context, FunctorContextType ctxType) {
     if (!g_LuaState) return;
     events_fire_execute_functor(g_LuaState, (int)ctxType, (void*)functors, context);
@@ -74,78 +81,99 @@ static void fire_after_execute_functor_event(StatsFunctorList* functors, void* c
 
 // =============================================================================
 // Hook Implementations
+// Each hook: listener-count guard → pre-event → original → post-event.
+// If 0 subscribers for both functor events, original is called directly with no
+// Lua overhead.
 // =============================================================================
 
 static void hook_ExecuteFunctors_AttackTarget(void* self, StatsFunctorList* functors, AttackTargetContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_ATTACK_TARGET);
-    if (g_OrigAttackTarget) {
-        g_OrigAttackTarget(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigAttackTarget) g_OrigAttackTarget(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_ATTACK_TARGET);
+    if (g_OrigAttackTarget) g_OrigAttackTarget(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_ATTACK_TARGET);
 }
 
 static void hook_ExecuteFunctors_AttackPosition(void* self, StatsFunctorList* functors, AttackPositionContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_ATTACK_POSITION);
-    if (g_OrigAttackPosition) {
-        g_OrigAttackPosition(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigAttackPosition) g_OrigAttackPosition(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_ATTACK_POSITION);
+    if (g_OrigAttackPosition) g_OrigAttackPosition(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_ATTACK_POSITION);
 }
 
 static void hook_ExecuteFunctors_Move(void* self, StatsFunctorList* functors, MoveContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_MOVE);
-    if (g_OrigMove) {
-        g_OrigMove(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigMove) g_OrigMove(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_MOVE);
+    if (g_OrigMove) g_OrigMove(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_MOVE);
 }
 
 static void hook_ExecuteFunctors_Target(void* self, StatsFunctorList* functors, TargetContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_TARGET);
-    if (g_OrigTarget) {
-        g_OrigTarget(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigTarget) g_OrigTarget(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_TARGET);
+    if (g_OrigTarget) g_OrigTarget(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_TARGET);
 }
 
 static void hook_ExecuteFunctors_NearbyAttacked(void* self, StatsFunctorList* functors, NearbyAttackedContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_NEARBY_ATTACKED);
-    if (g_OrigNearbyAttacked) {
-        g_OrigNearbyAttacked(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigNearbyAttacked) g_OrigNearbyAttacked(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_NEARBY_ATTACKED);
+    if (g_OrigNearbyAttacked) g_OrigNearbyAttacked(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_NEARBY_ATTACKED);
 }
 
 static void hook_ExecuteFunctors_NearbyAttacking(void* self, StatsFunctorList* functors, NearbyAttackingContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_NEARBY_ATTACKING);
-    if (g_OrigNearbyAttacking) {
-        g_OrigNearbyAttacking(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigNearbyAttacking) g_OrigNearbyAttacking(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_NEARBY_ATTACKING);
+    if (g_OrigNearbyAttacking) g_OrigNearbyAttacking(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_NEARBY_ATTACKING);
 }
 
 static void hook_ExecuteFunctors_Equip(void* self, StatsFunctorList* functors, EquipContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_EQUIP);
-    if (g_OrigEquip) {
-        g_OrigEquip(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigEquip) g_OrigEquip(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_EQUIP);
+    if (g_OrigEquip) g_OrigEquip(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_EQUIP);
 }
 
 static void hook_ExecuteFunctors_Source(void* self, StatsFunctorList* functors, SourceContextData* ctx) {
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_SOURCE);
-    if (g_OrigSource) {
-        g_OrigSource(self, functors, ctx);
+    if (!has_functor_subscribers()) {
+        if (g_OrigSource) g_OrigSource(self, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_SOURCE);
+    if (g_OrigSource) g_OrigSource(self, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_SOURCE);
 }
 
 static void hook_ExecuteFunctors_Interrupt(HitResult* hit, void* entityWorld, StatsFunctorList* functors, InterruptContextData* ctx) {
-    // Note: Interrupt handler has 4 parameters (HitResult first) unlike other handlers
-    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_INTERRUPT);
-    if (g_OrigInterrupt) {
-        g_OrigInterrupt(hit, entityWorld, functors, ctx);
+    // Interrupt handler has 4 parameters (HitResult first) unlike other handlers
+    if (!has_functor_subscribers()) {
+        if (g_OrigInterrupt) g_OrigInterrupt(hit, entityWorld, functors, ctx);
+        return;
     }
+    fire_execute_functor_event(functors, ctx, FUNCTOR_CTX_INTERRUPT);
+    if (g_OrigInterrupt) g_OrigInterrupt(hit, entityWorld, functors, ctx);
     fire_after_execute_functor_event(functors, ctx, FUNCTOR_CTX_INTERRUPT);
 }
 
