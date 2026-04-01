@@ -17,6 +17,11 @@
  *   Ext.Audio.LoadEvent(eventName) -> boolean
  *   Ext.Audio.UnloadEvent(eventName) -> boolean
  *   Ext.Audio.GetSoundObjectId(name) -> integer
+ *   Ext.Audio.PlayExternalSound(soundObject, eventName, filePath[, codec[, positionSec]]) -> boolean
+ *   Ext.Audio.LoadBank(bankName) -> boolean
+ *   Ext.Audio.UnloadBank(bankName) -> boolean
+ *   Ext.Audio.PrepareBank(bankName) -> boolean
+ *   Ext.Audio.UnprepareBank(bankName) -> boolean
  */
 
 #include "lua_audio.h"
@@ -201,6 +206,60 @@ static int lua_audio_unload_event(lua_State *L) {
     return 1;
 }
 
+/**
+ * Ext.Audio.PlayExternalSound(soundObject, eventName, filePath, codec, positionSec) -> boolean
+ *   soundObject: sound object name or integer ID
+ *   eventName:   Wwise event name string
+ *   filePath:    relative data path to the audio file
+ *   codec:       integer audio codec (0=PCM, 1=Vorbis; default 1)
+ *   positionSec: start position in seconds (default 0.0)
+ */
+static int lua_audio_play_external_sound(lua_State *L) {
+    uint64_t obj       = get_sound_object(L, 1);
+    const char *event  = luaL_checkstring(L, 2);
+    const char *path   = luaL_checkstring(L, 3);
+    uint8_t codec      = (uint8_t)luaL_optinteger(L, 4, 1);
+    float pos_sec      = (float)luaL_optnumber(L, 5, 0.0);
+    lua_pushboolean(L, audio_play_external_sound(obj, event, path, codec, pos_sec));
+    return 1;
+}
+
+/**
+ * Ext.Audio.LoadBank(bankName) -> boolean
+ */
+static int lua_audio_load_bank(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, audio_load_bank(name));
+    return 1;
+}
+
+/**
+ * Ext.Audio.UnloadBank(bankName) -> boolean
+ */
+static int lua_audio_unload_bank(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, audio_unload_bank(name));
+    return 1;
+}
+
+/**
+ * Ext.Audio.PrepareBank(bankName) -> boolean
+ */
+static int lua_audio_prepare_bank(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, audio_prepare_bank(name));
+    return 1;
+}
+
+/**
+ * Ext.Audio.UnprepareBank(bankName) -> boolean
+ */
+static int lua_audio_unprepare_bank(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, audio_unprepare_bank(name));
+    return 1;
+}
+
 // ============================================================================
 // Registration
 // ============================================================================
@@ -219,6 +278,11 @@ static const struct luaL_Reg audio_functions[] = {
     {"ResetRTPC",          lua_audio_reset_rtpc},
     {"LoadEvent",          lua_audio_load_event},
     {"UnloadEvent",        lua_audio_unload_event},
+    {"PlayExternalSound",  lua_audio_play_external_sound},
+    {"LoadBank",           lua_audio_load_bank},
+    {"UnloadBank",         lua_audio_unload_bank},
+    {"PrepareBank",        lua_audio_prepare_bank},
+    {"UnprepareBank",      lua_audio_unprepare_bank},
     {NULL, NULL}
 };
 
