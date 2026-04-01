@@ -1,0 +1,15 @@
+{
+  "description": "Community Library compatibility test. P0 — dependency for hundreds of gameplay mods.",
+  "mods": ["community_library"],
+  "save_fixture": null,
+  "assertions": [
+    "assert(Ext.Utils.Version() ~= nil, 'SE loaded')",
+    "assert(type(Ext.Stats.Get) == 'function', 'Ext.Stats.Get exists')",
+    "assert(type(Ext.Stats.GetAll) == 'function', 'Ext.Stats.GetAll exists')",
+    "assert(type(Ext.Entity.Get) == 'function', 'Ext.Entity.Get exists')",
+    "assert(type(Ext.Osiris.RegisterListener) == 'function', 'Ext.Osiris.RegisterListener exists')",
+    "assert(type(Ext.Events.Subscribe) == 'function', 'Ext.Events.Subscribe exists')",
+    "assert(type(Ext.ModEvents.Subscribe) == 'function', 'Ext.ModEvents.Subscribe exists')"
+  ],
+  "notes": "Community Library provides shared Lua utilities and a Compatibility Framework. Uses only foundational APIs — low risk."
+}

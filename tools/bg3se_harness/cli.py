@@ -5,9 +5,12 @@ import sys
 from . import build as build_mod
 from . import launch as launch_mod
 from . import patch as patch_mod
+from .authoring import cmd_author
 from .console import Console
 from .benchmark import cmd_benchmark
+from .compat import cmd_compat
 from .crashlog import cmd_crashlog
+from .doctor import cmd_doctor
 from .diff_test import cmd_diff_test
 from .dump import cmd_dump, CATEGORIES as DUMP_CATEGORIES
 from .entity_inspect import cmd_entity, cmd_entity_search, cmd_components
@@ -21,6 +24,10 @@ from .flags import (
     list_flags,
 )
 from .probe import cmd_probe
+from .menu import cmd_menu
+from .mod_cli import cmd_mod
+from .parity import cmd_parity
+from .savegames import cmd_save
 from .screenshot import cmd_screenshot
 from .stats_inspect import cmd_stats
 from .test_runner import run_tests
@@ -493,6 +500,103 @@ def main():
     p_probe.add_argument("--classify", action="store_true", help="Classify pointer type")
 
 
+    # menu
+    p_menu = sub.add_parser("menu", help="Main menu automation (OCR + click)")
+    menu_sub = p_menu.add_subparsers(dest="menu_command", required=True)
+
+    menu_sub.add_parser("detect", help="Detect visible menu buttons via Vision OCR")
+
+    p_mc = menu_sub.add_parser("click", help="Click a menu button by name")
+    p_mc.add_argument("button", help="Button text (e.g. 'Continue', 'New Game')")
+
+    p_mw = menu_sub.add_parser("wait", help="Poll until main menu is visible")
+    p_mw.add_argument("--timeout", type=int, default=60, help="Timeout in seconds (default 60)")
+
+    menu_sub.add_parser("dismiss", help="Dismiss 'Click to Continue' splash screen")
+
+    # compat
+    p_compat = sub.add_parser("compat", help="Mod compatibility test runner")
+    compat_sub = p_compat.add_subparsers(dest="compat_command", required=True)
+
+    compat_sub.add_parser("list", help="List available test scenarios")
+
+    p_cr = compat_sub.add_parser("run", help="Run a compatibility test scenario")
+    p_cr.add_argument("scenario", help="Scenario name (e.g. mcm, community_library)")
+
+    compat_sub.add_parser("matrix", help="Run all scenarios and produce summary")
+
+    # author
+    p_author = sub.add_parser("author", help="Mod authoring tools")
+    author_sub = p_author.add_subparsers(dest="author_command", required=True)
+
+    p_an = author_sub.add_parser("new", help="Scaffold a new mod with BG3SE conventions")
+    p_an.add_argument("name", help="Mod name (e.g. MyTestMod)")
+
+    p_ac = author_sub.add_parser("check", help="Lint mod for macOS-specific issues")
+    p_ac.add_argument("path", help="Path to mod directory")
+
+    # mod
+    p_mod = sub.add_parser("mod", help="Mod management (install, enable, list, search)")
+    mod_sub = p_mod.add_subparsers(dest="mod_command", required=True)
+
+    mod_sub.add_parser("list", help="List installed mods with enabled/SE status")
+
+    p_mi = mod_sub.add_parser("install", help="Install a mod from local file or Nexus")
+    p_mi.add_argument("source", help="Local .pak path, directory, or nexus:MOD_ID")
+    p_mi.add_argument("--no-enable", action="store_true", help="Install without enabling")
+
+    p_me = mod_sub.add_parser("enable", help="Enable a mod in modsettings.lsx")
+    p_me.add_argument("name", help="Mod UUID or name")
+
+    p_md = mod_sub.add_parser("disable", help="Disable a mod in modsettings.lsx")
+    p_md.add_argument("name", help="Mod UUID or name")
+
+    p_mr = mod_sub.add_parser("remove", help="Uninstall a mod")
+    p_mr.add_argument("name", help="Mod UUID or name")
+
+    p_minfo = mod_sub.add_parser("info", help="Show mod metadata from PAK or registry")
+    p_minfo.add_argument("source", help="PAK file path or mod name")
+
+    p_mo = mod_sub.add_parser("order", help="Reorder mod load order")
+    p_mo.add_argument("--move", required=True, help="UUID of mod to move")
+    p_mo.add_argument("--before", required=True, help="UUID to place before")
+
+    p_ms = mod_sub.add_parser("search", help="Search Nexus Mods")
+    p_ms.add_argument("query", help="Search query")
+
+    mod_sub.add_parser("backup", help="Backup modsettings.lsx")
+
+    # parity
+    p_parity = sub.add_parser("parity", help="Windows BG3SE parity audit")
+    parity_sub = p_parity.add_subparsers(dest="parity_command", required=True)
+
+    parity_sub.add_parser("scan", help="Compare live Ext table vs Windows baseline (requires running game)")
+    parity_sub.add_parser("missing", help="List known gaps from baseline (offline)")
+
+    p_pv = parity_sub.add_parser("verify", help="Deep-verify a namespace via Lua probes (requires running game)")
+    p_pv.add_argument("namespace", help="Namespace to verify (e.g. Stats, Entity, IMGUI)")
+
+    # doctor
+    sub.add_parser("doctor", help="Verify paths, permissions, SE status, and prerequisites")
+
+    # save
+    p_save = sub.add_parser("save", help="Save game management for deterministic testing")
+    save_sub = p_save.add_subparsers(dest="save_command", required=True)
+
+    p_sl = save_sub.add_parser("list", help="List available save games")
+    p_sl.add_argument("--fixtures", action="store_true", help="List fixtures instead of game saves")
+
+    p_ss = save_sub.add_parser("snapshot", help="Create named fixture from a save")
+    p_ss.add_argument("name", help="Fixture name (e.g. Harness_Base_Camp)")
+    p_ss.add_argument("--source", metavar="SAVE_DIR", help="Specific save directory (default: most recent)")
+
+    p_sr = save_sub.add_parser("restore", help="Restore a fixture into game saves")
+    p_sr.add_argument("name", help="Fixture name to restore")
+
+    p_sc = save_sub.add_parser("clone", help="Clone a save or fixture under a new name")
+    p_sc.add_argument("src", help="Source save/fixture name")
+    p_sc.add_argument("dst", help="Destination fixture name")
+
     # ghidra
     p_ghidra = sub.add_parser("ghidra", help="Ghidra RE bridge commands")
     ghidra_sub = p_ghidra.add_subparsers(dest="ghidra_command", required=True)
@@ -543,6 +647,13 @@ def main():
         "diff-test": cmd_diff_test,
         "probe": cmd_probe,
         "flags": cmd_flags,
+        "menu": cmd_menu,
+        "author": cmd_author,
+        "compat": cmd_compat,
+        "mod": cmd_mod,
+        "parity": cmd_parity,
+        "doctor": cmd_doctor,
+        "save": cmd_save,
         "ghidra": cmd_ghidra,
     }
 

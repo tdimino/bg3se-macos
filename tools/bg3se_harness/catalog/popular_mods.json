@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "description": "Popular BG3SE mods for compatibility testing. Priority: P0 (gate), P1 (high), P2 (standard), P3 (low risk).",
+  "mods": {
+    "mcm": {
+      "name": "Mod Configuration Menu",
+      "nexus_id": 8901,
+      "author": "AtilioA",
+      "priority": "P0",
+      "github": "AtilioA/BG3-MCM",
+      "apis_used": ["Ext.IMGUI", "Ext.Net", "Ext.Vars", "Ext.ModEvents", "Ext.RegisterNetListener", "Ext.Events", "Ext.Mod"],
+      "requires_mcm": false,
+      "notes": "THE gate mod. 500+ mods depend on it. 18K lines Lua, AGPL-3.0."
+    },
+    "community_library": {
+      "name": "Community Library",
+      "nexus_id": 1333,
+      "author": "NellsRelo",
+      "priority": "P0",
+      "apis_used": ["Ext.Stats", "Ext.Entity", "Ext.Osiris", "Ext.Events", "Ext.Utils", "Ext.ModEvents"],
+      "requires_mcm": false,
+      "notes": "Shared utilities and compatibility framework. Dependency for hundreds of mods."
+    },
+    "combat_extender": {
+      "name": "Combat Extender",
+      "nexus_id": 5207,
+      "author": "DarknessSilverTower",
+      "priority": "P1",
+      "apis_used": ["Ext.Stats", "Ext.Entity", "Ext.Osiris", "Ext.Events", "Ext.Vars"],
+      "requires_mcm": true,
+      "notes": "Most popular gameplay mod. Stress-tests Stats + MCM."
+    },
+    "camp_event_notifications": {
+      "name": "Camp Event Notifications",
+      "nexus_id": 7247,
+      "priority": "P1",
+      "apis_used": ["Ext.Events", "Ext.Osiris", "Ext.IMGUI"],
+      "requires_mcm": true,
+      "notes": "Tests IMGUI notification rendering."
+    },
+    "auto_send_food": {
+      "name": "Auto Send Food To Camp",
+      "nexus_id": 5978,
+      "priority": "P1",
+      "apis_used": ["Ext.Osiris", "Ext.Events", "Ext.Vars"],
+      "requires_mcm": true,
+      "notes": "Simple MCM smoke test — minimal API surface."
+    },
+    "configurable_enemies": {
+      "name": "Configurable Enemies",
+      "nexus_id": 5765,
+      "priority": "P2",
+      "apis_used": ["Ext.Stats", "Ext.Entity", "Ext.Osiris", "Ext.Events"],
+      "requires_mcm": true,
+      "notes": "Stress-tests Stats mutation under MCM control."
+    },
+    "smart_autosaving": {
+      "name": "Smart Autosaving",
+      "nexus_id": 7358,
+      "priority": "P2",
+      "apis_used": ["Ext.Timer", "Ext.Events", "Ext.Vars"],
+      "requires_mcm": true,
+      "notes": "Tests Timer persistence across save/load."
+    },
+    "improved_ui": {
+      "name": "ImprovedUI",
+      "nexus_id": 366,
+      "author": "Djmr",
+      "priority": "P2",
+      "apis_used": [],
+      "requires_mcm": false,
+      "notes": "Pure UI XML mod — no SE APIs. Tests clean load + screenshot comparison."
+    }
+  }
+}

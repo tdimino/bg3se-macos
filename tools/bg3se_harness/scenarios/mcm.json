@@ -1,0 +1,17 @@
+{
+  "description": "MCM (Mod Configuration Menu) compatibility test. P0 gate mod — 500+ configurable mods depend on it.",
+  "mods": ["mcm"],
+  "save_fixture": null,
+  "assertions": [
+    "assert(Ext.Utils.Version() ~= nil, 'SE loaded')",
+    "assert(type(Ext.IMGUI) == 'table', 'Ext.IMGUI namespace available')",
+    "assert(type(Ext.IMGUI.NewWindow) == 'function', 'Ext.IMGUI.NewWindow exists')",
+    "assert(type(Ext.ModEvents) == 'table', 'Ext.ModEvents namespace available')",
+    "assert(type(Ext.ModEvents.Subscribe) == 'function', 'Ext.ModEvents.Subscribe exists')",
+    "assert(type(Ext.RegisterNetListener) == 'function', 'Ext.RegisterNetListener exists')",
+    "assert(type(Ext.Vars) == 'table', 'Ext.Vars namespace available')",
+    "assert(type(Ext.Net) == 'table', 'Ext.Net namespace available')",
+    "assert(type(Ext.Mod.IsModLoaded) == 'function', 'Ext.Mod.IsModLoaded exists')"
+  ],
+  "notes": "MCM is pure Lua (18K lines). IMGUI on Metal is the highest-risk subsystem. Keyboard input (INSERT default hotkey) requires CGEventTap forwarding."
+}

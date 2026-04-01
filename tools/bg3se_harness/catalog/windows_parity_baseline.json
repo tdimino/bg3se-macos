@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "description": "Expected Windows BG3SE API surface. Used by 'parity scan' to detect gaps.",
+  "known_version": "4.1.1.7209685",
+  "namespaces": {
+    "Ext.Stats": {
+      "functions": [
+        "Get", "GetAll", "Create", "Sync", "CopyFrom", "SetRawAttribute",
+        "ExecuteFunctors", "TreasureTable", "TreasureCategory",
+        "GetStatsManager", "GetModifierAttributes", "EnumLabelToIndex",
+        "EnumIndexToLabel", "GetAttribute", "SetAttribute", "AddAttribute"
+      ],
+      "status": "complete",
+      "owner_file": "src/lua/lua_stats.c"
+    },
+    "Ext.Entity": {
+      "functions": ["Get", "GetAllEntities", "GetAllEntitiesWithComponent", "Subscribe", "Unsubscribe"],
+      "status": "complete",
+      "notes": "1999 components, 462 layouts",
+      "owner_file": "src/entity/entity_system.c"
+    },
+    "Ext.Events": {
+      "functions": ["Subscribe", "Throw", "Unsubscribe"],
+      "events_count": 33,
+      "status": "complete",
+      "owner_file": "src/lua/lua_events.c"
+    },
+    "Ext.IMGUI": {
+      "functions": [
+        "NewWindow", "AddText", "AddButton", "AddCheckbox", "AddInputText",
+        "AddCombo", "AddSlider", "AddColorEdit", "AddProgressBar", "AddTree",
+        "AddTable", "AddTabBar", "AddMenu"
+      ],
+      "widget_count": 40,
+      "status": "complete",
+      "notes": "Metal backend. MCM depends heavily on this.",
+      "owner_file": "src/lua/lua_imgui.c"
+    },
+    "Ext.Net": {
+      "functions": [
+        "PostMessageToServer", "PostMessageToUser", "PostMessageToClient",
+        "BroadcastMessage", "Version", "IsHost", "IsReady", "PeerVersion"
+      ],
+      "status": "complete",
+      "owner_file": "src/lua/lua_net.c"
+    },
+    "Ext.Timer": {
+      "functions": ["WaitFor", "WaitForRealtime", "Cancel", "Pause", "Resume", "GameTime", "DeltaTime", "Ticks"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_timer.c"
+    },
+    "Ext.Vars": {
+      "functions": ["GetModVariables", "RegisterModVariable", "RegisterUserVariable", "SyncModVariables"],
+      "status": "complete",
+      "owner_file": "src/vars/user_variables.c"
+    },
+    "Ext.IO": {
+      "functions": ["LoadFile", "SaveFile", "AddPathOverride", "GetPathOverride"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_ext.c"
+    },
+    "Ext.Json": {
+      "functions": ["Parse", "Stringify"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_json.c"
+    },
+    "Ext.Mod": {
+      "functions": ["IsModLoaded", "GetLoadOrder", "GetMod", "GetBaseMod", "GetModManager"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_mod.c"
+    },
+    "Ext.ModEvents": {
+      "functions": ["Subscribe", "Throw", "Unsubscribe"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_events.c"
+    },
+    "Ext.Types": {
+      "functions": ["GetAllTypes", "GetTypeInfo", "GetObjectType", "TypeOf", "IsA", "Validate", "GetComponentLayout", "GetAllLayouts", "GenerateIdeHelpers"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_context.c"
+    },
+    "Ext.Debug": {
+      "functions": ["ReadPtr", "ReadU32", "ReadU64", "ReadI32", "ReadFloat", "ReadString", "ReadFixedString", "ProbeStruct", "FindArrayPattern", "HexDump", "IsValidPointer", "ClassifyPointer"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_debug.c"
+    },
+    "Ext.StaticData": {
+      "functions": ["GetAll", "Get"],
+      "types_count": 9,
+      "status": "complete",
+      "owner_file": "src/lua/lua_staticdata.c"
+    },
+    "Ext.Resource": {
+      "functions": ["GetAll", "Get"],
+      "types_count": 34,
+      "status": "complete",
+      "owner_file": "src/lua/lua_resource.c"
+    },
+    "Ext.Template": {
+      "functions": ["GetAllRootTemplates", "GetRootTemplate", "GetTemplate", "GetCacheTemplate", "CreateRootTemplate"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_template.c"
+    },
+    "Ext.Level": {
+      "functions": ["RaycastClosest", "RaycastAny", "TestBox", "TestSphere", "GetHeightsAt", "GetCurrentLevel", "GetPhysicsScene", "GetAiGrid", "IsReady"],
+      "status": "complete",
+      "owner_file": "src/level/level_manager.c"
+    },
+    "Ext.Audio": {
+      "functions": ["PostEvent", "Stop", "PauseAllSounds", "ResumeAllSounds", "SetSwitch", "SetState", "SetRTPC", "GetRTPC", "ResetRTPC", "LoadEvent", "UnloadEvent", "GetSoundObjectId", "IsReady"],
+      "status": "complete",
+      "owner_file": "src/audio/audio_manager.c"
+    },
+    "Ext.Osiris": {
+      "functions": ["RegisterListener", "NewCall", "NewQuery", "NewEvent"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_osiris.c"
+    },
+    "Ext.Localization": {
+      "functions": ["Get", "GetAll", "CreateHandle", "UpdateHandle"],
+      "status": "partial",
+      "notes": "Basic get/set works. Advanced handle creation may have gaps.",
+      "owner_file": "src/lua/lua_localization.c"
+    },
+    "Ext.Utils": {
+      "functions": ["Print", "PrintWarning", "PrintError", "Version", "MonotonicTime", "GetGameState"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_ext.c"
+    },
+    "Ext.Math": {
+      "functions": ["Random"],
+      "status": "complete",
+      "owner_file": "src/math/lua_math.c"
+    },
+    "Ext.RegisterNetListener": {
+      "functions": ["RegisterNetListener"],
+      "status": "complete",
+      "owner_file": "src/lua/lua_net.c"
+    },
+    "Net.CreateChannel": {
+      "functions": ["SetHandler", "SetRequestHandler", "SendToServer", "RequestToServer", "SendToClient", "Broadcast"],
+      "status": "complete",
+      "owner_file": "src/lua/scripts/NetChannel.lua"
+    }
+  }
+}

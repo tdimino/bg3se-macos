@@ -21,7 +21,7 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 - `src/entity/` - Entity Component System (GUID lookup, components)
 - `ghidra/offsets/` - Reverse-engineered offsets documentation
 
-## Modding Toolkit (22 Commands)
+## Modding Toolkit (29 Commands)
 
 ```bash
 # Core pipeline
@@ -47,6 +47,25 @@ PYTHONPATH=tools python3 -m bg3se_harness events --subscribe SessionLoaded  # St
 PYTHONPATH=tools python3 -m bg3se_harness crashlog          # Parse crash ring buffer (no socket)
 PYTHONPATH=tools python3 -m bg3se_harness benchmark "Ext.Stats.Get('WPN_Longsword')"  # Perf measurement
 PYTHONPATH=tools python3 -m bg3se_harness diff-test base.json curr.json   # Test regression comparison
+
+# Mod management (delegates to BG3MacModManager or pure Python fallback)
+PYTHONPATH=tools python3 -m bg3se_harness mod list          # Installed mods + enabled/SE status
+PYTHONPATH=tools python3 -m bg3se_harness mod install <path.pak>  # Install local PAK
+PYTHONPATH=tools python3 -m bg3se_harness mod enable <name> # Enable in modsettings.lsx
+PYTHONPATH=tools python3 -m bg3se_harness mod search <query>  # Search Nexus Mods API
+
+# Parity + compatibility + diagnostics
+PYTHONPATH=tools python3 -m bg3se_harness parity scan       # Compare Ext table vs Windows baseline
+PYTHONPATH=tools python3 -m bg3se_harness parity missing    # List gaps (offline)
+PYTHONPATH=tools python3 -m bg3se_harness compat list       # Available test scenarios
+PYTHONPATH=tools python3 -m bg3se_harness compat run mcm    # Autonomous mod compat test
+PYTHONPATH=tools python3 -m bg3se_harness doctor            # Verify all prerequisites
+PYTHONPATH=tools python3 -m bg3se_harness save list         # Available saves with metadata
+PYTHONPATH=tools python3 -m bg3se_harness author new MyMod  # Scaffold new mod
+
+# Menu automation (Vision OCR + CGEvent click)
+PYTHONPATH=tools python3 -m bg3se_harness menu detect       # OCR main menu buttons → JSON
+PYTHONPATH=tools python3 -m bg3se_harness menu click "Continue"  # Click button by name
 
 # RE + flags
 PYTHONPATH=tools python3 -m bg3se_harness flags             # 40 discovered game CLI flags

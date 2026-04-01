@@ -63,52 +63,46 @@ def launch(continue_game=False, load_save=None, extra_flags=None):
     flags_desc = " ".join(cmd[4:]) if len(cmd) > 4 else "(no extra flags)"
     print(f"Launched BG3 (pid {proc.pid}) [{flags_desc}]", file=sys.stderr)
 
-    # Auto-dismiss "Press to Continue" splash screen.
+    # Auto-dismiss "Press to Continue" splash screen + navigate main menu.
     # BG3 shows a Noesis UI modal after launcher close that blocks even with
-    # -continueGame. The SE socket isn't available yet, so we send a keypress
-    # via osascript after a delay. Runs in a daemon thread to not block.
+    # -continueGame. After dismissing the splash, if continue_game is set,
+    # we use Vision OCR to detect the main menu and click "Continue".
     if continue_game or load_save:
-        _dismiss_continue_screen(proc)
+        navigate = "Continue" if continue_game else None
+        _dismiss_continue_screen(proc, navigate_menu=navigate)
 
     return proc
 
 
-def _dismiss_continue_screen(proc, delay=8, retries=5):
-    """Dismiss 'Click to Continue' by activating BG3 window and sending input.
+def _dismiss_continue_screen(proc, delay=8, retries=5, navigate_menu=None):
+    """Dismiss 'Click to Continue' splash and optionally navigate the main menu.
 
-    The splash is a Noesis UI modal that only responds to input directed at
-    the BG3 window. We must: (1) activate the window, (2) send Space/Enter.
-    Retries every 3s because the splash may appear at different times
-    depending on system load.
+    Phase 1: Send Space key to dismiss the Noesis UI splash modal.
+    Phase 2: If navigate_menu is set (e.g. "Continue"), use Vision OCR to
+             detect the main menu and click the specified button.
+
+    Runs in a daemon thread to not block the caller.
     """
     def dismisser():
+        from .menu import dismiss_splash, detect_menu, click_menu_button
+
+        # Phase 1: Dismiss splash screen
         for attempt in range(retries):
             time.sleep(delay if attempt == 0 else 3)
             if proc.poll() is not None:
-                return  # Process exited
-
-            # Activate BG3 window and send Space key targeted at it
-            try:
-                subprocess.run(
-                    ["osascript", "-e",
-                     'tell application "System Events"\n'
-                     '  set frontmost of process "Baldur\'s Gate 3" to true\n'
-                     '  delay 0.5\n'
-                     '  key code 49\n'  # Space
-                     'end tell'],
-                    capture_output=True,
-                    timeout=10,
-                )
-                print(f"Sent Space to BG3 window (attempt {attempt + 1}/{retries})",
-                      file=sys.stderr)
-            except subprocess.TimeoutExpired:
-                print(f"osascript timed out (attempt {attempt + 1}/{retries}) — "
-                      "check Accessibility permissions", file=sys.stderr)
-            except (FileNotFoundError, OSError) as e:
-                print(f"osascript failed: {e}", file=sys.stderr)
                 return
 
-            # Check if socket is now alive (splash dismissed)
+            result = dismiss_splash()
+            if result.get("success"):
+                print(f"Sent Space to BG3 window (attempt {attempt + 1}/{retries})",
+                      file=sys.stderr)
+            else:
+                print(f"Dismiss failed (attempt {attempt + 1}/{retries}): "
+                      f"{result.get('error', 'unknown')}", file=sys.stderr)
+                if "not found" in result.get("error", "").lower():
+                    return
+
+            # Check if socket is alive (splash dismissed, SE loaded)
             try:
                 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 s.settimeout(2)
@@ -118,6 +112,31 @@ def _dismiss_continue_screen(proc, delay=8, retries=5):
                 return
             except (ConnectionRefusedError, FileNotFoundError, OSError):
                 pass
+
+        # Phase 2: Navigate main menu if requested
+        if not navigate_menu:
+            return
+
+        print(f"Attempting menu navigation: click '{navigate_menu}'...",
+              file=sys.stderr)
+
+        for attempt in range(retries):
+            if proc.poll() is not None:
+                return
+            time.sleep(2)
+
+            result = click_menu_button(navigate_menu)
+            if result.get("success"):
+                print(f"Clicked '{navigate_menu}' on main menu", file=sys.stderr)
+                return
+
+            available = result.get("available_buttons", [])
+            if available:
+                print(f"Menu visible but '{navigate_menu}' not found. "
+                      f"Available: {available}", file=sys.stderr)
+            else:
+                print(f"Menu not yet visible (attempt {attempt + 1}/{retries})",
+                      file=sys.stderr)
 
     thread = threading.Thread(target=dismisser, daemon=True)
     thread.start()
