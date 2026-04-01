@@ -75,6 +75,10 @@ def cg_click(x, y):
         None, _kCGEventLeftMouseUp, point, _kCGMouseButtonLeft,
     )
     if not ev_down or not ev_up:
+        if ev_down:
+            qs.CFRelease(ev_down)
+        if ev_up:
+            qs.CFRelease(ev_up)
         return False
 
     qs.CGEventPost(_kCGHIDEventTap, ev_down)
@@ -248,7 +252,9 @@ def _fuzzy_match(ocr_text, target):
     norm_target = _normalize(target)
     if norm_ocr == norm_target:
         return True
-    if norm_target in norm_ocr or norm_ocr in norm_target:
+    # Only match if the target label appears within the OCR text
+    # (not the reverse — short OCR fragments like "on" must not match "Options")
+    if norm_target in norm_ocr:
         return True
     cleaned = norm_ocr.replace("0", "o").replace("l", "i")
     cleaned_target = norm_target.replace("0", "o").replace("l", "i")
@@ -269,14 +275,15 @@ def detect_menu():
     if not screenshot_path:
         return {"error": "BG3 window not found", "buttons": []}
 
-    bounds = _get_window_bounds()
-    ocr_results = _ocr_screenshot(screenshot_path)
-    img_w, img_h = get_image_dimensions(screenshot_path)
-
     try:
-        os.unlink(screenshot_path)
-    except OSError:
-        pass
+        bounds = _get_window_bounds()
+        ocr_results = _ocr_screenshot(screenshot_path)
+        img_w, img_h = get_image_dimensions(screenshot_path)
+    finally:
+        try:
+            os.unlink(screenshot_path)
+        except OSError:
+            pass
 
     buttons = []
     raw_ocr = []

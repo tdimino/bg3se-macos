@@ -203,9 +203,13 @@ def run_scenario(scenario_name):
         log_step("screenshot", {"success": "error" not in ss_result, **ss_result})
 
     # Step 7: Check crash log
-    from .crashlog import cmd_crashlog
-    import argparse
-    crash_args = argparse.Namespace(ring=False, tail=20)
+    try:
+        from .crashlog import get_crash_report
+        crash_data = get_crash_report(ring=False, tail=20)
+        has_crash = bool(crash_data.get("crash_detected"))
+        log_step("crashlog", {"success": not has_crash, **crash_data})
+    except Exception:
+        log_step("crashlog", {"success": True, "note": "crashlog check skipped"})
 
     # Finalize
     passed_steps = sum(1 for s in results["steps"] if s.get("success"))

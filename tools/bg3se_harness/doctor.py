@@ -221,4 +221,4 @@ def cmd_doctor(args):
             print(f"         Fix: {check['fix']}", file=sys.stderr)
 
     print(f"\n  {result['passed']}/{result['total']} checks passed", file=sys.stderr)
-    return 0
+    return 0 if result.get("all_passed") else 1
