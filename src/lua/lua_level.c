@@ -306,6 +306,11 @@ static int push_hit_or_nil(lua_State *L, bool found, const LevelPhysicsHit *hit)
 static int push_hit_all(lua_State *L, const LevelPhysicsHitAll *hits) {
     lua_newtable(L);
 
+    // Guard against NULL inner pointers — game engine may return partial data
+    if (!hits->normals_ptr || !hits->positions_ptr || !hits->distances_ptr) {
+        return 1;  // return empty table
+    }
+
     uint32_t count = hits->normals_size;
     if (hits->positions_size < count) count = hits->positions_size;
     if (hits->distances_size < count) count = hits->distances_size;

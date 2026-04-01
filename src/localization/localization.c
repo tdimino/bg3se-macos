@@ -252,8 +252,9 @@ static uint32_t create_fixedstring_from_handle(const char *handle) {
 
 // Monotonically increasing counter for dynamic handles (like Windows BG3SE's
 // NextDynamicStringHandleId). Protected by no lock because it's init-time only
-// in practice; uint32_t increment is atomic on ARM64/x86_64 anyway.
-static uint32_t s_next_dynamic_handle_id = 1;
+// in practice. Use _Atomic to be correct if ever called from multiple threads.
+#include <stdatomic.h>
+static _Atomic uint32_t s_next_dynamic_handle_id = 1;
 
 /**
  * Create a new unique localization handle string.
@@ -271,7 +272,7 @@ bool localization_create_handle(char *out, size_t out_size) {
         return false;
     }
 
-    uint32_t id = s_next_dynamic_handle_id++;
+    uint32_t id = atomic_fetch_add(&s_next_dynamic_handle_id, 1);
 
     // Format: "h%08Xg0000g0000g0000g000000000000"
     int written = snprintf(out, out_size,

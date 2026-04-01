@@ -166,6 +166,7 @@ static int g_hooked_capacity = 0;
 // Deferred event queue
 static DeferredEvent g_deferred[MAX_DEFERRED_EVENTS];
 static int g_deferred_count = 0;
+static bool g_deferred_overflow_warned = false;
 
 // Deferred unsubscription queue
 static uint32_t g_deferred_unsubs[MAX_SUBSCRIPTIONS];
@@ -705,6 +706,9 @@ static void dispatch_event(lua_State *L, uint16_t type_index,
                 .event = event,
                 .sub_index = packed
             };
+        } else if (!g_deferred_overflow_warned) {
+            g_deferred_overflow_warned = true;
+            log_message("[EntityEvents] WARNING: deferred event queue full (%d), events dropped", MAX_DEFERRED_EVENTS);
         }
     }
 
