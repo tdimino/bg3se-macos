@@ -247,6 +247,40 @@ static uint32_t create_fixedstring_from_handle(const char *handle) {
 }
 
 // ============================================================================
+// Handle Creation
+// ============================================================================
+
+// Monotonically increasing counter for dynamic handles (like Windows BG3SE's
+// NextDynamicStringHandleId). Protected by no lock because it's init-time only
+// in practice; uint32_t increment is atomic on ARM64/x86_64 anyway.
+static uint32_t s_next_dynamic_handle_id = 1;
+
+/**
+ * Create a new unique localization handle string.
+ *
+ * Windows BG3SE format: "h{8hex}g{4hex}g{4hex}g{4hex}g{12hex}"
+ * We use a simple monotonically-increasing counter packed into the first field
+ * with the rest zeroed, matching BG3's "hXXXXXXXXg0000g0000g0000g000000000000"
+ * pattern for dynamically generated handles.
+ *
+ * The returned handle string is written to `out` (caller-supplied buffer of
+ * at least LOCA_HANDLE_BUF_SIZE bytes).
+ */
+bool localization_create_handle(char *out, size_t out_size) {
+    if (!out || out_size < LOCA_HANDLE_BUF_SIZE) {
+        return false;
+    }
+
+    uint32_t id = s_next_dynamic_handle_id++;
+
+    // Format: "h%08Xg0000g0000g0000g000000000000"
+    int written = snprintf(out, out_size,
+        "h%08Xg0000g0000g0000g000000000000", id);
+
+    return (written > 0 && (size_t)written < out_size);
+}
+
+// ============================================================================
 // String Access
 // ============================================================================
 

@@ -55,6 +55,20 @@ int lua_loca_dump_info(lua_State *L) {
     return 0;
 }
 
+// Ext.Loca.CreateHandle() -> string
+// Creates a new unique localization handle that can be used with
+// UpdateTranslatedString / GetTranslatedString.
+// Mirrors the Windows BG3SE dynamic-handle pattern (NextDynamicStringHandleId).
+int lua_loca_create_handle(lua_State *L) {
+    (void)L;
+    char buf[LOCA_HANDLE_BUF_SIZE];
+    if (!localization_create_handle(buf, sizeof(buf))) {
+        return luaL_error(L, "Ext.Loca.CreateHandle: failed to generate handle");
+    }
+    lua_pushstring(L, buf);
+    return 1;
+}
+
 // ============================================================================
 // Registration
 // ============================================================================
@@ -84,8 +98,11 @@ void lua_ext_register_loca(lua_State *L, int ext_table_index) {
     lua_pushcfunction(L, lua_loca_dump_info);
     lua_setfield(L, -2, "DumpInfo");
 
+    lua_pushcfunction(L, lua_loca_create_handle);
+    lua_setfield(L, -2, "CreateHandle");
+
     // Set Ext.Loca = table (use absolute index)
     lua_setfield(L, ext_table_index, "Loca");
 
-    LOG_LUA_INFO("Registered Ext.Loca namespace");
+    LOG_LUA_INFO("Registered Ext.Loca namespace (CreateHandle added)");
 }

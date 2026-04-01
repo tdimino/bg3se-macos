@@ -71,6 +71,15 @@ int lua_loca_is_ready(lua_State *L);
  */
 int lua_loca_dump_info(lua_State *L);
 
+/**
+ * Ext.Loca.CreateHandle() -> string
+ *
+ * Create a new unique localization handle string.
+ * Returns a handle like "h00000001g0000g0000g0000g000000000000"
+ * that can be used with UpdateTranslatedString / GetTranslatedString.
+ */
+int lua_loca_create_handle(lua_State *L);
+
 // ============================================================================
 // Registration
 // ============================================================================
