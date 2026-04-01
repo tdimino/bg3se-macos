@@ -300,6 +300,8 @@ static int push_hit_or_nil(lua_State *L, bool found, const LevelPhysicsHit *hit)
 
 /**
  * Push a LevelPhysicsHitAll as a Lua array of hit tables.
+ * VERIFIED: Normals/Positions are Array<glm::vec3> where glm::vec3 = float[3] (12 bytes, no padding).
+ * Stride is 3 floats per element — confirmed from Windows BG3SE Physics.h:PhysicsHitAll.
  */
 static int push_hit_all(lua_State *L, const LevelPhysicsHitAll *hits) {
     lua_newtable(L);

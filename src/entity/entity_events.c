@@ -1020,8 +1020,10 @@ void entity_events_fire_deferred(lua_State *L) {
     }
     g_deferred_free_count = 0;
 
-    // Swap deferred events to local copy FIRST (handlers may generate new events)
-    DeferredEvent local_events[MAX_DEFERRED_EVENTS];
+    // Swap deferred events to local copy FIRST (handlers may generate new events).
+    // Static buffer (not stack) to avoid 48KB stack allocation with MAX_DEFERRED_EVENTS=2048.
+    // Safe: this function is only called from the main Lua thread during game tick.
+    static DeferredEvent local_events[MAX_DEFERRED_EVENTS];
     int local_count = g_deferred_count;
     if (local_count > 0) {
         memcpy(local_events, g_deferred, local_count * sizeof(DeferredEvent));

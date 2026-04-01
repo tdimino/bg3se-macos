@@ -420,6 +420,12 @@ bool audio_play_external_sound(uint64_t sound_object_id, const char *event_name,
                                 float position_sec) {
     if (!event_name || !file_path) return false;
 
+    // SAFETY: STDString ABI not yet verified on ARM64 macOS. Passing char* where
+    // STDString& is expected works only for short strings (SSO path). Disable until
+    // the ABI is confirmed via Ghidra to prevent crashes on longer file paths.
+    log_message("[Audio] PlayExternalSound: disabled — STDString ABI not yet verified on ARM64");
+    return false;
+
     void *sm = get_sound_manager();
     if (!sm) {
         log_message("[Audio] SoundManager not available for PlayExternalSound");

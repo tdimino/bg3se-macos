@@ -554,7 +554,6 @@ bool level_raycast_all(const float src[3], const float dst[3],
                        -1, -1,
                        NULL);
 
-    log_message("[Level] RaycastAll: hit=%d, count=%u", hit, out->normals_size);
     return hit;
 }
 
