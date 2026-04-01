@@ -1003,6 +1003,53 @@ static int lua_math_quat_from_mat4(lua_State *L) {
     return 1;
 }
 
+// Mat3ToQuat / Mat4ToQuat: Windows BG3SE-canonical names for QuatFromMat3/Mat4.
+// Registered under both names for API parity.
+static int lua_math_mat3_to_quat(lua_State *L) {
+    mat3 m;
+    if (!parse_mat3_from_table(L, 1, &m)) {
+        return luaL_error(L, "Mat3ToQuat requires a mat3");
+    }
+    push_quat(L, quat_from_mat3(m));
+    return 1;
+}
+
+static int lua_math_mat4_to_quat(lua_State *L) {
+    mat4 m;
+    if (!parse_mat4_from_table(L, 1, &m)) {
+        return luaL_error(L, "Mat4ToQuat requires a mat4");
+    }
+    push_quat(L, quat_from_mat4(m));
+    return 1;
+}
+
+// QuatRotateAxisAngle(q, axis, angle) -> quat
+// Returns q rotated by `angle` radians around `axis`.
+// Equivalent to glm::rotate(q, angle, axis).
+static int lua_math_quat_rotate_axis_angle(lua_State *L) {
+    quat q;
+    vec3 axis;
+    if (!parse_quat_from_table(L, 1, &q)) {
+        return luaL_error(L, "QuatRotateAxisAngle: arg1 must be a quaternion");
+    }
+    if (!parse_vec3_from_table(L, 2, &axis)) {
+        return luaL_error(L, "QuatRotateAxisAngle: arg2 must be a vec3 axis");
+    }
+    float angle = (float)luaL_checknumber(L, 3);
+
+    // Construct a rotation quaternion from axis+angle, then compose with q.
+    quat rot = quat_from_axis_angle(axis, angle);
+    // q * rot (apply local rotation)
+    quat result = {
+        q.w * rot.w - q.x * rot.x - q.y * rot.y - q.z * rot.z,
+        q.w * rot.x + q.x * rot.w + q.y * rot.z - q.z * rot.y,
+        q.w * rot.y - q.x * rot.z + q.y * rot.w + q.z * rot.x,
+        q.w * rot.z + q.x * rot.y - q.y * rot.x + q.z * rot.w
+    };
+    push_quat(L, result);
+    return 1;
+}
+
 static int lua_math_quat_normalize(lua_State *L) {
     quat q;
     if (!parse_quat_from_table(L, 1, &q)) {
@@ -1245,6 +1292,16 @@ void lua_math_register(lua_State *L, int ext_table_index) {
 
     lua_pushcfunction(L, lua_math_quat_from_mat4);
     lua_setfield(L, -2, "QuatFromMat4");
+
+    // Windows BG3SE-canonical aliases for the above
+    lua_pushcfunction(L, lua_math_mat3_to_quat);
+    lua_setfield(L, -2, "Mat3ToQuat");
+
+    lua_pushcfunction(L, lua_math_mat4_to_quat);
+    lua_setfield(L, -2, "Mat4ToQuat");
+
+    lua_pushcfunction(L, lua_math_quat_rotate_axis_angle);
+    lua_setfield(L, -2, "QuatRotateAxisAngle");
 
     lua_pushcfunction(L, lua_math_quat_normalize);
     lua_setfield(L, -2, "QuatNormalize");
