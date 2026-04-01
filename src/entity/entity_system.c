@@ -1432,6 +1432,49 @@ static int lua_entity_get_handle(lua_State *L) {
     return 1;
 }
 
+// Entity:GetEntityType() - bits 54-63 of handle (10-bit entity type)
+// Layout matches Windows BG3SE: TypedHandle::GetType() = Handle >> 54
+static int lua_entity_get_type(lua_State *L) {
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
+    lua_pushinteger(L, (lua_Integer)(ud->handle >> 54));
+    return 1;
+}
+
+// Entity:GetSalt() - bits 32-53 of handle (22-bit generation counter)
+// Layout matches Windows BG3SE: TypedHandle::GetSalt() = (Handle >> 32) & 0x3fffff
+static int lua_entity_get_salt(lua_State *L) {
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
+    lua_pushinteger(L, (lua_Integer)((ud->handle >> 32) & 0x3fffffULL));
+    return 1;
+}
+
+// Entity:GetIndex() - bits 0-31 of handle (32-bit entity index)
+// Layout matches Windows BG3SE: TypedHandle::GetIndex() = Handle & 0xffffffff
+static int lua_entity_get_index(lua_State *L) {
+    EntityUserdata *ud = (EntityUserdata*)luaL_checkudata(L, 1, "BG3Entity");
+    if (!lifetime_lua_is_valid(L, ud->lifetime)) {
+        return lifetime_lua_expired_error(L, "Entity");
+    }
+    lua_pushinteger(L, (lua_Integer)(uint32_t)(ud->handle & 0xffffffffULL));
+    return 1;
+}
+
+// Entity:GetNetId() - network replication ID for this entity.
+// On Windows BG3SE this queries EntityWorld's ReplicationManager::EntityToNetId map.
+// That HashMap infrastructure is not yet ported; return nil to signal unavailability
+// without crashing. Implement fully once EntityToNetId is mapped in entity_system.
+static int lua_entity_get_net_id(lua_State *L) {
+    luaL_checkudata(L, 1, "BG3Entity");
+    lua_pushnil(L);
+    return 1;
+}
+
 // Helper: Push TransformComponent as Lua table
 static void push_transform_component(lua_State *L, void *component) {
     TransformComponent *transform = (TransformComponent*)component;
@@ -1774,6 +1817,22 @@ static int lua_entity_index(lua_State *L) {
     }
     if (strcmp(key, "GetHandle") == 0) {
         lua_pushcfunction(L, lua_entity_get_handle);
+        return 1;
+    }
+    if (strcmp(key, "GetEntityType") == 0) {
+        lua_pushcfunction(L, lua_entity_get_type);
+        return 1;
+    }
+    if (strcmp(key, "GetSalt") == 0) {
+        lua_pushcfunction(L, lua_entity_get_salt);
+        return 1;
+    }
+    if (strcmp(key, "GetIndex") == 0) {
+        lua_pushcfunction(L, lua_entity_get_index);
+        return 1;
+    }
+    if (strcmp(key, "GetNetId") == 0) {
+        lua_pushcfunction(L, lua_entity_get_net_id);
         return 1;
     }
     if (strcmp(key, "GetComponent") == 0) {
