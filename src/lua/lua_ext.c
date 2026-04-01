@@ -1849,6 +1849,152 @@ void lua_ext_register_global_helpers(lua_State *L) {
         "  Ext.Print('Usage: !mod_diag [errors|disable <mod>|enable <mod>]')\n"
         "end)\n";
 
+    // Fail-first parity stubs: tests that FAIL now and will PASS after implementation.
+    // Tier 2 (in-game): Entity handle methods require a live entity.
+    // Tier 1: namespace/function existence checks run console-only.
+
+    // Parity stubs part 1: Ext.Entity missing methods (tier 2, need loaded save)
+    static const char *console_cmd_test_parity_entity =
+        "BG3SE_AddTest(2, 'Parity.Entity.GetEntityType', function()\n"
+        "  local host = Osi.GetHostCharacter()\n"
+        "  AssertNotNil(host, 'host')\n"
+        "  local e = Ext.Entity.Get(host)\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetEntityType, 'function', 'entity:GetEntityType')\n"
+        "  local t = e:GetEntityType()\n"
+        "  AssertType(t, 'number', 'GetEntityType result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.GetSalt', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetSalt, 'function', 'entity:GetSalt')\n"
+        "  local s = e:GetSalt()\n"
+        "  AssertType(s, 'number', 'GetSalt result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.GetIndex', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetIndex, 'function', 'entity:GetIndex')\n"
+        "  local idx = e:GetIndex()\n"
+        "  AssertType(idx, 'number', 'GetIndex result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.GetNetId', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetNetId, 'function', 'entity:GetNetId')\n"
+        "  local nid = e:GetNetId()\n"
+        "  assert(nid == nil or type(nid) == 'number', 'GetNetId: nil or number')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.CreateComponent', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.CreateComponent, 'function', 'entity:CreateComponent')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.RemoveComponent', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.RemoveComponent, 'function', 'entity:RemoveComponent')\n"
+        "end)\n";
+
+    // Parity stubs part 2: Ext.Level missing functions (tier 2, need level loaded)
+    static const char *console_cmd_test_parity_level =
+        "BG3SE_AddTest(2, 'Parity.Level.RaycastAll', function()\n"
+        "  assert(Ext.Level.IsReady(), 'Level should be ready')\n"
+        "  AssertType(Ext.Level.RaycastAll, 'function', 'Level.RaycastAll')\n"
+        "  local src = {x=0,y=0,z=0}\n"
+        "  local dst = {x=0,y=-10,z=0}\n"
+        "  local ok, r = pcall(Ext.Level.RaycastAll, src, dst)\n"
+        "  assert(ok, 'RaycastAll should not crash: ' .. tostring(r))\n"
+        "  assert(type(r) == 'table', 'RaycastAll: expected table result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepSphereClosest', function()\n"
+        "  assert(Ext.Level.IsReady(), 'Level should be ready')\n"
+        "  AssertType(Ext.Level.SweepSphereClosest, 'function', 'Level.SweepSphereClosest')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepSphereAll', function()\n"
+        "  AssertType(Ext.Level.SweepSphereAll, 'function', 'Level.SweepSphereAll')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepCapsuleClosest', function()\n"
+        "  AssertType(Ext.Level.SweepCapsuleClosest, 'function', 'Level.SweepCapsuleClosest')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepCapsuleAll', function()\n"
+        "  AssertType(Ext.Level.SweepCapsuleAll, 'function', 'Level.SweepCapsuleAll')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepBoxClosest', function()\n"
+        "  AssertType(Ext.Level.SweepBoxClosest, 'function', 'Level.SweepBoxClosest')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepBoxAll', function()\n"
+        "  AssertType(Ext.Level.SweepBoxAll, 'function', 'Level.SweepBoxAll')\n"
+        "end)\n";
+
+    // Parity stubs part 3: Ext.Audio, Ext.Types, Ext.Math, Ext.Localization (tier 1)
+    static const char *console_cmd_test_parity_apis =
+        "BG3SE_AddTest(1, 'Parity.Audio.PlayExternalSound', function()\n"
+        "  AssertType(Ext.Audio.PlayExternalSound, 'function', 'Audio.PlayExternalSound')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Audio.LoadBank', function()\n"
+        "  AssertType(Ext.Audio.LoadBank, 'function', 'Audio.LoadBank')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Audio.UnloadBank', function()\n"
+        "  AssertType(Ext.Audio.UnloadBank, 'function', 'Audio.UnloadBank')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Audio.PrepareBank', function()\n"
+        "  AssertType(Ext.Audio.PrepareBank, 'function', 'Audio.PrepareBank')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.Serialize', function()\n"
+        "  AssertType(Ext.Types.Serialize, 'function', 'Types.Serialize')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.Unserialize', function()\n"
+        "  AssertType(Ext.Types.Unserialize, 'function', 'Types.Unserialize')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.Construct', function()\n"
+        "  AssertType(Ext.Types.Construct, 'function', 'Types.Construct')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.GetValueType', function()\n"
+        "  AssertType(Ext.Types.GetValueType, 'function', 'Types.GetValueType')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.GetHashSetValueAt', function()\n"
+        "  AssertType(Ext.Types.GetHashSetValueAt, 'function', 'Types.GetHashSetValueAt')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.GetFunctionLocation', function()\n"
+        "  AssertType(Ext.Types.GetFunctionLocation, 'function', 'Types.GetFunctionLocation')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Math.Smoothstep', function()\n"
+        "  AssertType(Ext.Math.Smoothstep, 'function', 'Math.Smoothstep')\n"
+        "  local v = Ext.Math.Smoothstep(0.0, 1.0, 0.5)\n"
+        "  AssertType(v, 'number', 'Smoothstep result')\n"
+        "  AssertEqualsFloat(v, 0.5, 0.01, 'Smoothstep(0,1,0.5)')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Math.IsNaN', function()\n"
+        "  AssertType(Ext.Math.IsNaN, 'function', 'Math.IsNaN')\n"
+        "  assert(Ext.Math.IsNaN(0/0) == true, 'IsNaN(nan) should be true')\n"
+        "  assert(Ext.Math.IsNaN(1.0) == false, 'IsNaN(1.0) should be false')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Localization.CreateHandle', function()\n"
+        "  AssertType(Ext.Localization.CreateHandle, 'function', 'Localization.CreateHandle')\n"
+        "  local ok, r = pcall(Ext.Localization.CreateHandle, 'test string')\n"
+        "  assert(ok, 'CreateHandle should not crash: ' .. tostring(r))\n"
+        "  assert(r ~= nil, 'CreateHandle should return a handle')\n"
+        "end)\n";
+
+    // Parity stubs part 4: Ext.Events functor/damage hooks (tier 1 existence + tier 2 fire)
+    static const char *console_cmd_test_parity_events =
+        "BG3SE_AddTest(1, 'Parity.Events.ExecuteFunctor', function()\n"
+        "  local ok, id = pcall(Ext.Events.Subscribe, 'ExecuteFunctor', function() end)\n"
+        "  assert(ok and id ~= nil, 'ExecuteFunctor subscribe should succeed')\n"
+        "  if id then Ext.Events.Unsubscribe(id) end\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Events.BeforeDealDamage', function()\n"
+        "  local ok, id = pcall(Ext.Events.Subscribe, 'BeforeDealDamage', function() end)\n"
+        "  assert(ok and id ~= nil, 'BeforeDealDamage subscribe should succeed')\n"
+        "  if id then Ext.Events.Unsubscribe(id) end\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Events.DealDamage', function()\n"
+        "  local ok, id = pcall(Ext.Events.Subscribe, 'DealDamage', function() end)\n"
+        "  assert(ok and id ~= nil, 'DealDamage subscribe should succeed')\n"
+        "  if id then Ext.Events.Unsubscribe(id) end\n"
+        "end)\n";
+
     // Execute each command registration chunk
     const char *console_cmds[] = {
         console_cmd_probe, console_cmd_dumpstat, console_cmd_findstr,
@@ -1862,6 +2008,11 @@ void lua_ext_register_global_helpers(lua_State *L) {
         console_cmd_test_ingame, console_cmd_test_ingame2,
         console_cmd_test_osiris, console_cmd_test_osiris_edge,
         console_cmd_test_entity_events,
+        // Fail-first parity stubs (FAIL now, PASS after implementation)
+        console_cmd_test_parity_entity,
+        console_cmd_test_parity_level,
+        console_cmd_test_parity_apis,
+        console_cmd_test_parity_events,
         console_cmd_test_ingame_reg,
         console_cmd_ide,
         console_cmd_mod_diag
