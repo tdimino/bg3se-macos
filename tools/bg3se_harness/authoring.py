@@ -50,6 +50,9 @@ def scaffold(name, output_dir=None):
         name: Mod name (e.g., "MyTestMod")
         output_dir: Where to create the mod. Defaults to PROJECT_ROOT/test-mods/
     """
+    if "/" in name or "\\" in name or ".." in name:
+        return {"error": f"Invalid mod name (no path separators or ..): {name}"}
+
     if output_dir is None:
         output_dir = PROJECT_ROOT / "test-mods"
 

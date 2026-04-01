@@ -357,18 +357,21 @@ def uninstall(uuid_or_name: str) -> dict:
     if "error" in ms_result:
         return {"error": f"modsettings removal failed: {ms_result['error']}"}
 
-    # Delete PAK from Mods dir if present
+    # Delete PAK from Mods dir if present (validate path stays under MODS_DIR)
     pak_path = entry.get("pak_path")
     pak_deleted = False
     if pak_path:
-        pak_file = Path(pak_path)
-        if pak_file.exists():
+        pak_file = Path(pak_path).resolve()
+        mods_root = MODS_DIR.resolve()
+        if pak_file.exists() and str(pak_file).startswith(str(mods_root)) and pak_file.suffix == ".pak":
             _stderr(f"Deleting {pak_file.name} from Mods directory ...")
             try:
                 pak_file.unlink()
                 pak_deleted = True
             except OSError as exc:
                 _stderr(f"  WARNING: Could not delete PAK: {exc}")
+        elif pak_file.exists():
+            _stderr(f"  WARNING: Refusing to delete {pak_file} — not under {mods_root}")
 
     # Unregister
     _stderr(f"Unregistering {name!r} ({uuid}) ...")

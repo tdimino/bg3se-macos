@@ -27,6 +27,13 @@ def _ensure_fixtures_dir():
     SAVE_FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _safe_name(name, context="name"):
+    """Validate a name contains no path separators or traversal."""
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return None
+    return name
+
+
 def _save_dirs():
     """List save game directories sorted by modification time (newest first)."""
     if not SAVES_DIR.exists():
@@ -108,6 +115,11 @@ def snapshot(fixture_name, source_dir_name=None):
         fixture_name: Name for the fixture (e.g., "Harness_Base_Camp")
         source_dir_name: Specific save directory name. If None, uses most recent.
     """
+    if not _safe_name(fixture_name):
+        return {"error": f"Invalid fixture name (no path separators or ..): {fixture_name}"}
+    if source_dir_name and not _safe_name(source_dir_name):
+        return {"error": f"Invalid save name (no path separators or ..): {source_dir_name}"}
+
     _ensure_fixtures_dir()
 
     # Find source save
@@ -145,6 +157,8 @@ def restore(fixture_name):
 
     Creates a backup of the current save state before restoring.
     """
+    if not _safe_name(fixture_name):
+        return {"error": f"Invalid fixture name (no path separators or ..): {fixture_name}"}
     fixture_path = SAVE_FIXTURES_DIR / fixture_name
     if not fixture_path.exists():
         available = [d.name for d in _fixture_dirs()]
@@ -172,6 +186,10 @@ def restore(fixture_name):
 
 def clone(src_name, dst_name):
     """Clone a save under a new name."""
+    if not _safe_name(src_name):
+        return {"error": f"Invalid source name (no path separators or ..): {src_name}"}
+    if not _safe_name(dst_name):
+        return {"error": f"Invalid destination name (no path separators or ..): {dst_name}"}
     # Check fixtures first, then saves
     src_path = SAVE_FIXTURES_DIR / src_name
     if not src_path.exists():

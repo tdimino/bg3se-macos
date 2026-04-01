@@ -23,8 +23,11 @@ def _load_baseline():
     path = CATALOG_DIR / "windows_parity_baseline.json"
     if not path.exists():
         return None
-    with open(path) as f:
-        return json.load(f)
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def scan():
@@ -235,7 +238,7 @@ def cmd_parity(args):
     elif subcmd == "missing":
         result = missing()
         print(json.dumps(result, indent=2))
-        return 0
+        return 0 if "error" not in result else 1
 
     elif subcmd == "verify":
         result = verify(args.namespace)
