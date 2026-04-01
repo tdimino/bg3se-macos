@@ -847,6 +847,101 @@ static int lua_types_get_all_layouts(lua_State *L) {
     return 1;
 }
 
+// Ext.Types.GetValueType(obj) -> string or nil
+// Returns a debug-friendly type description for any Lua value.
+// Mirrors Windows BG3SE GetValueType — for non-userdata it falls back to
+// the standard Lua type name.
+static int lua_types_getvaluetype(lua_State *L) {
+    luaL_checkany(L, 1);
+    int t = lua_type(L, 1);
+
+    if (t == LUA_TUSERDATA || t == LUA_TLIGHTUSERDATA) {
+        // Try metatable __name first (same logic as GetObjectType)
+        if (lua_getmetatable(L, 1)) {
+            lua_getfield(L, -1, "__name");
+            if (lua_isstring(L, -1)) {
+                // __name is on stack — remove the metatable below it
+                lua_remove(L, -2);
+                return 1;
+            }
+            lua_pop(L, 2);  // pop __name (nil) + metatable
+        }
+        // Fall through: return "userdata"
+    }
+
+    lua_pushstring(L, lua_typename(L, t));
+    return 1;
+}
+
+// Ext.Types.Construct(typeName) -> object or nil
+// Constructs a new instance of a registered type. macOS stub: most C++ types
+// are not heap-constructible from Lua without the full C++ runtime, so we
+// return nil with a warning and let callers handle it gracefully.
+static int lua_types_construct(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+    LOG_LUA_WARN("Ext.Types.Construct('%s'): not supported on macOS (C++ object construction requires full runtime)", type_name);
+    lua_pushnil(L);
+    return 1;
+}
+
+// Ext.Types.GetHashSetValueAt(obj, index) -> value or nil
+// Returns the element at a given 0-based index in a BG3 hash-set proxy.
+// macOS: We don't have the C++ proxy metatables, so return nil gracefully.
+static int lua_types_gethashsetvalueat(lua_State *L) {
+    luaL_checkany(L, 1);
+    luaL_checkinteger(L, 2);
+    // Without full proxy infrastructure we cannot index into hash sets.
+    // Return nil so mods that check for nil can degrade gracefully.
+    lua_pushnil(L);
+    return 1;
+}
+
+// Ext.Types.GetFunctionLocation(func) -> (source, line) or (nil, nil)
+// Returns the source file and line number where a Lua function was defined.
+static int lua_types_getfunctionlocation(lua_State *L) {
+    if (!lua_isfunction(L, 1) || lua_iscfunction(L, 1)) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
+
+    lua_Debug ar;
+    lua_pushvalue(L, 1);
+    if (lua_getinfo(L, ">S", &ar)) {
+        lua_pushstring(L, ar.source);
+        lua_pushinteger(L, ar.linedefined);
+    } else {
+        lua_pushnil(L);
+        lua_pushnil(L);
+    }
+    return 2;
+}
+
+// Ext.Types.AddCustomFunction(typeName, property, func) -> boolean
+// Registers a custom Lua function on an existing type.
+// macOS stub: requires C++ property map infrastructure. Returns false.
+static int lua_types_addcustomfunction(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+    const char *property  = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    LOG_LUA_WARN("Ext.Types.AddCustomFunction('%s', '%s'): not supported on macOS", type_name, property);
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// Ext.Types.AddCustomProperty(typeName, property, getter[, setter]) -> boolean
+// Registers a custom getter/setter property on an existing type.
+// macOS stub: requires C++ property map infrastructure. Returns false.
+static int lua_types_addcustomproperty(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+    const char *property  = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    // setter (arg 4) is optional
+    LOG_LUA_WARN("Ext.Types.AddCustomProperty('%s', '%s'): not supported on macOS", type_name, property);
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 // Ext.Types.IsA(obj, typeName) -> boolean
 // Checks if an object is of a given type or inherits from it
 static int lua_types_isa(lua_State *L) {
@@ -920,9 +1015,27 @@ void lua_ext_register_types(lua_State *L, int ext_table_index) {
     lua_pushcfunction(L, lua_ide_helpers_generate);
     lua_setfield(L, -2, "GenerateIdeHelpers");
 
+    lua_pushcfunction(L, lua_types_getvaluetype);
+    lua_setfield(L, -2, "GetValueType");
+
+    lua_pushcfunction(L, lua_types_construct);
+    lua_setfield(L, -2, "Construct");
+
+    lua_pushcfunction(L, lua_types_gethashsetvalueat);
+    lua_setfield(L, -2, "GetHashSetValueAt");
+
+    lua_pushcfunction(L, lua_types_getfunctionlocation);
+    lua_setfield(L, -2, "GetFunctionLocation");
+
+    lua_pushcfunction(L, lua_types_addcustomfunction);
+    lua_setfield(L, -2, "AddCustomFunction");
+
+    lua_pushcfunction(L, lua_types_addcustomproperty);
+    lua_setfield(L, -2, "AddCustomProperty");
+
     lua_setfield(L, ext_table_index, "Types");
 
-    LOG_LUA_INFO("Ext.Types namespace registered (9 functions)");
+    LOG_LUA_INFO("Ext.Types namespace registered (15 functions)");
 }
 
 // ============================================================================
