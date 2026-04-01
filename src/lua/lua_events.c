@@ -12,6 +12,8 @@
 #include "lua_events.h"
 #include "../core/logging.h"
 #include "../mod/mod_loader.h"
+#include "../entity/component_registry.h"
+#include "../entity/component_lookup.h"
 
 #include <string.h>
 #include <mach/mach_time.h>
@@ -115,7 +117,16 @@ static const char *g_event_names[EVENT_MAX] = {
     "DealtDamage",
     "BeforeDealDamage",
     "NetModMessage",          // Network mod message (Issue #6)
-    "NetMessage"              // Legacy network message (no module, Issue #6)
+    "NetMessage",             // Legacy network message (no module, Issue #6)
+    // Spell cast phase events (Issue #51 expansion)
+    "SpellCastCountered",
+    "SpellCastJumpStart",
+    "ConcentrationCleared",
+    "SpellCastLogicExecutionStart",
+    "SpellCastLogicExecutionEnd",
+    "SpellCastPrepareStart",
+    "SpellCastPrepareEnd",
+    "SpellCastPreviewEnd",
 };
 
 // ============================================================================
@@ -297,6 +308,10 @@ static void process_deferred_unsubscribes(lua_State *L, BG3SEEventType event) {
     }
 }
 
+// Forward declaration: poll cache init is defined later in this file with the
+// polling infrastructure. Called from events_init() which comes first.
+static void poll_cache_init(void);
+
 // ============================================================================
 // Public API: Initialize
 // ============================================================================
@@ -313,6 +328,9 @@ void events_init(void) {
     g_next_handler_id = 1;
     g_deferred_unsub_count = 0;
     g_initialized = 1;
+
+    // Initialise the one-frame poll cache (sets component_name pointers)
+    poll_cache_init();
 
     LOG_EVENTS_INFO("Event system initialized");
 }
@@ -1855,10 +1873,106 @@ void events_init_log_callback(lua_State *L) {
 // One-Frame Component Polling (Issue #51)
 // ============================================================================
 
-// Forward declaration - implemented in entity_system.c
-extern int lua_entity_get_all_with_component(lua_State *L);
+// ---------------------------------------------------------------------------
+// TypeIndex cache: resolved once at first subscription, reused every tick.
+// Avoids the Lua global table walk (Ext → Entity → GetAllEntitiesWithComponent
+// → registry name scan) on every polling tick.
+// ---------------------------------------------------------------------------
 
-// Helper: Poll for entities with a specific component and call handler for each
+typedef struct {
+    const char              *component_name;  // static string — never freed
+    const ComponentInfo     *info;            // NULL until resolved; INVALID_PTR sentinel
+    uint8_t                  resolved;        // 1 = resolved (info may still be NULL/invalid)
+} OneFramePollEntry;
+
+// Sentinel: component name registered in the system but TypeId unresolved
+#define POLL_INFO_UNRESOLVABLE ((const ComponentInfo *)1)
+
+// Static handle buffer: reused every tick, protected by single-threaded Lua
+#define POLL_MAX_ENTITIES 4096
+static uint64_t g_poll_handle_buf[POLL_MAX_ENTITIES];
+
+// ---------------------------------------------------------------------------
+// Fast direct-C poll: resolve ComponentInfo once, then call
+// component_lookup_get_all_with_component directly — no Lua table traversal.
+// Falls back to the Lua-path helper if the registry isn't warm yet.
+// ---------------------------------------------------------------------------
+
+static void poll_oneframe_direct(lua_State *L, OneFramePollEntry *entry,
+                                 void (*handler)(lua_State*, uint64_t)) {
+    // Lazy resolution: look up once and cache the ComponentInfo pointer
+    if (!entry->resolved) {
+        entry->resolved = 1;
+        if (component_lookup_ready()) {
+            const ComponentInfo *info = component_registry_lookup(entry->component_name);
+            if (info && info->index != COMPONENT_INDEX_UNDEFINED) {
+                entry->info = info;
+            } else {
+                entry->info = POLL_INFO_UNRESOLVABLE;
+                LOG_EVENTS_DEBUG("Poll cache: '%s' unresolvable (not in registry or TypeId=65535)",
+                                 entry->component_name);
+            }
+        }
+        // If lookup_ready() returns false, leave resolved=1 but info=NULL so
+        // we fall through to the Lua path this tick.
+    }
+
+    if (entry->info == NULL) {
+        // Registry not warm yet — use the Lua global path
+        goto lua_fallback;
+    }
+    if (entry->info == POLL_INFO_UNRESOLVABLE) {
+        return;  // Component doesn't exist in this binary
+    }
+
+    {
+        // Fast path: direct C call
+        int count = component_lookup_get_all_with_component(
+            entry->info->index, g_poll_handle_buf, POLL_MAX_ENTITIES);
+
+        if (g_trace_enabled && count > 0) {
+            LOG_EVENTS_INFO("[TRACE] Fast poll '%s': %d entities (typeIndex=%u)",
+                            entry->component_name, count, entry->info->index);
+        }
+
+        for (int i = 0; i < count; i++) {
+            handler(L, g_poll_handle_buf[i]);
+        }
+        return;
+    }
+
+lua_fallback:
+    // Lua-path: used only until the registry becomes warm (first few ticks)
+    if (g_trace_enabled) {
+        LOG_EVENTS_INFO("[TRACE] Lua-path poll: %s (registry not ready)", entry->component_name);
+    }
+    lua_getglobal(L, "Ext");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+    lua_getfield(L, -1, "Entity");
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); return; }
+    lua_getfield(L, -1, "GetAllEntitiesWithComponent");
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 3); return; }
+    lua_pushstring(L, entry->component_name);
+    if (lua_pcall(L, 1, 1, 0) == LUA_OK && lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            if (lua_isinteger(L, -1)) {
+                handler(L, (uint64_t)lua_tointeger(L, -1));
+            }
+            lua_pop(L, 1);
+        }
+    } else if (g_trace_enabled) {
+        const char *err = lua_tostring(L, -1);
+        if (err) {
+            LOG_EVENTS_DEBUG("[TRACE] Lua-path poll failed for %s: %s",
+                            entry->component_name, err);
+        }
+    }
+    lua_pop(L, 3);
+    return;
+}
+
+// Legacy helper kept for callers that pass a literal string without a cache entry
 static void poll_oneframe_component(lua_State *L, const char *componentName,
                                     void (*handler)(lua_State*, uint64_t)) {
     if (g_trace_enabled) {
@@ -2011,88 +2125,118 @@ static void handle_approval_changed(lua_State *L, uint64_t entity) {
     ONEFRAME_DISPATCH(EVENT_APPROVAL_CHANGED, "Entity", entity);
 }
 
+// ============================================================================
+// Spell Cast Phase Handlers (Issue #51 expansion)
+// ============================================================================
+
+static void handle_spell_cast_countered(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_COUNTERED, "Entity", entity);
+}
+
+static void handle_spell_cast_jump_start(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_JUMP_START, "Entity", entity);
+}
+
+static void handle_concentration_cleared(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_CONCENTRATION_CLEARED, "Entity", entity);
+}
+
+static void handle_spell_cast_logic_execution_start(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_LOGIC_EXECUTION_START, "Entity", entity);
+}
+
+static void handle_spell_cast_logic_execution_end(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_LOGIC_EXECUTION_END, "Entity", entity);
+}
+
+static void handle_spell_cast_prepare_start(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_PREPARE_START, "Entity", entity);
+}
+
+static void handle_spell_cast_prepare_end(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_PREPARE_END, "Entity", entity);
+}
+
+static void handle_spell_cast_preview_end(lua_State *L, uint64_t entity) {
+    ONEFRAME_DISPATCH(EVENT_SPELL_CAST_PREVIEW_END, "Entity", entity);
+}
+
+// ---------------------------------------------------------------------------
+// Static poll cache: one entry per engine event, indexed by BG3SEEventType.
+// Entries for non-polled events (NetMessage, etc.) are left as {NULL, NULL, 0}
+// and are never accessed because the poll loop only iterates engine events.
+// ---------------------------------------------------------------------------
+
+// Declare entries for every engine event between EVENT_TURN_STARTED and
+// EVENT_SPELL_CAST_PREVIEW_END. Events that need two components (e.g.
+// EquipmentChanged) get a second entry; the first entry's handler is called
+// for both. We keep a flat list of (event, component_name, handler) triples
+// rather than one-per-event to handle the dual-component case cleanly.
+
+typedef struct {
+    BG3SEEventType          event;
+    const char             *component_name;
+    void (*handler)(lua_State*, uint64_t);
+    OneFramePollEntry       cache;
+} PolledEvent;
+
+// The static table. All cache fields initialise to zero (= unresolved).
+static PolledEvent g_polled_events[] = {
+    { EVENT_TURN_STARTED,    "esv::TurnStartedEventOneFrameComponent",                               handle_turn_started,                       {NULL, NULL, 0} },
+    { EVENT_TURN_ENDED,      "esv::TurnEndedEventOneFrameComponent",                                 handle_turn_ended,                         {NULL, NULL, 0} },
+    { EVENT_COMBAT_STARTED,  "esv::combat::JoinEventOneFrameComponent",                              handle_combat_started,                     {NULL, NULL, 0} },
+    { EVENT_COMBAT_ENDED,    "esv::combat::FleeSuccessOneFrameComponent",                            handle_combat_left,                        {NULL, NULL, 0} },
+    { EVENT_EQUIPMENT_CHANGED, "esv::item::EquippedEventOneFrameComponent",                          handle_equipment_changed,                  {NULL, NULL, 0} },
+    { EVENT_EQUIPMENT_CHANGED, "esv::item::UnequippedEventOneFrameComponent",                        handle_equipment_changed,                  {NULL, NULL, 0} },
+    { EVENT_STATUS_APPLIED,  "esv::status::ActivationEventOneFrameComponent",                        handle_status_applied,                     {NULL, NULL, 0} },
+    { EVENT_STATUS_REMOVED,  "esv::status::DeactivationEventOneFrameComponent",                      handle_status_removed,                     {NULL, NULL, 0} },
+    { EVENT_LEVEL_UP,        "esv::stats::LevelChangedOneFrameComponent",                            handle_level_up,                           {NULL, NULL, 0} },
+    { EVENT_DIED,            "esv::death::ExecuteDieLogicEventOneFrameComponent",                    handle_died,                               {NULL, NULL, 0} },
+    { EVENT_DOWNED,          "esv::death::DownedEventOneFrameComponent",                             handle_downed,                             {NULL, NULL, 0} },
+    { EVENT_RESURRECTED,     "esv::death::ResurrectedEventOneFrameComponent",                        handle_resurrected,                        {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST,      "eoc::spell_cast::CastEventOneFrameComponent",                          handle_spell_cast,                         {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST_FINISHED, "eoc::spell_cast::FinishedEventOneFrameComponent",                  handle_spell_cast_finished,                {NULL, NULL, 0} },
+    { EVENT_HIT_NOTIFICATION, "esv::hit::HitNotificationEventOneFrameComponent",                     handle_hit_notification,                   {NULL, NULL, 0} },
+    { EVENT_SHORT_REST_STARTED, "esv::rest::ShortRestResultEventOneFrameComponent",                   handle_short_rest_started,                 {NULL, NULL, 0} },
+    { EVENT_APPROVAL_CHANGED, "esv::approval::RatingsChangedOneFrameComponent",                      handle_approval_changed,                   {NULL, NULL, 0} },
+    // Spell cast phase events (Issue #51 expansion)
+    { EVENT_SPELL_CAST_COUNTERED,             "eoc::spell_cast::CounteredEventOneFrameComponent",             handle_spell_cast_countered,             {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST_JUMP_START,            "eoc::spell_cast::JumpStartEventOneFrameComponent",             handle_spell_cast_jump_start,            {NULL, NULL, 0} },
+    { EVENT_CONCENTRATION_CLEARED,            "esv::concentration::OnConcentrationClearedEventOneFrameComponent", handle_concentration_cleared,        {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST_LOGIC_EXECUTION_START, "eoc::spell_cast::LogicExecutionStartEventOneFrameComponent",   handle_spell_cast_logic_execution_start, {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST_LOGIC_EXECUTION_END,   "eoc::spell_cast::LogicExecutionEndEventOneFrameComponent",     handle_spell_cast_logic_execution_end,   {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST_PREPARE_START,         "eoc::spell_cast::PrepareStartEventOneFrameComponent",          handle_spell_cast_prepare_start,         {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST_PREPARE_END,           "eoc::spell_cast::PrepareEndEventOneFrameComponent",            handle_spell_cast_prepare_end,           {NULL, NULL, 0} },
+    { EVENT_SPELL_CAST_PREVIEW_END,           "eoc::spell_cast::PreviewEndEventOneFrameComponent",            handle_spell_cast_preview_end,           {NULL, NULL, 0} },
+};
+
+#define POLLED_EVENTS_COUNT ((int)(sizeof(g_polled_events) / sizeof(g_polled_events[0])))
+
+// Initialise the component_name pointer in each cache entry once at startup.
+// Called from events_init() so the cache is self-consistent from the first tick.
+static void poll_cache_init(void) {
+    for (int i = 0; i < POLLED_EVENTS_COUNT; i++) {
+        g_polled_events[i].cache.component_name = g_polled_events[i].component_name;
+        g_polled_events[i].cache.info = NULL;
+        g_polled_events[i].cache.resolved = 0;
+    }
+}
+
 void events_poll_oneframe_components(lua_State *L) {
     if (!L) return;
 
     // Only poll if we have subscribers to any engine events
     int total_handlers = 0;
-    for (int i = EVENT_TURN_STARTED; i <= EVENT_APPROVAL_CHANGED; i++) {
+    for (int i = EVENT_TURN_STARTED; i <= EVENT_SPELL_CAST_PREVIEW_END; i++) {
         total_handlers += g_handler_counts[i];
     }
     if (total_handlers == 0) return;
 
-    // Combat turn events - now registered via Ghidra discovery
-    if (g_handler_counts[EVENT_TURN_STARTED] > 0) {
-        poll_oneframe_component(L, "esv::TurnStartedEventOneFrameComponent", handle_turn_started);
-    }
-    if (g_handler_counts[EVENT_TURN_ENDED] > 0) {
-        poll_oneframe_component(L, "esv::TurnEndedEventOneFrameComponent", handle_turn_ended);
-    }
-
-    // Combat join event (fires when entity joins combat)
-    if (g_handler_counts[EVENT_COMBAT_STARTED] > 0) {
-        poll_oneframe_component(L, "esv::combat::JoinEventOneFrameComponent", handle_combat_started);
-    }
-
-    // Combat flee success (fires when entity leaves combat via flee)
-    if (g_handler_counts[EVENT_COMBAT_ENDED] > 0) {
-        poll_oneframe_component(L, "esv::combat::FleeSuccessOneFrameComponent", handle_combat_left);
-    }
-
-    // Equipment events - use equipped/unequipped events
-    if (g_handler_counts[EVENT_EQUIPMENT_CHANGED] > 0) {
-        poll_oneframe_component(L, "esv::item::EquippedEventOneFrameComponent", handle_equipment_changed);
-        poll_oneframe_component(L, "esv::item::UnequippedEventOneFrameComponent", handle_equipment_changed);
-    }
-
-    // Status events - use activation/deactivation events
-    if (g_handler_counts[EVENT_STATUS_APPLIED] > 0) {
-        poll_oneframe_component(L, "esv::status::ActivationEventOneFrameComponent", handle_status_applied);
-    }
-    if (g_handler_counts[EVENT_STATUS_REMOVED] > 0) {
-        poll_oneframe_component(L, "esv::status::DeactivationEventOneFrameComponent", handle_status_removed);
-    }
-
-    // Level up event - now registered via Ghidra discovery
-    if (g_handler_counts[EVENT_LEVEL_UP] > 0) {
-        poll_oneframe_component(L, "esv::stats::LevelChangedOneFrameComponent", handle_level_up);
-    }
-
-    // ========================================================================
-    // Additional events (Issue #51 expansion)
-    // ========================================================================
-
-    // Death events
-    if (g_handler_counts[EVENT_DIED] > 0) {
-        poll_oneframe_component(L, "esv::death::ExecuteDieLogicEventOneFrameComponent", handle_died);
-    }
-    if (g_handler_counts[EVENT_DOWNED] > 0) {
-        poll_oneframe_component(L, "esv::death::DownedEventOneFrameComponent", handle_downed);
-    }
-    if (g_handler_counts[EVENT_RESURRECTED] > 0) {
-        poll_oneframe_component(L, "esv::death::ResurrectedEventOneFrameComponent", handle_resurrected);
-    }
-
-    // Spell events
-    if (g_handler_counts[EVENT_SPELL_CAST] > 0) {
-        poll_oneframe_component(L, "eoc::spell_cast::CastEventOneFrameComponent", handle_spell_cast);
-    }
-    if (g_handler_counts[EVENT_SPELL_CAST_FINISHED] > 0) {
-        poll_oneframe_component(L, "eoc::spell_cast::FinishedEventOneFrameComponent", handle_spell_cast_finished);
-    }
-
-    // Hit events
-    if (g_handler_counts[EVENT_HIT_NOTIFICATION] > 0) {
-        poll_oneframe_component(L, "esv::hit::HitNotificationEventOneFrameComponent", handle_hit_notification);
-    }
-
-    // Rest events
-    if (g_handler_counts[EVENT_SHORT_REST_STARTED] > 0) {
-        poll_oneframe_component(L, "esv::rest::ShortRestResultEventOneFrameComponent", handle_short_rest_started);
-    }
-
-    // Approval events
-    if (g_handler_counts[EVENT_APPROVAL_CHANGED] > 0) {
-        poll_oneframe_component(L, "esv::approval::RatingsChangedOneFrameComponent", handle_approval_changed);
+    // Iterate the flat poll table. Each entry is guarded by its event's
+    // handler count so unsubscribed events cost only one comparison.
+    for (int i = 0; i < POLLED_EVENTS_COUNT; i++) {
+        PolledEvent *pe = &g_polled_events[i];
+        if (g_handler_counts[pe->event] == 0) continue;
+        poll_oneframe_direct(L, &pe->cache, pe->handler);
     }
 }

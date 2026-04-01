@@ -59,6 +59,15 @@ typedef enum {
     EVENT_BEFORE_DEAL_DAMAGE,  // Before damage calculation
     EVENT_NET_MOD_MESSAGE,     // Network mod message (Issue #6)
     EVENT_NET_MESSAGE,         // Legacy network message (no module, Issue #6)
+    // Spell cast phase events (Issue #51 expansion — one-frame components)
+    EVENT_SPELL_CAST_COUNTERED,              // Spell was countered
+    EVENT_SPELL_CAST_JUMP_START,             // Spell cast jump initiated
+    EVENT_CONCENTRATION_CLEARED,             // Concentration spell cleared
+    EVENT_SPELL_CAST_LOGIC_EXECUTION_START,  // Spell logic execution began
+    EVENT_SPELL_CAST_LOGIC_EXECUTION_END,    // Spell logic execution finished
+    EVENT_SPELL_CAST_PREPARE_START,          // Spell prepare phase started
+    EVENT_SPELL_CAST_PREPARE_END,            // Spell prepare phase ended
+    EVENT_SPELL_CAST_PREVIEW_END,            // Spell preview phase ended
     EVENT_MAX
 } BG3SEEventType;
 
