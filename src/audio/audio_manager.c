@@ -55,6 +55,42 @@
 #define SOUND_OBJECT_GLOBAL   1ULL
 
 // ============================================================================
+// ls::STDString Construction (verified via Ghidra — see STDSTRING_ABI.md)
+// ============================================================================
+
+// 16-byte libc++ layout with ls::StringAllocator. SSO threshold = 14 chars.
+typedef struct {
+    union {
+        struct { char *data; uint32_t size; uint32_t cap_flag; } l;
+        struct { char data[15]; uint8_t size_flag; } s;
+    };
+} LSSTDString;
+
+// Game's ls::STDString(const char*) constructor (Ghidra: 0x10651fb60)
+#define OFFSET_STDSTRING_CTOR  0x0651fb60ULL
+typedef void (*STDStringCtorFn)(LSSTDString *this_, const char *str);
+
+static void ls_stdstring_init(LSSTDString *out, const char *str, STDStringCtorFn ctor) {
+    size_t len = str ? strlen(str) : 0;
+    memset(out, 0, sizeof(*out));
+    if (len <= 14) {
+        // SSO path — no allocation, entirely inline
+        if (len > 0) memcpy(out->s.data, str, len);
+        out->s.data[len] = '\0';
+        out->s.size_flag = (uint8_t)len;  // bit 7 clear = short mode
+    } else if (ctor) {
+        // Long path — use game's constructor for MemoryManager-compatible allocation
+        ctor(out, str);
+    } else {
+        // Fallback: truncate to SSO (14 chars). Lossy but safe.
+        memcpy(out->s.data, str, 14);
+        out->s.data[14] = '\0';
+        out->s.size_flag = 14;
+        log_message("[Audio] WARNING: STDString ctor not resolved, truncating path to 14 chars");
+    }
+}
+
+// ============================================================================
 // Module State
 // ============================================================================
 
@@ -62,6 +98,7 @@ static struct {
     bool initialized;
     void *main_binary_base;
     void **resource_manager_ptr;
+    STDStringCtorFn stdstring_ctor;
 } g_audio = {0};
 
 // ============================================================================
@@ -81,10 +118,14 @@ bool audio_manager_init(void *main_binary_base) {
     g_audio.main_binary_base = main_binary_base;
     g_audio.resource_manager_ptr = (void **)((uintptr_t)main_binary_base + OFFSET_RESOURCEMANAGER_PTR);
 
+    // Resolve ls::STDString constructor for PlayExternalSound path parameter
+    g_audio.stdstring_ctor = (STDStringCtorFn)((uintptr_t)main_binary_base + OFFSET_STDSTRING_CTOR);
+
     log_message("[Audio] Audio manager initialized");
     log_message("[Audio]   Base: %p", main_binary_base);
     log_message("[Audio]   ResourceManager::m_ptr at offset 0x%x -> %p",
                 OFFSET_RESOURCEMANAGER_PTR, (void *)g_audio.resource_manager_ptr);
+    log_message("[Audio]   STDString ctor: %p", (void *)g_audio.stdstring_ctor);
 
     g_audio.initialized = true;
     return true;
@@ -398,18 +439,14 @@ static uint32_t get_sound_name_id(void *sm, const char *name) {
  *                          STDString& path, uint8_t codec,
  *                          float positionSec, bool loop, void* callback)
  *
- * We pass a null-terminated C string for the path (the game reads it as an
- * LS STDString*, which begins with the char* at offset 0 on macOS/Win).
- * This relies on the STDString small-buffer optimization: strings < 16 chars
- * are stored inline. For longer paths we pass a heap pointer directly.
- * Since we cannot fully reconstruct an STDString on the stack without ABI
- * knowledge, this is a best-effort implementation that will work for simple
- * short paths. For production use, VMT indices must be verified via Ghidra.
+ * STDString ABI verified via Ghidra (see STDSTRING_ABI.md):
+ *   16 bytes, SSO threshold = 14 chars, constructor at 0x10651fb60.
+ *   We construct a proper LSSTDString on the stack and pass its address.
  */
 typedef bool (*WwisePlayExternalFn)(void *this_,
                                      uint64_t sound_object,
                                      uint32_t event_id,
-                                     const char *path,    /* STDString* — ABI approximation */
+                                     LSSTDString *path,
                                      uint8_t codec,
                                      float position_sec,
                                      bool loop,
@@ -419,12 +456,6 @@ bool audio_play_external_sound(uint64_t sound_object_id, const char *event_name,
                                 const char *file_path, uint8_t codec,
                                 float position_sec) {
     if (!event_name || !file_path) return false;
-
-    // SAFETY: STDString ABI not yet verified on ARM64 macOS. Passing char* where
-    // STDString& is expected works only for short strings (SSO path). Disable until
-    // the ABI is confirmed via Ghidra to prevent crashes on longer file paths.
-    log_message("[Audio] PlayExternalSound: disabled — STDString ABI not yet verified on ARM64");
-    return false;
 
     void *sm = get_sound_manager();
     if (!sm) {
@@ -444,8 +475,16 @@ bool audio_play_external_sound(uint64_t sound_object_id, const char *event_name,
         return false;
     }
 
+    // Construct LSSTDString on stack (SSO for <=14 chars, game ctor for longer)
+    LSSTDString path_str;
+    ls_stdstring_init(&path_str, file_path, g_audio.stdstring_ctor);
+
     WwisePlayExternalFn play = (WwisePlayExternalFn)func;
-    return play(sm, sound_object_id, event_id, file_path, codec, position_sec, false, NULL);
+    bool result = play(sm, sound_object_id, event_id, &path_str, codec, position_sec, false, NULL);
+
+    log_message("[Audio] PlayExternalSound('%s', path='%s', codec=%u, pos=%.2f) -> %s",
+                event_name, file_path, codec, position_sec, result ? "OK" : "FAIL");
+    return result;
 }
 
 /**
