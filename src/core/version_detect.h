@@ -47,9 +47,21 @@ const char *version_detect_get_version(void);
 bool version_detect_matches(void);
 
 /**
+ * Set the main binary base address for sentinel probing.
+ * Must be called after finding the BG3 binary in loaded images.
+ *
+ * @param base The runtime base address of the main BG3 binary
+ */
+void version_detect_set_binary_base(void *base);
+
+/**
  * Check if address-dependent features should be enabled.
- * Returns false when a version mismatch is confirmed, meaning
- * TypeId addresses, singleton pointers, etc. are likely wrong.
+ * Returns true if:
+ *   - Version matches exactly, OR
+ *   - Version mismatches but sentinel address probes pass
+ *     (binary layout unchanged despite version string change), OR
+ *   - BG3SE_FORCE_ADDRESSES=1 is set
+ * Returns false when probes confirm the binary layout has changed.
  */
 bool version_detect_addresses_safe(void);
 

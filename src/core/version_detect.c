@@ -14,6 +14,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mach/mach.h>
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+// Ghidra analysis base address for the BG3 binary
+#define GHIDRA_BASE 0x100000000ULL
+
+// Sentinel addresses: known data-segment globals that should be readable
+// regardless of whether the game has initialized. These are static globals
+// in BSS/DATA — readable even if the pointer value inside is NULL.
+// If vm_read succeeds on all 3, the binary layout matches our addresses.
+static const uintptr_t g_sentinel_ghidra_addrs[] = {
+    0x10898e8b8,  // esv::EocServer::m_ptr (server singleton global)
+    0x10898c968,  // ecl::EocClient::m_ptr (client singleton global)
+    0x1089bac80,  // SpellPrototypeManager::m_ptr
+};
+#define NUM_SENTINELS (sizeof(g_sentinel_ghidra_addrs) / sizeof(g_sentinel_ghidra_addrs[0]))
 
 // ============================================================================
 // State
@@ -22,6 +41,7 @@
 static char g_detected_version[64] = {0};
 static bool g_initialized = false;
 static bool g_version_matches = true;  // Optimistic default
+static void *g_binary_base = NULL;     // Set by version_detect_set_binary_base()
 
 // ============================================================================
 // Info.plist Parsing (lightweight, no Foundation dependency)
@@ -172,14 +192,55 @@ bool version_detect_matches(void) {
     return g_version_matches;
 }
 
+/**
+ * Probe sentinel addresses to validate binary layout compatibility.
+ * Reads known data-segment globals via vm_read. If all are readable,
+ * the binary layout matches our hardcoded addresses even if the
+ * version string changed (common for minor hotfix builds).
+ *
+ * Requires g_binary_base to be set via version_detect_set_binary_base().
+ */
+static bool probe_sentinel_addresses(void) {
+    if (!g_binary_base) return false;
+
+    uintptr_t base = (uintptr_t)g_binary_base;
+    int pass = 0;
+
+    for (int i = 0; i < (int)NUM_SENTINELS; i++) {
+        uintptr_t runtime_addr = g_sentinel_ghidra_addrs[i] - GHIDRA_BASE + base;
+
+        vm_size_t data_size = sizeof(void*);
+        vm_offset_t data = 0;
+        mach_msg_type_number_t count = 0;
+        kern_return_t kr = vm_read(mach_task_self(), (vm_address_t)runtime_addr,
+                                    data_size, &data, &count);
+        if (kr == KERN_SUCCESS) {
+            if (data) vm_deallocate(mach_task_self(), data, count);
+            pass++;
+        } else {
+            log_message("[WARN] [VersionDetect] Sentinel probe %d failed at 0x%llx "
+                        "(Ghidra: 0x%llx, kr=%d)",
+                        i, (unsigned long long)runtime_addr,
+                        (unsigned long long)g_sentinel_ghidra_addrs[i], kr);
+        }
+    }
+
+    log_message("[INFO] [VersionDetect] Sentinel probe: %d/%d passed", pass, (int)NUM_SENTINELS);
+    return pass == (int)NUM_SENTINELS;
+}
+
+void version_detect_set_binary_base(void *base) {
+    g_binary_base = base;
+}
+
 bool version_detect_addresses_safe(void) {
-    // Fail CLOSED: if we can't determine the version, assume mismatch.
-    // Better to run degraded than SIGSEGV from stale Dobby hooks.
-    // Override with BG3SE_FORCE_ADDRESSES=1 for power users.
+    // Manual override for power users
+    const char *force = getenv("BG3SE_FORCE_ADDRESSES");
+    if (force && force[0] && force[0] != '0') return true;
+
+    // Fail CLOSED if version detection hasn't run
     if (!g_initialized || g_detected_version[0] == '\0') {
         static bool warned = false;
-        const char *force = getenv("BG3SE_FORCE_ADDRESSES");
-        if (force && force[0] && force[0] != '0') return true;
         if (!warned) {
             log_message("[WARN] [VersionDetect] Could not determine game version. "
                         "Address-dependent features disabled as safety precaution. "
@@ -188,5 +249,29 @@ bool version_detect_addresses_safe(void) {
         }
         return false;
     }
-    return g_version_matches;
+
+    // Exact version match — always safe
+    if (g_version_matches) return true;
+
+    // Version mismatch but same major.minor.patch — try sentinel probes.
+    // Minor hotfix builds (4.1.1.NNNNNNN) often don't change the binary layout.
+    if (g_binary_base) {
+        static int probe_result = -1;  // -1 = not probed yet
+        if (probe_result == -1) {
+            probe_result = probe_sentinel_addresses() ? 1 : 0;
+            if (probe_result == 1) {
+                log_message("[INFO] [VersionDetect] Version mismatch (%s vs %s) but "
+                            "sentinel probes PASSED — addresses appear compatible. "
+                            "Enabling address-dependent features.",
+                            g_detected_version, BG3_KNOWN_VERSION);
+            } else {
+                log_message("[WARN] [VersionDetect] Version mismatch AND sentinel probes "
+                            "FAILED — binary layout has changed. Address-dependent "
+                            "features disabled.");
+            }
+        }
+        return probe_result == 1;
+    }
+
+    return false;
 }

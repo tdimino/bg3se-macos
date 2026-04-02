@@ -3313,9 +3313,14 @@ init_subsystems:
                 LOG_CORE_INFO("Found BG3 executable (index %u): %s", i, name);
                 LOG_CORE_DEBUG("  Base: %p, Slide: 0x%lx", binary_base, (long)slide);
 
+                // Provide binary base for sentinel probing (Issue #78).
+                // This enables version_detect_addresses_safe() to validate
+                // addresses via vm_read even on version mismatches.
+                version_detect_set_binary_base(binary_base);
+
                 // Gate all address-dependent init behind version check.
-                // If the game binary has been updated, our hardcoded TypeId/singleton
-                // addresses are stale and will cause crashes (Issue #73, #78).
+                // Now uses sentinel probes: if addresses are readable,
+                // minor version bumps are accepted as compatible.
                 if (!version_detect_addresses_safe()) {
                     log_message("[WARN] [Init] Skipping address-dependent subsystems "
                                 "(game version mismatch). Lua API and console still work.");
@@ -3368,10 +3373,19 @@ init_subsystems:
                     LOG_CORE_INFO("Localization system initialized");
 
                     // Initialize functor hooks (ExecuteFunctor/AfterExecuteFunctor events)
-                    if (functor_hooks_init(L)) {
-                        LOG_HOOKS_INFO("Functor hooks initialized");
+                    // IMPORTANT: Functor hooks use Dobby to patch CODE at specific addresses.
+                    // Unlike data reads (which sentinel probes validate), code patching is
+                    // unsafe on version mismatch — even a 1-byte shift corrupts instructions.
+                    // Only enable on exact version match.
+                    if (version_detect_matches()) {
+                        if (functor_hooks_init(L)) {
+                            LOG_HOOKS_INFO("Functor hooks initialized");
+                        } else {
+                            LOG_HOOKS_WARN("Functor hooks initialization failed (events won't fire)");
+                        }
                     } else {
-                        LOG_HOOKS_WARN("Functor hooks initialization failed (events won't fire)");
+                        LOG_HOOKS_INFO("Functor hooks SKIPPED (version mismatch — "
+                                       "code patching unsafe, data reads OK via sentinel probes)");
                     }
                 } // end version_detect_addresses_safe() gate
                 found = true;
