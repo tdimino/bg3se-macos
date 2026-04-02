@@ -169,6 +169,7 @@ static void set_arg_string(OsiArgumentDesc *arg, const char *value, int isGuid);
 static void set_arg_int(OsiArgumentDesc *arg, int32_t value);
 static void set_arg_real(OsiArgumentDesc *arg, float value);
 static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args);
+static int osi_value_to_lua(lua_State *L, OsiArgumentValue *val);
 static int osi_is_tagged(const char *character, const char *tag);
 static float osi_get_distance_to(const char *char1, const char *char2);
 static void osi_dialog_request_stop(const char *dialog);
@@ -1228,6 +1229,139 @@ static int lua_entity_get_discovered_players(lua_State *L) {
 }
 
 // ============================================================================
+// Generic Osi.DB_<name> Accessor
+// ============================================================================
+
+/**
+ * Generic Osi.DB_<name>:Get([filter...]) read-only accessor.
+ *
+ * Security: this function is QUERY-ONLY. It uses pfn_InternalQuery (the read
+ * path). The write/call path (pfn_InternalCall) is intentionally not used.
+ *
+ * Stack on entry (called as method via `:` syntax):
+ *   1 = DB accessor table (has field "DBName" = the database name string)
+ *   2..N = optional filter arguments (match Osiris column order; nil = wildcard)
+ *
+ * Returns: table of rows, each row is a table of column values.
+ * Returns empty table if DB not found or query returns nothing.
+ */
+static int lua_osi_db_get(lua_State *L) {
+    lua_getfield(L, 1, "DBName");
+    const char *db_name = lua_tostring(L, -1);
+    lua_pop(L, 1);
+
+    if (!db_name || !*db_name) {
+        LOG_OSIRIS_WARN("Osi.DB_<?>:Get() called but DBName is missing");
+        lua_newtable(L);
+        return 1;
+    }
+
+    uint8_t arity = 0;
+    uint8_t funcType = OSI_FUNC_UNKNOWN;
+    osi_func_get_info(db_name, &arity, &funcType);
+
+    uint32_t funcId = osi_func_lookup_id(db_name);
+    if (funcId == INVALID_FUNCTION_ID) {
+        LOG_OSIRIS_DEBUG("Osi.%s:Get() — DB not yet discovered, returning empty", db_name);
+        lua_newtable(L);
+        return 1;
+    }
+
+    if (funcType != OSI_FUNC_DATABASE && funcType != OSI_FUNC_UNKNOWN) {
+        LOG_OSIRIS_WARN("Osi.%s:Get() — function type %d is not a database", db_name, funcType);
+        lua_newtable(L);
+        return 1;
+    }
+
+    if (!pfn_InternalQuery) {
+        LOG_OSIRIS_WARN("Osi.%s:Get() — pfn_InternalQuery not available", db_name);
+        lua_newtable(L);
+        return 1;
+    }
+
+    int numFilterArgs = lua_gettop(L) - 1;
+    int allocCount = (arity > 0) ? arity : (numFilterArgs > 0 ? numFilterArgs : 1);
+
+    OsiArgumentDesc *args = alloc_args(allocCount);
+    if (!args) {
+        LOG_OSIRIS_ERROR("Osi.%s:Get() — failed to allocate args", db_name);
+        lua_newtable(L);
+        return 1;
+    }
+
+    for (int i = 0; i < allocCount; i++) {
+        int luaArgIdx = i + 2;
+        if (luaArgIdx <= lua_gettop(L) && !lua_isnil(L, luaArgIdx)) {
+            int luaType = lua_type(L, luaArgIdx);
+            switch (luaType) {
+                case LUA_TSTRING: {
+                    const char *str = lua_tostring(L, luaArgIdx);
+                    int isGuid = (str && strlen(str) >= 36 && strchr(str, '-') != NULL);
+                    set_arg_string(&args[i], str, isGuid);
+                    break;
+                }
+                case LUA_TNUMBER:
+                    if (lua_isinteger(L, luaArgIdx)) {
+                        set_arg_int(&args[i], (int32_t)lua_tointeger(L, luaArgIdx));
+                    } else {
+                        set_arg_real(&args[i], (float)lua_tonumber(L, luaArgIdx));
+                    }
+                    break;
+                case LUA_TBOOLEAN:
+                    set_arg_int(&args[i], lua_toboolean(L, luaArgIdx) ? 1 : 0);
+                    break;
+                default:
+                    set_arg_string(&args[i], "", 0);
+                    break;
+            }
+        } else {
+            set_arg_string(&args[i], "", 0);
+        }
+        if (args[i].value.typeId == OSI_TYPE_NONE) {
+            args[i].value.typeId = OSI_TYPE_GUIDSTRING;
+        }
+    }
+
+    // funcId is used directly as dispatch handle (proven via runtime probe:
+    // OsirisFunctionHandle(Key[0..3]).Handle == OsiFunctionId for all Osiris funcs)
+    uint32_t dispatchHandle = funcId;
+    DivCallProc queryFn = g_divQuery ? g_divQuery : (DivCallProc)pfn_InternalQuery;
+
+    lua_newtable(L);
+    int rowCount = 0;
+
+    int result = queryFn(dispatchHandle, args);
+    while (result && rowCount < 10000) {
+        lua_newtable(L);
+        for (int i = 0; i < allocCount; i++) {
+            osi_value_to_lua(L, &args[i].value);
+            lua_rawseti(L, -2, i + 1);
+        }
+        rowCount++;
+        lua_rawseti(L, -2, rowCount);
+
+        result = queryFn(dispatchHandle, args);
+    }
+
+    // Pool-based allocation — no explicit free needed (pool resets on exhaustion)
+
+    LOG_OSIRIS_DEBUG("Osi.%s:Get() returned %d rows", db_name, rowCount);
+    return 1;
+}
+
+/**
+ * Create a generic Osi.DB_<name> accessor table.
+ * The table has a :Get() method and stores the db_name for dispatch.
+ */
+static void osi_push_db_accessor(lua_State *L, const char *db_name) {
+    lua_newtable(L);
+    lua_pushstring(L, db_name);
+    lua_setfield(L, -2, "DBName");
+    lua_pushcfunction(L, lua_osi_db_get);
+    lua_setfield(L, -2, "Get");
+}
+
+// ============================================================================
 // Dynamic Osi.* Metatable Implementation
 // ============================================================================
 
@@ -1618,14 +1752,12 @@ static int osi_index_handler(lua_State *L) {
 
     LOG_OSIRIS_DEBUG("Looking up '%s'", key);
 
-    // Special case: DB_Players returns a table with :Get() method
-    if (strcmp(key, "DB_Players") == 0) {
-        lua_newtable(L);
-        lua_pushcfunction(L, lua_osi_db_players_get);
-        lua_setfield(L, -2, "Get");
-        // Cache it in the Osi table
-        lua_pushvalue(L, -1);  // Duplicate the table
-        lua_setfield(L, 1, "DB_Players");  // Osi.DB_Players = table
+    // Generic DB_<name> accessor for any Osiris database (read-only: Get only, no Delete).
+    // DB_Players is handled here too; the old per-player hack is superseded.
+    if (strncmp(key, "DB_", 3) == 0) {
+        osi_push_db_accessor(L, key);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, 1, key);
         return 1;
     }
 
@@ -1678,10 +1810,8 @@ static void register_osi_namespace(lua_State *L) {
     lua_pushcfunction(L, lua_osi_qry_startdialog_fixed);
     lua_setfield(L, -2, "QRY_StartDialog_Fixed");
 
-    // Create DB_Players table with :Get() method
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_osi_db_players_get);
-    lua_setfield(L, -2, "Get");
+    // Pre-register DB_Players using the generic accessor (read-only Get).
+    osi_push_db_accessor(L, "DB_Players");
     lua_setfield(L, -2, "DB_Players");
 
     // Create metatable for Osi with __index handler for dynamic function lookup

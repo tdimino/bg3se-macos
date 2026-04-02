@@ -162,10 +162,89 @@ void hook_ExecuteStatsFunctors_AttackTarget(
 | FunctorId enum values | - | In stats data |
 | HitResult struct | - | Return value for damage |
 
+## Damage Hook Signatures (from Windows BG3SE reference)
+
+**Discovered:** 2026-04-01 (Qedeshot swarm R2 research)
+**ARM64 addresses:** NOT YET FOUND (symbols stripped, Ghidra search ongoing)
+
+### StatsSystem::ThrowDamageEvent (BeforeDealDamage hook point)
+
+```c
+// From Functors.h:363
+typedef void (*StatsSystem_ThrowDamageEventProc)(
+    void* statsSystem,    // x0: StatsSystem instance
+    void* temp5,          // x1: unknown/temporary
+    HitDesc* hit,         // x2: damage roll descriptor
+    AttackDesc* attack,   // x3: attack parameters (damage sums)
+    bool a5,              // x4: unknown flag
+    bool a6               // x5: unknown flag
+);
+```
+
+**Hook fires:** `BeforeDealDamage` event BEFORE calling original.
+
+### DealDamageFunctor::ApplyDamage (DealDamage hook point)
+
+```c
+// From Functors.h:369-373 — 18 parameters
+typedef HitResult* (*ApplyDamageProc)(
+    HitResult* result,                       // x0: return buffer (x8 indirect on ARM64)
+    DealDamageFunctor* functor,              // x1: functor instance
+    ecs::EntityRef* casterHandle,            // x2
+    ecs::EntityRef* targetHandle,            // x3
+    glm::vec3* position,                     // x4
+    bool isFromItem,                         // x5
+    SpellIdWithPrototype* spellId,           // x6
+    int storyActionId,                       // x7
+    ActionOriginator* originator,            // stack[0]
+    resource::GuidResourceBankBase* classMgr,// stack[1]
+    HitDesc* hit,                            // stack[2]
+    AttackDesc* attack,                      // stack[3]
+    EntityHandle* sourceHandle2,             // stack[4]
+    HitWith hitWith,                         // stack[5]
+    int conditionRollIndex,                  // stack[6]
+    bool entityDamagedEventParam,            // stack[7]
+    int64_t a17,                             // stack[8]
+    SpellId* spellId2                        // stack[9]
+);
+```
+
+**Note:** Returns HitResult* via x8 indirect return on ARM64 (struct >16 bytes).
+
+### Search Strategy for ARM64 Addresses
+
+Symbols are stripped. Approach:
+1. Find DealDamageFunctor vtable via constructor at `0x10b4b03a1` (from prior session)
+2. Trace vtable[N] entries to find ApplyDamage
+3. ThrowDamageEvent: search xrefs from ProcessDealDamageFunctors (`0x10538f374`)
+4. Alternative: search for string "DealDamage" xrefs, trace to callers
+
+### Known RTTI/Data References (2026-04-01 Ghidra research)
+
+| Type | Address | Notes |
+|------|---------|-------|
+| DealDamageFunctor C1 ctor (RTTI) | `0x10b4b03a1`, `0x10b4b03c6` | String table entries |
+| DealDamageFunctor D0/D1 dtor (RTTI) | `0x10b4ad812`, `0x10b4ad837` | String table entries |
+| DealDamageFunctor::Parse (RTTI) | `0x10b4ad85c` | String table |
+| DealDamageFunctor::Clone (RTTI) | `0x10b4ad8e1` | String table |
+| Default ctor GOT entry | DATA `0x10993b380` | Vtable reference |
+| Param ctor GOT entry | DATA `0x10993b390` | Vtable reference |
+| CalculateDamage (RTTI) | `0x10b4be46f` | Not a Ghidra function |
+| EntityDamagedEventOneFrame | `0x1048f3624` | Query registration |
+
+### Blocker (2026-04-01)
+
+GhidraMCP HTTP bridge **cannot decompile addresses that aren't labeled as functions**.
+All key addresses return "No function found". The `/create_function` POST endpoint
+returns 404 (not supported by current plugin version).
+
+**To unblock:** Either use Ghidra GUI to press F (create function) at `0x10538f374`
+and `0x105783a38`, or upgrade GhidraMCP plugin to support `/create_function`.
+
 ## TODO
 
-- [ ] Find `DealDamageFunctor::ApplyDamage` address
-- [ ] Find `StatsSystem::ThrowDamageEvent` address
+- [ ] **BLOCKED:** Find `DealDamageFunctor::ApplyDamage` — needs Ghidra GUI or plugin upgrade
+- [ ] **BLOCKED:** Find `StatsSystem::ThrowDamageEvent` — needs Ghidra GUI or plugin upgrade
 - [ ] Verify ContextData field offsets via runtime probing
 - [ ] Determine HitResult struct layout for ARM64
 
