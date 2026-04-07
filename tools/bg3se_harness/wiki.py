@@ -40,6 +40,7 @@ matching the convention in :mod:`bg3se_harness.mod_manager.nexus`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -108,7 +109,7 @@ def _http_get_json(params: dict) -> tuple[dict | list | None, dict | None]:
     except urllib.error.URLError as exc:
         return None, _error("network_error", f"Network error: {exc.reason}")
     except Exception as exc:
-        return None, _error("network_error", f"Unexpected error: {exc}")
+        return None, _error("internal_error", f"Unexpected error: {exc}")
 
     try:
         data = json.loads(body)
@@ -121,43 +122,145 @@ def _http_get_json(params: dict) -> tuple[dict | list | None, dict | None]:
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
+#
+# Two key rules govern the wiki cache:
+#
+#   1. *Keys are hashed.*  File names on disk are the first 32 hex chars of
+#      the SHA-1 of the full title.  This removes the path-traversal surface
+#      of the old ``re.sub`` sanitiser (``..`` was a legal sanitised name
+#      under the old rules) and eliminates the truncation-collision bug
+#      where two titles diverging after 128 sanitised characters mapped to
+#      the same file.
+#
+#   2. *Aliases are pointer files, not duplicate payloads.*  When a user
+#      queries ``"fireball"`` and the resolved canonical title is
+#      ``"Fireball"``, we write ``{"alias_for": "Fireball"}`` under the
+#      user's key and the real payload under the title's key.  Re-running
+#      the same query follows one level of indirection and re-reads the
+#      title cache.  This avoids the two-writer race from the previous
+#      double-payload scheme (where an alias could keep serving a stale
+#      copy after the title entry had been refreshed).
+#
+# All cache reads and writes are also constrained to the cache directory
+# via ``path.resolve().is_relative_to(root.resolve())`` so a future bug in
+# key derivation can never escape the sandbox.
+
+# Warnings about a failing cache are chatty — once the filesystem is broken
+# every lookup would bleat.  Rate-limit to a single warning per process.
+_cache_warn_emitted: bool = False
+
+
+def _cache_warn(msg: str) -> None:
+    global _cache_warn_emitted
+    if _cache_warn_emitted:
+        return
+    _cache_warn_emitted = True
+    print(f"[wiki] WARNING: {msg}", file=sys.stderr)
+
 
 def _cache_dir() -> Path:
-    """Return the wiki cache directory, creating it on demand."""
-    path = Path.home() / ".config" / "bg3se-harness" / "wiki_cache"
-    path.mkdir(parents=True, exist_ok=True)
+    """Return the wiki cache directory, creating it on demand.
+
+    The directory (and its parent ``~/.config/bg3se-harness/``) is created
+    with ``0o700`` permissions so other local users on multi-user machines
+    cannot read or tamper with cached wiki payloads.  Existing directories
+    are left untouched.
+    """
+    config = Path.home() / ".config" / "bg3se-harness"
+    path = config / "wiki_cache"
+    for p in (config, path):
+        if not p.exists():
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+                try:
+                    p.chmod(0o700)
+                except OSError:
+                    pass
+            except OSError as exc:
+                _cache_warn(f"cache dir unavailable at {p}: {exc}")
+                return path  # return anyway — subsequent writes will fail loud
     return path
 
 
 def _cache_key(title: str) -> str:
-    """Return a filesystem-safe cache key for a page title."""
-    return re.sub(r"[^A-Za-z0-9._+-]", "_", title)[:128]
+    """Return a collision-resistant, filesystem-safe cache key for *title*.
+
+    SHA-1 truncated to 32 hex characters — deterministic, ~128 bits of
+    entropy, no path-traversal surface, no truncation hazard.  We do not
+    need cryptographic strength; collisions would merely overwrite an
+    existing cache entry.
+    """
+    return hashlib.sha1(title.encode("utf-8")).hexdigest()[:32]
 
 
-def _cache_read(title: str) -> dict | None:
-    """Return cached payload for *title* if it exists and is still fresh."""
-    path = _cache_dir() / f"{_cache_key(title)}.json"
-    if not path.exists():
+def _cache_path(title: str) -> Path | None:
+    """Return the absolute cache path for *title*, or None if unsafe.
+
+    This is the single gate that ensures every cache read and write stays
+    inside the cache directory.  Any key whose resolved path escapes the
+    sandbox is rejected (should never happen with SHA-1 keys, but we
+    assert the invariant so a future bug can't sneak past).
+    """
+    root = _cache_dir().resolve()
+    candidate = (root / f"{_cache_key(title)}.json").resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        _cache_warn(f"refusing cache path outside sandbox: {candidate}")
+        return None
+    return candidate
+
+
+def _cache_read(title: str, _depth: int = 0) -> dict | None:
+    """Return cached payload for *title* if it exists and is still fresh.
+
+    Follows a single level of alias indirection: if the on-disk record has
+    an ``alias_for`` field, re-read the target cache entry.  We cap the
+    recursion depth at 1 so circular aliases can never hang.
+    """
+    path = _cache_path(title)
+    if path is None or not path.exists():
         return None
     try:
         age = time.time() - path.stat().st_mtime
         if age > _CACHE_TTL_SECONDS:
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
 
+    if isinstance(data, dict) and "alias_for" in data and _depth < 1:
+        target = data.get("alias_for")
+        if isinstance(target, str) and target:
+            return _cache_read(target, _depth=_depth + 1)
+        return None
 
-def _cache_write(title: str, payload: dict) -> None:
-    path = _cache_dir() / f"{_cache_key(title)}.json"
+    return data if isinstance(data, dict) else None
+
+
+def _cache_write(title: str, payload: dict) -> bool:
+    """Persist *payload* under *title*.  Returns True on success."""
+    path = _cache_path(title)
+    if path is None:
+        return False
     try:
         path.write_text(json.dumps(payload), encoding="utf-8")
+        return True
     except OSError as exc:
-        print(f"[wiki] WARNING: cache write failed for {title!r}: {exc}", file=sys.stderr)
+        _cache_warn(f"cache write failed for {title!r}: {exc}")
+        return False
+
+
+def _cache_write_alias(alias: str, target_title: str) -> bool:
+    """Write an alias pointer so *alias* redirects to *target_title*."""
+    if alias == target_title:
+        return True
+    return _cache_write(alias, {"alias_for": target_title})
 
 
 def clear_cache() -> dict:
     """Wipe all cached wiki pages. Returns a summary dict."""
+    global _cache_warn_emitted
     try:
         removed = 0
         for entry in _cache_dir().glob("*.json"):
@@ -166,6 +269,9 @@ def clear_cache() -> dict:
                 removed += 1
             except OSError:
                 pass
+        # Reset the warn latch so a healthy subsequent run can bleat again
+        # if the disk goes bad later.
+        _cache_warn_emitted = False
         return {"success": True, "removed": removed}
     except Exception as exc:
         return _error("cache_error", f"clear_cache failed: {exc}")
@@ -286,15 +392,38 @@ def _find_template_block(wikitext: str, template_names: tuple[str, ...]) -> str 
     return None
 
 
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
 def _parse_template_fields(block: str) -> dict:
     """Parse a ``{{Template | key = value | ...}}`` block into a dict.
 
     Nested templates (``{{foo|bar}}``) and wiki-links (``[[X|Y]]``) do not
     terminate a field — we track bracket depth so embedded pipes are
     treated as part of the value.
+
+    Blind spots (documented rather than handled — these have not appeared in
+    real bg3.wiki spell/item pages as of 2026-04):
+
+    * ``<nowiki>|</nowiki>`` literal pipes would still split the field.
+    * ``{{!}}`` — MediaWiki's standard pipe-escape magic word — is *not*
+      expanded before tokenising.  If a page ever uses it inside a template
+      field, the field would split at the wrong place.
+    * Table markup (``{|`` / ``|}`` / ``|-``) is not tracked; a spell page
+      embedding a raw wiki table inside a field would be mis-parsed.
+    * HTML entities such as ``&#124;`` are not decoded before tokenising.
+
+    If any of these ever become a problem, the tokeniser below is the place
+    to extend — add a ``depth_nowiki`` counter or a ``{{!}}`` preprocessor.
     """
     if not block:
         return {}
+
+    # Strip HTML comments *before* tokenising so embedded pipes inside a
+    # comment (``<!-- https://bg3.wiki/... -->``) do not prematurely split
+    # the field.  The previous implementation stripped comments after the
+    # split, which was too late.
+    block = _HTML_COMMENT_RE.sub("", block)
 
     # Strip the leading "{{Template" and trailing "}}".
     inner_match = re.match(r"\{\{\s*[^|}\n]+", block)
@@ -350,8 +479,6 @@ def _parse_template_fields(block: str) -> dict:
             continue
         key, _, value = raw.partition("=")
         key = key.strip()
-        # Skip wiki comments (<!-- ... -->) and empty values.
-        value = re.sub(r"<!--.*?-->", "", value, flags=re.DOTALL)
         value = value.strip()
         if not key:
             continue
@@ -360,30 +487,64 @@ def _parse_template_fields(block: str) -> dict:
     return result
 
 
+def _flatten_template(body: str) -> str:
+    """Flatten a single (already-innermost) ``{{name|arg1|arg2}}`` body.
+
+    Drops the template name and joins the remaining positional/named args
+    with a single space.  Named args (``foo=bar``) keep only their value —
+    this is best-effort output for display, not a round-trip.
+    """
+    parts: list[str] = []
+    for raw in body.split("|"):
+        piece = raw.strip()
+        if not piece:
+            continue
+        if "=" in piece:
+            piece = piece.split("=", 1)[1].strip()
+        if piece:
+            parts.append(piece)
+    if not parts:
+        return ""
+    # Drop the template name.
+    return " ".join(parts[1:]) if len(parts) > 1 else ""
+
+
+# Innermost `{{...}}` — contains no further `{{` or `}}`.
+_INNERMOST_TEMPLATE_RE = re.compile(r"\{\{([^{}]*?)\}\}")
+_WIKI_LINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
 def _strip_wiki_markup(value: str) -> str:
     """Flatten common wiki markup in a field value for JSON output.
 
     * ``[[Target|Text]]`` → ``Text``
     * ``[[Target]]`` → ``Target``
     * ``{{DamageText|8d6|Fire}}`` → ``8d6 Fire``
+    * ``{{Outer|{{Inner|8d6|Fire}}}}`` → ``8d6 Fire`` (nested, innermost-first)
     * ``<br />`` / ``<br>`` → space
     * Collapse runs of whitespace.
+
+    Nested templates are expanded by iteratively replacing the innermost
+    match until a fixed point is reached.  A hard upper bound prevents
+    pathological input from spinning forever.
     """
     if not value:
         return ""
 
-    # Expand simple {{DamageText|...}} and similar helper templates by
-    # joining their positional args.  This is a best-effort flattening —
-    # anything unrecognised is left as-is so callers can still inspect it.
-    def _expand_template(match: re.Match) -> str:
-        body = match.group(1)
-        parts = [p.strip() for p in body.split("|") if p.strip()]
-        if not parts:
-            return ""
-        # Drop the template name; join the positional args.
-        return " ".join(parts[1:]) if len(parts) > 1 else parts[0]
-
-    value = re.sub(r"\{\{([^{}]+)\}\}", _expand_template, value)
+    # Expand templates innermost-first.  Each pass replaces every match
+    # that contains no further ``{{``/``}}`` pairs; repeating the pass
+    # unwraps one more layer of nesting.  We cap the loop at 16 iterations
+    # — real bg3.wiki templates nest at most two or three deep.
+    for _ in range(16):
+        new_value, count = _INNERMOST_TEMPLATE_RE.subn(
+            lambda m: _flatten_template(m.group(1)),
+            value,
+        )
+        if count == 0:
+            break
+        value = new_value
 
     def _expand_link(match: re.Match) -> str:
         body = match.group(1)
@@ -391,9 +552,9 @@ def _strip_wiki_markup(value: str) -> str:
             return body.split("|", 1)[1]
         return body
 
-    value = re.sub(r"\[\[([^\[\]]+)\]\]", _expand_link, value)
-    value = re.sub(r"<br\s*/?>", " ", value, flags=re.IGNORECASE)
-    value = re.sub(r"\s+", " ", value).strip()
+    value = _WIKI_LINK_RE.sub(_expand_link, value)
+    value = _BR_RE.sub(" ", value)
+    value = _WHITESPACE_RE.sub(" ", value).strip()
     return value
 
 
@@ -427,17 +588,21 @@ def _lookup(
 
     Caching strategy: the cache is keyed by the user's input name *before*
     opensearch resolution so a repeated lookup short-circuits both network
-    calls (opensearch and parse).  The resolved title is also used as a
-    secondary cache key so ``query_spell("Fireball")`` and
-    ``query_spell("fireball")`` both hit the same entry after the first
-    opensearch run.
+    calls (opensearch and parse).  The resolved title holds the real
+    payload; the user's input (if different) holds an ``alias_for`` pointer
+    that is followed on subsequent reads.
+
+    Entries are tagged with ``cached_kind`` so a ``query_spell`` result is
+    never silently reused by ``verify_page`` (see task #27).  The fresh
+    payload always has ``"cached": False``; the read path rewrites the flag
+    to ``True`` on a hit.
     """
     if not name or not name.strip():
         return _error("validation_error", f"{kind} name must be non-empty.")
 
     if use_cache:
         cached = _cache_read(name)
-        if cached is not None:
+        if cached is not None and cached.get("cached_kind") == kind:
             payload = dict(cached)
             payload["cached"] = True
             return payload
@@ -448,11 +613,14 @@ def _lookup(
 
     if use_cache:
         cached = _cache_read(title)
-        if cached is not None:
+        if cached is not None and cached.get("cached_kind") == kind:
             payload = dict(cached)
             payload["cached"] = True
-            # Record the alias so the user's spelling hits on subsequent runs.
-            _cache_write(name, cached)
+            # Record the alias so the user's spelling hits on the next run
+            # without re-doing opensearch.  Alias writes are cheap pointer
+            # files, not duplicated payloads, so there is no staleness race.
+            if name != title:
+                _cache_write_alias(name, title)
             return payload
 
     page, err = _fetch_wikitext(title)
@@ -475,6 +643,7 @@ def _lookup(
     result = {
         "success": True,
         "kind": kind,
+        "cached_kind": kind,  # stored; stripped from user-facing dict on return
         "title": title,
         "pageid": page.get("pageid"),
         "url": f"https://bg3.wiki/wiki/{urllib.parse.quote(title.replace(' ', '_'))}",
@@ -484,9 +653,9 @@ def _lookup(
     }
 
     if use_cache:
-        _cache_write(title, result)
-        if name != title:
-            _cache_write(name, result)
+        if _cache_write(title, result):
+            if name != title:
+                _cache_write_alias(name, title)
     return result
 
 
@@ -531,9 +700,9 @@ def verify_page(
 ) -> dict:
     """Fetch a bg3.wiki page and check its engine ``uid`` field.
 
-    Intended as a lightweight cross-reference when you already know both a
-    stat name and a wiki page name.  Given just the page name, it still
-    returns the uid so you can pipe the result into other tooling.
+    Intended as a lightweight offline cross-reference when you already know
+    both a stat name and a wiki page name.  Given just the page name, it
+    still returns the uid so you can pipe the result into other tooling.
 
     Returns::
 
@@ -551,12 +720,28 @@ def verify_page(
     When ``expect_uid`` is provided and does not match, the result has
     ``success = True`` but ``uid_matches = False`` so callers can surface the
     mismatch without treating it as a fatal error.
+
+    **Scope note (vs. the original plan).**  The opencli-integration plan
+    called for ``wiki verify`` to fetch the wiki record *and* call
+    ``Ext.Stats.Get(name)`` on the running game, diff the two structures,
+    and surface any mismatches.  What shipped here is narrower: a static
+    field printer with an optional string-match check.  The runtime-diff
+    variant requires a live BG3SE socket and is tracked as a follow-up
+    (search task tracker for "runtime diff" or re-read
+    ``~/.claude/plans/2026-04-06-bg3se-harness-opencli-integration.md``
+    lines 130-134 and 268-271 for the original intent).  The current
+    function is useful on its own — it works offline, is cacheable, and
+    gives follow-up tooling a clean input.
     """
     if not page_name or not page_name.strip():
         return _error("validation_error", "page name must be non-empty.")
 
+    # Only reuse a cached entry that was stored *by* verify_page — reusing a
+    # spell or item payload would paper over a page that no longer contains
+    # the template we would have checked.  The cached_kind tag makes this
+    # explicit and prevents cross-kind aliasing bugs.
     cached = _cache_read(page_name) if use_cache else None
-    if cached and cached.get("kind") in ("spell", "item"):
+    if cached and cached.get("cached_kind") == "verify":
         result = dict(cached)
         result["cached"] = True
     else:
@@ -582,6 +767,7 @@ def verify_page(
         result = {
             "success": True,
             "kind": "verify",
+            "cached_kind": "verify",
             "title": page.get("title") or page_name,
             "pageid": page.get("pageid"),
             "url": f"https://bg3.wiki/wiki/{urllib.parse.quote((page.get('title') or page_name).replace(' ', '_'))}",

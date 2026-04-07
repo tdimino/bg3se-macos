@@ -1,4 +1,4 @@
-"""Unit tests for the bg3.wiki client (mod_manager.wiki).
+"""Unit tests for the bg3.wiki client (bg3se_harness.wiki).
 
 Uses canned MediaWiki API fixtures and monkey-patches urllib.request.urlopen
 so the tests run fully offline.  A per-test temporary cache directory keeps
@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bg3se_harness.mod_manager import wiki
+from bg3se_harness import wiki
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +189,37 @@ class WikiClientTests(unittest.TestCase):
             wiki._strip_wiki_markup("line one<br />line two"),
             "line one line two",
         )
+
+    def test_strip_wiki_markup_expands_nested_templates(self) -> None:
+        # Innermost template is resolved first; the outer template's only
+        # positional arg becomes the inner template's flattened output.
+        self.assertEqual(
+            wiki._strip_wiki_markup("{{Outer|{{DamageText|8d6|Fire}}}}"),
+            "8d6 Fire",
+        )
+        # Two layers of nesting.
+        self.assertEqual(
+            wiki._strip_wiki_markup("{{A|{{B|{{DamageText|2d6|Cold}}}}}}"),
+            "2d6 Cold",
+        )
+
+    def test_parse_template_fields_ignores_comments_with_pipes(self) -> None:
+        # HTML comments containing a literal ``|`` must not split the field.
+        block = (
+            "{{Feature page\n"
+            "| type = spell\n"
+            "| description = Deals <!-- 1d4 | 1d6 | 1d8 --> damage.\n"
+            "| cost = action\n"
+            "}}"
+        )
+        fields = wiki._parse_template_fields(block)
+        self.assertEqual(fields["type"], "spell")
+        self.assertEqual(fields["cost"], "action")
+        # The comment must be gone, but the surrounding text must remain.
+        self.assertIn("Deals", fields["description"])
+        self.assertIn("damage", fields["description"])
+        self.assertNotIn("1d4", fields["description"])
+        self.assertNotIn("<!--", fields["description"])
 
     # -- query_spell -------------------------------------------------------
 
@@ -364,6 +395,91 @@ class WikiClientTests(unittest.TestCase):
         # Second call should not hit the network at all.  Opensearch (1) and
         # parse (2) were the only calls from the first invocation.
         self.assertEqual(call_count["n"], 2)
+
+    def test_cache_alias_hits_title_entry(self) -> None:
+        # First query by the exact title, then by a lowercase variant.  The
+        # second call must follow the alias pointer without firing parse
+        # again — only an extra opensearch is allowed (to resolve the new
+        # spelling), and in fact even that is skipped because the input
+        # itself is cached on the first write.
+        routes = {
+            "action=opensearch": _opensearch_payload("Fireball", ["Fireball"]),
+            "action=parse": _parse_payload("Fireball", FIREBALL_WIKITEXT, 2677),
+        }
+        call_count = {"n": 0}
+
+        def counting_urlopen(req, timeout=None):
+            call_count["n"] += 1
+            return _route_response(req.full_url, routes)
+
+        with mock.patch.object(wiki.urllib.request, "urlopen", side_effect=counting_urlopen):
+            # Seed the cache.
+            wiki.query_spell("Fireball", use_cache=True)
+            baseline = call_count["n"]
+            # Different casing → opensearch resolves to "Fireball", which
+            # hits the cached title entry and writes an alias pointer.
+            second = wiki.query_spell("fireball", use_cache=True)
+
+        self.assertTrue(second["success"])
+        self.assertTrue(second["cached"])
+        # Only the extra opensearch call should fire — no parse call.
+        self.assertEqual(call_count["n"], baseline + 1)
+
+    def test_cache_cross_kind_does_not_collide(self) -> None:
+        # A cached `verify` entry must not be served to `query_spell` or
+        # `query_item`.  cached_kind tagging enforces this.
+        cache_path = Path(self._tmp.name)
+        # Seed a verify-kind entry under the cache key for "Ghost".
+        from hashlib import sha1
+        key = sha1(b"Ghost").hexdigest()[:32]
+        (cache_path / f"{key}.json").write_text(
+            json.dumps({
+                "success": True,
+                "kind": "verify",
+                "cached_kind": "verify",
+                "title": "Ghost",
+                "pageid": 1,
+                "uid": "WPN_OLD",
+                "fields": {"uid": "WPN_OLD"},
+                "cached": False,
+            }),
+            encoding="utf-8",
+        )
+
+        routes = {
+            "action=opensearch": _opensearch_payload("Ghost", ["Ghost"]),
+            "action=parse": _parse_payload("Ghost", FIREBALL_WIKITEXT, 2677),
+        }
+        with mock.patch.object(
+            wiki.urllib.request,
+            "urlopen",
+            side_effect=lambda req, timeout=None: _route_response(req.full_url, routes),
+        ):
+            result = wiki.query_spell("Ghost", use_cache=True)
+
+        self.assertTrue(result["success"])
+        # The spell lookup must have fetched fresh data, not reused the verify entry.
+        self.assertEqual(result["kind"], "spell")
+        self.assertEqual(result["uid"], "Projectile_Fireball")
+
+    def test_cache_key_is_hash_not_sanitised(self) -> None:
+        # The cache key must be collision-resistant and path-traversal-safe.
+        # A ``..`` title would have been a valid filename under the old
+        # sanitiser; under SHA-1 it becomes a hex digest.
+        key = wiki._cache_key("..")
+        self.assertNotEqual(key, "..")
+        self.assertTrue(all(c in "0123456789abcdef" for c in key))
+        self.assertEqual(len(key), 32)
+
+    def test_cache_path_stays_inside_sandbox(self) -> None:
+        # Regardless of key input, the computed cache path must resolve
+        # inside the temp cache directory.
+        path = wiki._cache_path("anything/../../etc/passwd")
+        self.assertIsNotNone(path)
+        self.assertTrue(
+            str(path).startswith(str(Path(self._tmp.name).resolve())),
+            f"expected {path} to be inside {self._tmp.name}",
+        )
 
     def test_clear_cache_removes_files(self) -> None:
         (Path(self._tmp.name) / "Fireball.json").write_text(

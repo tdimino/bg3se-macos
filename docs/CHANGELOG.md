@@ -13,6 +13,105 @@ Each entry includes:
 
 ---
 
+## [Unreleased] — Harness web integrations
+
+**Category:** Harness tooling (Python CLI, no dylib changes) | **Branch:** `feat/opencli-integration`
+
+Adds Nexus Mods changelog / files / updated endpoints and a new bg3.wiki
+MediaWiki client to the harness.  No game-side code changes; no SE version
+bump.
+
+### Added
+- **`bg3se-harness mod changelog <id>`** — fetches the per-version changelog
+  JSON for a Nexus mod.  Entries are stripped of HTML so downstream tools
+  get plain text; the ``entries_html`` field preserves the original markup.
+  Versions are sorted newest-first via a tolerant sort key that handles
+  SemVer, ISO dates, and month-name date strings (``2024April-30``).
+- **`bg3se-harness mod versions <id>`** — lists every file attached to a
+  mod (file_id, name, version, category, size, timestamps) so harness users
+  can locate historical builds.
+- **`bg3se-harness mod updated [--period 1d|1w|1m]`** — lists Nexus mods
+  updated in the given window.  Validates the period client-side; invalid
+  values fail with a ``validation_error`` envelope before any HTTP call.
+- **`bg3se-harness wiki spell <name>`** — resolves a spell by display name
+  via MediaWiki OpenSearch and returns the parsed ``{{Feature page | ...}}``
+  template fields (level, school, damage, damage type, uid, classes, ...).
+- **`bg3se-harness wiki item <name>`** — same, for weapons/armour via
+  ``{{WeaponPage}}`` / ``{{ArmourPage}}`` / ``{{EquipmentPage}}`` / related
+  templates.
+- **`bg3se-harness wiki verify <page> [--expect-uid UID]`** — offline
+  cross-reference: fetches a wiki page and optionally checks its ``uid``
+  field against a known stat name.  Runtime-diff against ``Ext.Stats.Get``
+  remains a follow-up (see the scope note on ``wiki.verify_page``).
+- **`bg3se-harness wiki clear-cache`** — wipes the 24h file cache under
+  ``~/.config/bg3se-harness/wiki_cache/``.
+- **`mod_manager.nexus`** — added ``get_mod_files``, ``get_changelogs``,
+  ``get_updated`` wrappers and the ``_version_sort_key`` helper.
+- **``bg3se_harness.wiki``** — new top-level module.  Stdlib-only (no
+  ``requests``/``httpx``), SHA-1-keyed file cache, alias-pointer files for
+  case-insensitive lookups, bracket-aware MediaWiki template tokeniser with
+  HTML-comment stripping, fixed-point nested-template expansion.
+- **Tests**: ``tests_wiki.py`` (23 offline tests) and 14 new cases in
+  ``tests_nexus.py`` (23 total) covering cache semantics, 403
+  classification, version sort, comment-in-pipe tokenisation, nested
+  template expansion, and path-containment sandbox.
+
+### Changed
+- **``_classify_403``** — path-aware classifier for Nexus 403 responses.
+  Rule cascade: ``/users/...`` paths → ``auth_error``; strong body markers
+  (``adult``, ``content filter``, ``permission to view``, ...) →
+  ``content_restricted``; ``/mods/\d+`` per-mod detail paths →
+  ``content_restricted`` by default; fallback → ``auth_error``.  Collection
+  endpoints (``/mods/search.json``, ``/mods/updated.json``) correctly fall
+  through to the auth fallback.
+- **``_version_sort_key``** — new tolerant sort key.  Tokenises mixed
+  alphanumeric chunks and resolves month names via ``_MONTH_NAMES`` so
+  ``2024May-1`` sorts after ``2024April-30`` (mod 2172's real pattern).
+  SemVer prerelease / build metadata limitations documented in the
+  docstring.
+- **``_try_request``** — reads the ``HTTPError`` body once, decodes with
+  ``errors="replace"``, and tries JSON parsing on a single copy.  The
+  previous over-broad ``except Exception`` around ``exc.read()`` narrowed
+  to ``(OSError, AttributeError, ValueError)`` so real bugs surface.
+- **``search_mods``** — skips client-side substring filtering when results
+  come from ``/mods/search.json`` (server-ranked), keeps the filter when
+  falling back to ``/mods/updated.json``.
+- **``mod_cli``** — ``list``, ``search``, ``backup`` branches now honour
+  ``{"success": False}`` envelopes in their exit codes, matching the
+  convention added by ``changelog``/``versions``/``updated``.
+- **``_HTMLStripper``** — symmetric ``<br>`` handling, removed dead
+  ``except Exception`` fallback around ``HTMLParser.feed``.
+
+### Technical
+- **Wiki cache hardening**.  Keys are SHA-1 truncated to 32 hex chars
+  (collision-resistant, no path-traversal surface, no truncation hazard).
+  Aliases are pointer files ``{"alias_for": "CanonicalTitle"}`` rather than
+  duplicated payloads — eliminates the two-writer staleness race the
+  previous double-payload scheme carried.  Every cache read/write resolves
+  inside the cache directory (``path.resolve().relative_to(root)``); a key
+  that escapes the sandbox is rejected.  ``~/.config/bg3se-harness/`` and
+  ``~/.config/bg3se-harness/wiki_cache/`` are created with ``0o700``
+  permissions.  Stderr cache warnings are rate-limited to once per
+  process.  Entries carry a ``cached_kind`` tag so ``query_spell`` /
+  ``query_item`` / ``verify_page`` never read each other's payloads.
+- **Template tokeniser blind spots** documented in
+  ``_parse_template_fields``: ``<nowiki>|</nowiki>``, ``{{!}}`` magic word,
+  raw table markup, HTML entities.  None appear in real BG3.wiki spell /
+  item pages as of 2026-04, so we trade completeness for simplicity and
+  flag the limitations in the docstring.
+- **``wiki.py`` moved** from ``tools/bg3se_harness/mod_manager/wiki.py`` to
+  ``tools/bg3se_harness/wiki.py`` to match the plan and the peer modules
+  (``parity.py``, ``compat.py``, ``savegames.py``).
+
+### Plan tracking
+- Chunks 1 and 2 of ``~/.claude/plans/2026-04-06-bg3se-harness-opencli-integration.md``
+  shipped; Chunks 3–9 (OpenCLI manifest, upstream-parity tracker, trending
+  mods, doctor opencli, graceful degradation) remain.  Deviations from the
+  original plan (Cargo → opensearch pivot, verify-as-field-printer) are
+  recorded in the plan file's "Deviation log" section.
+
+---
+
 ## [v0.36.50] - 2026-04-02
 
 **Parity:** ~94% | **Category:** Crash Fixes, Build System, Safety | **Issues:** #78, #77, #73

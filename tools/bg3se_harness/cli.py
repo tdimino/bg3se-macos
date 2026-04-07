@@ -26,8 +26,8 @@ from .flags import (
 from .probe import cmd_probe
 from .menu import cmd_menu
 from .mod_cli import cmd_mod
-from .mod_manager.wiki import cmd_wiki
 from .parity import cmd_parity
+from .wiki import cmd_wiki  # bg3.wiki MediaWiki client
 from .savegames import cmd_save
 from .screenshot import cmd_screenshot
 from .stats_inspect import cmd_stats

@@ -152,7 +152,9 @@ def _error(error_type: str, message: str, **extra) -> dict:
 
 
 # Strong content-restriction markers — any of these in the 403 body forces
-# classification as content_restricted regardless of path.
+# classification as content_restricted regardless of path.  Keep these specific:
+# generic phrases like "not available" are too broad (they also match "Service
+# not available" or "Endpoint not available" auth-key errors).
 _CONTENT_RESTRICTION_MARKERS: tuple[str, ...] = (
     "adult",
     "content blocking",
@@ -164,7 +166,6 @@ _CONTENT_RESTRICTION_MARKERS: tuple[str, ...] = (
     "restricted content",
     "hidden by the author",
     "mod not available",  # Nexus's canonical phrase for hidden / blocked mods
-    "not available",
 )
 
 # Auth-only paths: a 403 here is definitively an API key problem, never a
@@ -172,6 +173,13 @@ _CONTENT_RESTRICTION_MARKERS: tuple[str, ...] = (
 _AUTH_PATH_PREFIXES: tuple[str, ...] = (
     "/users/",
 )
+
+# Per-mod detail paths.  A 403 here means Nexus is blocking a specific mod for
+# this user, not that the API key is bad.  Matches ``/mods/<digits>`` in both
+# ``/v1/games/<game>/mods/1234.json`` and ``/v1/games/<game>/mods/1234/files/...``
+# while excluding collection endpoints like ``/mods/search.json`` or
+# ``/mods/updated.json``.
+_MOD_DETAIL_PATH_RE = re.compile(r"/mods/\d+(?:[/.]|$)")
 
 _MOD_CONTENT_RESTRICTED_HINT = (
     "This mod is hidden by Nexus content filters (adult content, per-mod "
@@ -200,7 +208,7 @@ def _classify_403(
 
     1. Path whitelisted as auth-only (``/users/...``)     → ``auth_error``
     2. Body text contains any strong restriction marker   → ``content_restricted``
-    3. Path targets a specific mod (``/mods/{id}/...``)   → ``content_restricted``
+    3. Path targets a specific mod (``/mods/<id>``)       → ``content_restricted``
     4. Fallback                                           → ``auth_error``
 
     The per-mod path rule is the critical fix: a successfully-authenticated
@@ -208,6 +216,11 @@ def _classify_403(
     blocking that mod for this user (hidden, moderated, adult content, etc.),
     not that the API key is bad.  If the key were bad, the auth would have
     failed at the validation endpoint long before we reached mod-detail paths.
+
+    Rule 3 deliberately uses a strict ``/mods/\\d+`` regex so that collection
+    endpoints such as ``/mods/search.json`` and ``/mods/updated.json`` fall
+    through to the auth fallback — a 403 on a collection endpoint is always
+    an API key problem.
     """
     api_message = ""
     if isinstance(body_json, dict):
@@ -229,8 +242,8 @@ def _classify_403(
             message = f"{api_message} — {_MOD_CONTENT_RESTRICTED_HINT}"
         return "content_restricted", message
 
-    # Rule 3: per-mod paths → content-restricted by default.
-    if "/mods/" in path:
+    # Rule 3: per-mod detail paths → content-restricted by default.
+    if _MOD_DETAIL_PATH_RE.search(path):
         message = _MOD_CONTENT_RESTRICTED_HINT
         if api_message:
             message = f"{api_message} — {_MOD_CONTENT_RESTRICTED_HINT}"
@@ -255,23 +268,27 @@ def _try_request(path: str, params: dict | None = None) -> tuple[dict | list | N
                 "No Nexus API key found. Set NEXUS_API_KEY or create "
                 "~/.config/bg3se-harness/nexus_api_key.",
             )
-        return None, _error("network_error", str(exc))
+        return None, _error("internal_error", str(exc))
     except urllib.error.HTTPError as exc:
         # Read the body once — multiple branches below want to sniff it.
+        # HTTPError exposes a file-like object; reading it can raise OSError
+        # (network truncation) or AttributeError (if ``fp`` is None, as in
+        # some synthetic tests).  We deliberately don't swallow arbitrary
+        # exceptions here so real bugs surface in logs.
         body_text = ""
         body_json: dict | None = None
         try:
             raw = exc.read()
-            if raw:
-                body_text = raw.decode("utf-8", errors="replace")
-                try:
-                    parsed = json.loads(body_text)
-                    if isinstance(parsed, dict):
-                        body_json = parsed
-                except (json.JSONDecodeError, ValueError):
-                    pass
-        except Exception:
-            pass
+        except (OSError, AttributeError, ValueError):
+            raw = b""
+        if raw:
+            body_text = raw.decode("utf-8", errors="replace")
+            try:
+                parsed = json.loads(body_text)
+                if isinstance(parsed, dict):
+                    body_json = parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         if exc.code == 401:
             return None, _error(
@@ -291,7 +308,7 @@ def _try_request(path: str, params: dict | None = None) -> tuple[dict | list | N
     except urllib.error.URLError as exc:
         return None, _error("network_error", f"Network error: {exc.reason}")
     except Exception as exc:
-        return None, _error("network_error", f"Unexpected error: {exc}")
+        return None, _error("internal_error", f"Unexpected error: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -357,14 +374,17 @@ def search_mods(query: str, game: str = _DEFAULT_GAME) -> dict:
     """
     # Try the search endpoint first.  The Nexus API exposes this for Nexus
     # site search but not all API keys support it — fall through gracefully.
+    # The server applies its own ranking, so we skip the client-side substring
+    # filter and trust the endpoint's result set.
     data, err = _try_request(
         f"/games/{game}/mods/search.json",
         params={"q": query},
     )
     if err is None and isinstance(data, list):
-        return _format_search_results(data, query)
+        return _format_search_results(data, query_filter="")
 
-    # Fallback: fetch recently-updated mods and filter client-side.
+    # Fallback: fetch recently-updated mods and filter client-side by the
+    # raw user query.
     data, err = _try_request(
         f"/games/{game}/mods/updated.json",
         params={"period": "1m"},
@@ -375,20 +395,26 @@ def search_mods(query: str, game: str = _DEFAULT_GAME) -> dict:
     if not isinstance(data, list):
         return {"results": [], "count": 0}
 
-    return _format_search_results(data, query)
+    return _format_search_results(data, query_filter=query)
 
 
-def _format_search_results(raw: list, query: str) -> dict:
-    """Normalise raw Nexus mod list, optionally filtering by query string."""
-    query_lower = query.lower()
+def _format_search_results(raw: list, query_filter: str = "") -> dict:
+    """Normalise a raw Nexus mod list, optionally filtering by query string.
+
+    When *query_filter* is empty the raw list is returned as-is (used for
+    server-ranked search results).  When non-empty, each entry is kept only
+    if the query substring appears in the mod name or summary.
+    """
+    query_lower = query_filter.lower()
     results = []
     for mod in raw:
         if not isinstance(mod, dict):
             continue
         name = mod.get("name") or ""
         summary = mod.get("summary") or ""
-        # When data comes from search endpoint it already matches; from the
-        # updated endpoint we filter by name/summary substring.
+        # When data comes from the search endpoint the caller passes an empty
+        # filter, so the substring check is skipped.  For the updated-mods
+        # fallback we filter by name/summary substring.
         if query_lower and query_lower not in name.lower() and query_lower not in summary.lower():
             continue
         endorsement_count = mod.get("endorsement_count") or 0
@@ -566,7 +592,17 @@ def _pick_primary_file(mod_id: int, game: str) -> tuple[int | None, dict | None]
 # ---------------------------------------------------------------------------
 
 class _HTMLStripper(HTMLParser):
-    """Collect text content from an HTML fragment, dropping all tags."""
+    """Collect text content from an HTML fragment, dropping all tags.
+
+    Tags that semantically introduce a line break are handled symmetrically —
+    ``<br>`` is treated as a self-closing newline and ``<p>``, ``<li>``,
+    ``<div>`` insert a newline at the close boundary only.  This prevents
+    doubled gaps between list items (the previous version emitted a newline
+    at both the start and end of every ``<li>``).
+    """
+
+    # Tags that contribute a trailing newline when their end tag fires.
+    _BLOCK_TAGS = frozenset(("p", "li", "div"))
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -576,11 +612,17 @@ class _HTMLStripper(HTMLParser):
         self._chunks.append(data)
 
     def handle_starttag(self, tag, attrs) -> None:
-        if tag in ("br", "p", "li", "div"):
+        # ``<br>`` is void: emit one newline and no matching end-tag handler.
+        if tag == "br":
+            self._chunks.append("\n")
+
+    def handle_startendtag(self, tag, attrs) -> None:
+        # XHTML-style ``<br />`` — same as the start tag form.
+        if tag == "br":
             self._chunks.append("\n")
 
     def handle_endtag(self, tag) -> None:
-        if tag in ("p", "li", "div"):
+        if tag in self._BLOCK_TAGS:
             self._chunks.append("\n")
 
     def get_text(self) -> str:
@@ -591,15 +633,16 @@ class _HTMLStripper(HTMLParser):
 
 
 def _strip_html(text: str) -> str:
-    """Convert an HTML changelog fragment to clean plain text."""
+    """Convert an HTML changelog fragment to clean plain text.
+
+    ``HTMLParser.feed`` on modern CPython tolerates malformed input without
+    raising, so we do not need a fallback branch.
+    """
     if not text:
         return ""
     parser = _HTMLStripper()
-    try:
-        parser.feed(text)
-        parser.close()
-    except Exception:
-        return text
+    parser.feed(text)
+    parser.close()
     return parser.get_text()
 
 
@@ -643,6 +686,19 @@ def _version_sort_key(version: str) -> tuple:
 
     Unknown alphabetic tokens still collapse to ``0`` so pre-release tags and
     build metadata do not crash the sort.
+
+    Limitations (not SemVer-compliant):
+
+    * Pre-release tags (``1.2.3-alpha`` < ``1.2.3``) are not ordered correctly —
+      ``alpha`` collapses to ``0`` and gets appended as a trailing zero, so
+      ``1.2.3-alpha`` sorts *after* ``1.2.3``.
+    * Build metadata (``1.2.3+20230101``) is treated as an extra version chunk
+      instead of being ignored.
+    * Unknown pre-release labels (``beta`` vs ``rc``) do not preserve ordering.
+
+    These cases do not occur in Nexus changelogs for BG3 mods (the two real
+    patterns seen in the wild are SemVer and month-name dates), so we trade
+    strict SemVer compliance for a single key that handles both.
     """
     if not version:
         return ()

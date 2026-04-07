@@ -21,7 +21,7 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 - `src/entity/` - Entity Component System (GUID lookup, components)
 - `ghidra/offsets/` - Reverse-engineered offsets documentation
 
-## Modding Toolkit (29 Commands)
+## Modding Toolkit (36 Commands)
 
 ```bash
 # Core pipeline
@@ -53,6 +53,15 @@ PYTHONPATH=tools python3 -m bg3se_harness mod list          # Installed mods + e
 PYTHONPATH=tools python3 -m bg3se_harness mod install <path.pak>  # Install local PAK
 PYTHONPATH=tools python3 -m bg3se_harness mod enable <name> # Enable in modsettings.lsx
 PYTHONPATH=tools python3 -m bg3se_harness mod search <query>  # Search Nexus Mods API
+
+# Web integrations (Nexus + bg3.wiki — stdlib urllib, 24h file cache)
+PYTHONPATH=tools python3 -m bg3se_harness mod changelog <id>       # Nexus changelogs (HTML stripped, newest-first)
+PYTHONPATH=tools python3 -m bg3se_harness mod versions <id>        # Nexus file list (file_id, version, category, size)
+PYTHONPATH=tools python3 -m bg3se_harness mod updated --period 1w  # Recently-updated mods (1d/1w/1m)
+PYTHONPATH=tools python3 -m bg3se_harness wiki spell "Fireball"    # Parsed {{Feature page}} template fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki item "Longsword +1" # Parsed {{WeaponPage}} / {{ArmourPage}} fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki verify "Fireball" --expect-uid Projectile_Fireball  # Offline uid cross-check
+PYTHONPATH=tools python3 -m bg3se_harness wiki clear-cache         # Wipe ~/.config/bg3se-harness/wiki_cache/
 
 # Parity + compatibility + diagnostics
 PYTHONPATH=tools python3 -m bg3se_harness parity scan       # Compare Ext table vs Windows baseline

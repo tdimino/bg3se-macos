@@ -336,6 +336,56 @@ class NexusClientTests(unittest.TestCase):
         # Nexus's terse phrase should be preserved verbatim.
         self.assertIn("Mod not available", result["message"])
 
+    def test_403_on_bare_mod_detail_path_is_content_restricted(self) -> None:
+        # Body has no content-block marker and no matching `mod not available`
+        # phrase — the per-mod path rule alone must push this into
+        # content_restricted.  This is the case the previous substring check
+        # was intended to handle but the body-marker branch was masking.
+        body = json.dumps({"message": "Forbidden"}).encode("utf-8")
+        err = self._make_http_error(403, body)
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.get_mod_info(22324)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "content_restricted")
+        self.assertEqual(result["status_code"], 403)
+
+    def test_403_on_mod_files_subpath_is_content_restricted(self) -> None:
+        # Sub-resources under a per-mod path (files, changelogs, download_link)
+        # must also be treated as per-mod blocks, not auth failures.
+        import urllib.error
+        err = urllib.error.HTTPError(
+            url="https://api.nexusmods.com/v1/games/baldursgate3/mods/22324/files.json",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(b'{"message":"Forbidden"}'),
+        )
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.get_mod_files(22324)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "content_restricted")
+
+    def test_403_on_mods_search_collection_is_auth_error(self) -> None:
+        # Collection endpoints under /mods/ (``search.json``, ``updated.json``)
+        # are not per-mod — a 403 here is always an API key problem and must
+        # fall through to the auth fallback.
+        import urllib.error
+        err = urllib.error.HTTPError(
+            url="https://api.nexusmods.com/v1/games/baldursgate3/mods/updated.json",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(b'{"message":"Forbidden"}'),
+        )
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.get_updated(period="1w")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "auth_error")
+        self.assertEqual(result["status_code"], 403)
+
     def test_403_on_users_validate_is_auth_error(self) -> None:
         # A 403 on /users/validate.json is definitively an API key problem.
         import urllib.error

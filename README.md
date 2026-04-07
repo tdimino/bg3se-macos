@@ -139,6 +139,43 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 
 See [ROADMAP.md](ROADMAP.md) for detailed progress.
 
+## Modding Toolkit (`bg3se-harness`)
+
+The repo ships a 36-command Python CLI at `tools/bg3se_harness/` that drives
+the full Script Extender development workflow — build, patch, launch, test,
+game inspection, Lua hot-reload, screenshot, crashlog parsing, mod
+installation, Nexus Mods API queries, bg3.wiki cross-reference, Ghidra RE
+bridge — without ever leaving the terminal.
+
+```bash
+# Core pipeline
+PYTHONPATH=tools python3 -m bg3se_harness status            # Game/socket/patch state
+PYTHONPATH=tools python3 -m bg3se_harness launch --continue # Auto-loads most recent save
+PYTHONPATH=tools python3 -m bg3se_harness test [filter]     # build + patch + launch + test → JSON
+PYTHONPATH=tools python3 -m bg3se_harness run "<lua>"       # Inline Lua via socket
+
+# Game inspection
+PYTHONPATH=tools python3 -m bg3se_harness entity <GUID>                      # Inspect entity components
+PYTHONPATH=tools python3 -m bg3se_harness stats WPN_Longsword --diff Shortsword  # RPG stats + diff
+PYTHONPATH=tools python3 -m bg3se_harness screenshot                         # Claude-Code-safe JPEG
+
+# Web integrations (Nexus + bg3.wiki, stdlib urllib, 24h file cache)
+PYTHONPATH=tools python3 -m bg3se_harness mod changelog 12345       # Per-version HTML-stripped changelog
+PYTHONPATH=tools python3 -m bg3se_harness mod versions 12345        # File list (id, category, size, ts)
+PYTHONPATH=tools python3 -m bg3se_harness mod updated --period 1w   # Recently-updated BG3 mods
+PYTHONPATH=tools python3 -m bg3se_harness wiki spell "Fireball"     # Parsed {{Feature page}} fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki item "Longsword +1"  # Parsed {{WeaponPage}} fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki verify "Fireball" --expect-uid Projectile_Fireball
+```
+
+All commands emit JSON to stdout, so they compose with `jq`, pipe into tests,
+or ship straight into agent workflows. The harness is stdlib-only (no
+`requests` / `httpx`) and caches wiki lookups in
+`~/.config/bg3se-harness/wiki_cache/` with a 24-hour TTL.
+
+See [docs/harness.md](docs/harness.md) for the full command surface and
+[agent_docs/development.md](agent_docs/development.md) for workflow recipes.
+
 ## Documentation
 
 | Document | Description |
@@ -260,6 +297,12 @@ bg3se-macos/
 │   └── ...                     # Other user-facing documentation
 │
 ├── tools/
+│   ├── bg3se_harness/          # 36-command Python CLI (build/patch/launch/test/inspect)
+│   │   ├── cli.py              #   Argparse root + handler dispatch
+│   │   ├── nexus.py            #   Nexus Mods API v1 client (search, info, files, changelogs, updated)
+│   │   ├── wiki.py             #   bg3.wiki MediaWiki client (spell, item, verify, clear-cache)
+│   │   ├── ghidra.py           #   Ghidra HTTP bridge (decompile, xrefs, strings)
+│   │   └── ...                 #   test_runner, launch, patch, stats_inspect, events, parity, ...
 │   ├── bg3se-console.c         # Standalone readline console client
 │   ├── extract_pak.py          # PAK file extractor
 │   ├── extract_typeids.py      # Generate TypeId header from binary
