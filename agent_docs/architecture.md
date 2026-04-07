@@ -8,12 +8,13 @@
 ## Module Structure
 ```
 src/
-├── core/           # Logging, version info, crash diagnostics
+├── core/           # Logging, version info, crash diagnostics, version detection
 │   ├── logging.c/h       # Structured logging with callbacks
 │   ├── crashlog.c/h      # mmap ring buffer, SIGSEGV handler, breadcrumbs
 │   ├── mach_exception.c/h # Mach exception handler (EXC_BAD_ACCESS before CrashReporter)
 │   ├── mach_exc_stubs/   # MIG-generated stubs from mach_exc.defs
-│   └── safe_memory.c/h   # Safe mach_vm_read wrappers
+│   ├── safe_memory.c/h   # Safe mach_vm_read wrappers
+│   └── version_detect.c/h # Game binary version detection, sentinel address probes
 ├── entity/         # Entity Component System (modular)
 │   ├── entity_system.c/h  # Core ECS, Lua bindings
 │   ├── guid_lookup.c/h    # GUID parsing, HashMap operations
@@ -29,7 +30,7 @@ src/
 ├── level/          # LevelManager, PhysicsScene, AiGrid access
 │   └── level_manager.c/h   # Singleton access, VMT-based physics dispatch
 ├── audio/          # WWise sound engine access
-│   └── audio_manager.c/h   # SoundManager singleton, audio control
+│   └── audio_manager.c/h   # SoundManager singleton, audio control, PlayExternalSound (STDString ABI)
 ├── lua/            # Lua API modules (lua_ext, lua_json, lua_osiris, lua_stats, lua_events, lua_logging, lua_level, lua_audio)
 ├── mod/            # Mod detection and loading
 ├── osiris/         # Osiris types, functions, handle encoding, pattern scanning
@@ -41,6 +42,7 @@ src/
 - `src/injector/main.c` - Core injection, Dobby hooks, Osi.* namespace, Lua state, OsirisFunctionHandle dispatch
 - `src/core/crashlog.c` - Crash-resilient logging (mmap ring buffer, SIGSEGV handler, breadcrumbs)
 - `src/core/mach_exception.c` - Mach exception handler (catches PAC failures before CrashReporter)
+- `src/core/version_detect.c` - Game binary version detection via Info.plist, sentinel address probes for version mismatch tolerance
 - `src/osiris/osiris_types.h` - OsiFunctionHandle encoding/decoding, function types, argument structs
 - `src/osiris/osiris_functions.c` - Function cache, type reading from game memory, struct probe
 - `src/mod/mod_loader.c` - Mod detection from modsettings.lsx, PAK loading

@@ -13,7 +13,7 @@ Each entry includes:
 
 ---
 
-## [v0.37.1] - 2026-03-31
+## [v0.36.50] - 2026-04-02
 
 **Parity:** ~94% | **Category:** Crash Fixes, Build System, Safety | **Issues:** #78, #77, #73
 
@@ -32,6 +32,34 @@ Each entry includes:
 - `g_lua_state` in `entity_events.c` is now `_Atomic(lua_State*)` with `memory_order_acquire`/`memory_order_release` — eliminates ARM64 weak-memory-ordering race
 - Deferred free list (max 256 entries) for old Signal connection buffers — freed on next main-thread tick instead of immediately
 - Prototype managers skip address-dependent init when version mismatch detected
+
+---
+
+## [v0.36.49+qedeshot] - 2026-03-28
+
+**Parity:** ~94% | **Category:** Qedeshot Knesset Swarm — Feature Parity Push | **Issues:** #78
+
+### Added
+- **6 Sweep functions** (Ext.Level): SweepSphereClosest, SweepCapsuleClosest, SweepBoxClosest, SweepSphereAll, SweepCapsuleAll, SweepBoxAll — VMT dispatch via PhysicsScene, Ghidra-verified slot indices
+- **RaycastAll** (Ext.Level): Multi-hit raycast returning all intersections
+- **PlayExternalSound** (Ext.Audio): Re-enabled with correct macOS STDString ABI construction
+- **6 Ext.Types functions**: GetAllTypes, GetTypeInfo, GetObjectType, TypeOf, IsA, Validate, GetComponentLayout, GetAllLayouts, GenerateIdeHelpers (VS Code IntelliSense)
+- **Ext.Localization.CreateHandle**: Localization handle creation (completes Ext.Localization namespace)
+- **Ext.Math.Fract**: Fractional part function (completes Ext.Math namespace)
+- **Generic Osi.DB_\* accessor**: `Osi.DB_Players:Get()`, `Osi.DB_IsTag:Get()`, etc. — read-only database query for any Osiris DB
+- **Entity: CreateComponent, RemoveComponent**: Attach/detach components via ComponentOps struct
+- **Entity: GetEntityType, GetSalt, GetIndex, GetNetId**: Handle introspection and network ID access
+- **ExecuteFunctor Dobby hook**: Intercepts functor execution for BeforeDealDamage/DealDamage event objects
+- **8+ polling events**: One-frame engine events with cached TypeIndex, listener-count guards, table reuse
+- **Version detection sentinel probes** (Issue #78): Sentinel address validation for game version mismatch tolerance — address-dependent features disable gracefully on unknown game versions
+
+### Fixed
+- **osiris_call_by_id unsafe pfn_InternalCall fallback removed**: Eliminated dangerous fallback path that could dispatch calls with wrong function pointer signatures
+
+### Technical
+- 23 commits across 4 feature branches (al-uzza, tip'eret, mami, kaptaru), merged sequentially
+- Parity pushed from ~93% to ~94% in a single Qedeshot swarm session
+- Optimized polling with cached TypeIndex lookups and listener-count guards to minimize per-frame overhead
 
 ---
 

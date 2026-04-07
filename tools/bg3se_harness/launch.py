@@ -208,6 +208,30 @@ def is_running():
     return result.returncode == 0
 
 
+def quit_game(force=False):
+    """Quit BG3. Tries graceful AppleScript first, falls back to SIGTERM."""
+    if not is_running():
+        return {"success": True, "method": "not_running"}
+
+    if not force:
+        # Graceful: AppleScript quit
+        result = subprocess.run(
+            ["osascript", "-e", 'quit app "Baldur\'s Gate 3"'],
+            capture_output=True, text=True,
+        )
+        # Wait up to 10s for graceful exit
+        for _ in range(10):
+            time.sleep(1)
+            if not is_running():
+                return {"success": True, "method": "graceful"}
+
+    # Force: pkill
+    kill_existing()
+    if not is_running():
+        return {"success": True, "method": "force"}
+    return {"success": False, "method": "failed"}
+
+
 def socket_alive():
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

@@ -1109,13 +1109,13 @@ static int lua_osi_dialogrequeststop(lua_State *L) {
         dialog = lua_tostring(L, 1);
     }
 
-    // Try real Osiris call first
-    if (pfn_InternalCall && dialog) {
+    // Try real Osiris call first (dispatch goes through g_divCall)
+    if (g_divCall && dialog) {
         LOG_LUA_INFO("Osi.DialogRequestStop('%s') - calling Osiris", dialog);
         osi_dialog_request_stop(dialog);
     } else {
         LOG_LUA_INFO("Osi.DialogRequestStop() called (no-op: %s)",
-                    dialog ? "InternalCall not available" : "no dialog specified");
+                    dialog ? "g_divCall not available" : "no dialog specified");
     }
 
     return 0;
@@ -1192,27 +1192,6 @@ static void track_player_guid(const char *guid) {
 }
 
 /**
- * DB_Players database accessor
- * Creates a table with a :Get() method that returns player list
- */
-static int lua_osi_db_players_get(lua_State *L) {
-    LOG_LUA_INFO("Osi.DB_Players:Get() called, known players: %d", g_knownPlayerCount);
-
-    // Return table of known players: { {guid1}, {guid2}, ... }
-    lua_newtable(L);
-
-    for (int i = 0; i < g_knownPlayerCount; i++) {
-        // Each entry is a table with the GUID as first element
-        lua_newtable(L);
-        lua_pushstring(L, g_knownPlayerGuids[i]);
-        lua_rawseti(L, -2, 1);  // t[1] = guid
-        lua_rawseti(L, -2, i + 1);  // result[i+1] = {guid}
-    }
-
-    return 1;
-}
-
-/**
  * Ext.Entity.GetDiscoveredPlayers() -> { guid1, guid2, ... }
  * Returns a simple array of discovered player GUIDs
  */
@@ -1235,8 +1214,8 @@ static int lua_entity_get_discovered_players(lua_State *L) {
 /**
  * Generic Osi.DB_<name>:Get([filter...]) read-only accessor.
  *
- * Security: this function is QUERY-ONLY. It uses pfn_InternalQuery (the read
- * path). The write/call path (pfn_InternalCall) is intentionally not used.
+ * Security: this function is QUERY-ONLY. It dispatches via g_divQuery
+ * (preferred) or pfn_InternalQuery (fallback). The call path is not used.
  *
  * Stack on entry (called as method via `:` syntax):
  *   1 = DB accessor table (has field "DBName" = the database name string)
@@ -1498,9 +1477,10 @@ static int osi_dynamic_call(lua_State *L) {
     LOG_OSIRIS_DEBUG("Osi.%s: Called with %d args (funcId=0x%x, type=%s[%d], arity=%d)",
                 funcName, numArgs, funcId, osi_func_type_str(funcType), funcType, arity);
 
-    // Check if we have the required function pointers
-    if (!pfn_InternalQuery && !pfn_InternalCall) {
-        LOG_OSIRIS_DEBUG("Osi.%s: ERROR: No Osiris function pointers available", funcName);
+    // Check if we have any dispatch available (DivFunctions from RegisterDIVFunctions,
+    // or InternalQuery as fallback for query-only paths)
+    if (!g_divQuery && !g_divCall && !pfn_InternalQuery) {
+        LOG_OSIRIS_DEBUG("Osi.%s: ERROR: No Osiris dispatch available (RegisterDIVFunctions not fired)", funcName);
         lua_pushnil(L);
         return 1;
     }
@@ -2636,16 +2616,10 @@ static int osiris_call_by_id(uint32_t funcId, OsiArgumentDesc *args) {
     if (g_divCall) {
         return g_divCall(funcId, args);
     }
-    // WARNING: InternalCall takes COsipParameterList*, NOT OsiArgumentDesc*.
-    // This fallback path is UNSAFE and will likely crash on ARM64.
-    // It only exists for the case where RegisterDIVFunctions hasn't fired yet.
-    if (pfn_InternalCall) {
-        LOG_OSIRIS_WARN("osiris_call_by_id: falling back to InternalCall (wrong struct type!)");
-        int result = pfn_InternalCall(funcId, (void *)args);
-        return result;
-    }
-    LOG_OSIRIS_DEBUG("ERROR: No call dispatch available (DivCall=%p, InternalCall=%p)",
-                     (void*)g_divCall, (void*)pfn_InternalCall);
+    // Fail closed: InternalCall takes COsiParameterList*, NOT OsiArgumentDesc*.
+    // Calling it with OsiArgumentDesc* crashes on ARM64 (different struct layout).
+    // RegisterDIVFunctions must fire before any Osi calls are safe.
+    LOG_OSIRIS_DEBUG("ERROR: g_divCall not available (RegisterDIVFunctions not yet called)");
     return 0;
 }
 

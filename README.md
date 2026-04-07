@@ -108,21 +108,21 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Lua Runtime | ✅ Lua 5.4 with Ext API |
 | Mod Loading | ✅ PAK file reading, auto-detection |
 | Ext.Osiris | ✅ Event listeners, custom functions (NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions), **server context guards** |
-| Ext.Entity | ✅ GUID lookup, **Dual EntityWorld** (client + server), **1,999 components registered** (534 layouts: 169 verified + 365 generated), **1,577 ARM64 sizes** + **702 Windows estimates** = **1,730 total** (87% coverage) |
+| Ext.Entity | ✅ GUID lookup, **Dual EntityWorld** (client + server), **1,999 components registered** (534 layouts: 169 verified + 365 generated), **1,577 ARM64 sizes** + **702 Windows estimates** = **1,730 total** (87% coverage), **CreateComponent, RemoveComponent, GetEntityType, GetSalt, GetIndex, GetNetId** |
 | Ext.Stats | ✅ **100% parity** — 15,774 stats, Get/GetAll/Create/Sync, CopyFrom, SetRawAttribute, ExecuteFunctors, TreasureTable/TreasureCategory stubs |
 | Ext.Events | ✅ 33 events (13 lifecycle + 17 engine + 2 functor + 1 network) with Prevent pattern, **runtime mod attribution** + `!mod_diag` |
 | Ext.IO | ✅ LoadFile, SaveFile, **AddPathOverride, GetPathOverride** |
 | Ext.Timer | ✅ WaitFor, WaitForRealtime, Cancel, Pause, Resume, **MicrosecTime, ClockEpoch, ClockTime, GameTime, DeltaTime, Ticks, Persistent timers (6 functions)** |
 | Ext.Vars | ✅ PersistentVars + User Variables + Mod Variables |
 | Ext.Input | ✅ Hotkeys, key injection |
-| Ext.Math | ✅ Vector/matrix operations, **16 quaternion functions**, scalar utils |
+| Ext.Math | ✅ Vector/matrix operations, **16 quaternion functions**, scalar utils, **Fract** |
 | Ext.Enums | ✅ 14 enum/bitfield types |
-| Ext.Types | ✅ Full reflection API (9 functions), **GenerateIdeHelpers** for VS Code IntelliSense |
+| Ext.Types | ✅ Full reflection API (9 functions incl. **GenerateIdeHelpers**) for VS Code IntelliSense |
 | Ext.StaticData | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription) via ForceCapture |
 | Ext.Resource | ✅ Get, GetAll, GetTypes, GetCount (34 resource types) |
 | Ext.Template | ✅ **Auto-capture**, iteration (Cache/LocalCache), GUID resolution |
-| Ext.Level | ✅ **9 functions** - RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, singleton accessors |
-| Ext.Audio | ✅ **13 functions** - PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent |
+| Ext.Level | ✅ **15 functions** - RaycastClosest, RaycastAny, **RaycastAll**, TestBox, TestSphere, GetHeightsAt, singleton accessors, **SweepClosest** (Sphere, Capsule, Box), **SweepAll** (Sphere, Capsule, Box) |
+| Ext.Audio | ✅ **13 functions** - PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent, **PlayExternalSound** (STDString ABI) |
 | Ext.Net | ✅ **Phase 4I Complete** - Full RakNet backend, PostMessageToServer/User/Client, BroadcastMessage, IsHost, IsReady, PeerVersion, **Request/Reply Callbacks** |
 | Ext.RegisterNetListener | ✅ Per-channel network message listener (MCM backbone) |
 | Net.CreateChannel | ✅ **Phase 4I Complete** - High-level channel API with SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, Broadcast |
@@ -132,7 +132,9 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Lifetime Scoping | ✅ Prevents stale object access |
 | Context System | ✅ **Server/Client context awareness**, Ext.IsServer/IsClient/GetContext, two-phase bootstrap |
 | Debug Console | ✅ Socket + file + in-game overlay |
+| Osi.DB_* | ✅ Generic database query accessor (`Osi.DB_Players:Get()`, etc.) |
 | Crash Attribution | ✅ **Runtime mod tracking** — per-handler mod name, `!mod_diag` console, soft-disable, enhanced crash reports with mod context |
+| Version Detection | ✅ Sentinel address probes for game version mismatch tolerance (Issue #78) |
 | Testing | ✅ `!test` suite (85 tests), `!test_ingame` (40 tests), Debug.* helpers, Frida scripts |
 
 See [ROADMAP.md](ROADMAP.md) for detailed progress.

@@ -13,15 +13,20 @@ Full namespace-by-namespace parity status with Windows BG3SE.
 - **Ext.StaticData** - Immutable game data (**All 9 types**: Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription via ForceCapture)
 - **Ext.Resource** - Non-GUID resources (34 types: Visual, Material, Texture, Dialog, etc.)
 - **Ext.Template** - Game object templates (14 functions, 10 properties, type detection via VMT)
-- **Ext.Types** - Full reflection API (9 functions): GetAllTypes (~2050), GetTypeInfo, GetObjectType, TypeOf, IsA, Validate, GetComponentLayout, GetAllLayouts, **GenerateIdeHelpers** (VS Code IntelliSense)
+- **Ext.Types** - Full reflection API (9 functions including **GenerateIdeHelpers**): GetAllTypes (~2050), GetTypeInfo, GetObjectType, TypeOf, IsA, Validate, GetComponentLayout, GetAllLayouts, GenerateIdeHelpers (VS Code IntelliSense)
 - **Ext.Debug** - Memory introspection (ReadPtr, ProbeStruct, HexDump), **mod diagnostics** (ModHealthCount, ModHealthAll, ModDisable)
 - **Ext.IMGUI** - **Complete widget system** (40 widget types): NewWindow, AddText, AddButton, AddCheckbox, AddInputText, AddCombo, AddSlider, AddColorEdit, AddProgressBar, AddTree, AddTable, AddTabBar, AddMenu, handle-based objects, event callbacks (OnClick, OnChange, OnClose, OnExpand, OnCollapse)
 - **Ext.Mod** - Mod information (5 functions): IsModLoaded, GetLoadOrder, GetMod, GetBaseMod, GetModManager
-- **Ext.Level** - **9 functions**: RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, GetCurrentLevel, GetPhysicsScene, GetAiGrid, IsReady
-- **Ext.Audio** - **13 functions**: PostEvent, Stop, PauseAllSounds, ResumeAllSounds, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent, GetSoundObjectId, IsReady
+- **Ext.Level** - **15 functions**: RaycastClosest, RaycastAny, **RaycastAll**, TestBox, TestSphere, GetHeightsAt, GetCurrentLevel, GetPhysicsScene, GetAiGrid, IsReady, **SweepClosest** (Sphere, Capsule, Box), **SweepAll** (Sphere, Capsule, Box)
+- **Ext.Audio** - **13 functions**: PostEvent, Stop, PauseAllSounds, ResumeAllSounds, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent, GetSoundObjectId, IsReady, **PlayExternalSound** (re-enabled with STDString ABI)
 - **Ext.Net** - Network messaging (8 functions): PostMessageToServer, PostMessageToUser, PostMessageToClient, BroadcastMessage, Version, IsHost, IsReady, PeerVersion, **Request/Reply Callbacks**, **RakNet Backend** (Phase 4I)
 - **Ext.RegisterNetListener** - Per-channel network message listener (MCM backbone)
 - **Net.CreateChannel** - High-level NetChannel API for multiplayer mod sync (SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, SendToClient, Broadcast)
 - **Ext.Utils** - Compatibility aliases (6 functions): Print, PrintWarning, PrintError, Version, MonotonicTime, GetGameState
-- **Ext.Math** - Math utilities: Random
+- **Ext.Math** - Math utilities (2 functions): Random, **Fract**
+- **Ext.Localization** - Localization API (2 functions): GetLanguage, **CreateHandle**
 - **Ext.ModEvents** - Per-mod cross-mod event system: Subscribe, Throw, Unsubscribe (MCM compat)
+- **Osi.DB_*** - Generic database query accessor (e.g. `Osi.DB_Players:Get()`, `Osi.DB_IsTag:Get()`)
+- **Entity** - Extended entity API: **CreateComponent**, **RemoveComponent**, **GetEntityType**, **GetSalt**, **GetIndex**, **GetNetId**
+- **Events** - **ExecuteFunctor** Dobby hook, BeforeDealDamage/DealDamage exist as event objects
+- **Version Detection** - Sentinel address probes for game version mismatch tolerance (Issue #78)

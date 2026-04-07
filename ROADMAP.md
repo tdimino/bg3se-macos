@@ -36,7 +36,7 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Osiris` | ✅ Full | ✅ RegisterListener + NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions | **100%** | 1 |
 | `Ext.Json` | ✅ Full (2) | ✅ Parse, Stringify | **100%** | 1 |
 | `Ext.IO` | ✅ Full (4) | ✅ LoadFile, SaveFile, AddPathOverride, GetPathOverride (4) | **100%** | 1 |
-| `Ext.Entity` | ✅ Full (26) | ⚠️ Get, GetByHandle, **Dual EntityWorld**, components, enumeration, **Entity Events** (Subscribe/OnCreate/OnDestroy + 8 variants, Unsubscribe) (24) | **92%** | 2 |
+| `Ext.Entity` | ✅ Full (26) | ✅ Get, GetByHandle, **Dual EntityWorld**, components, enumeration, **Entity Events** (Subscribe/OnCreate/OnDestroy + 8 variants, Unsubscribe), **CreateComponent, RemoveComponent, GetEntityType, GetSalt, GetIndex, GetNetId** (30) | **100%** | 2 |
 | `Ext.Stats` | ✅ Full (52) | ✅ **100% parity** — Get, GetAll, Create, Sync, CopyFrom, SetRawAttribute, ExecuteFunctors, TreasureTable stubs (52) | **100%** | 3 |
 | `Ext.Events` | ✅ Full (~33) | ✅ 33 events (13 lifecycle + 17 engine + 2 functor + 1 network) + Subscribe/Unsubscribe/Prevent | **100%** | 2.5 |
 | `Ext.Timer` | ✅ Full (13) | ✅ WaitFor, WaitForRealtime, Cancel, Pause, Resume, IsPaused, MonotonicTime, MicrosecTime, ClockEpoch, ClockTime, GameTime, DeltaTime, Ticks, IsGamePaused, +6 persistent (20) | **100%** | 2.3 |
@@ -44,14 +44,14 @@ This document tracks the development roadmap for achieving feature parity with W
 | `Ext.Vars` | ✅ Full (8) | ✅ User + Mod Variables (12) | **100%** | 2.6 |
 | `Ext.Types` | ✅ Full (15) | ✅ GetAllTypes, GetObjectType, GetTypeInfo, Validate, TypeOf, IsA, GetComponentLayout, GetAllLayouts, GenerateIdeHelpers (9) | **90%** | 7 |
 | `Ext.Enums` | ✅ Full | ✅ 14 enum/bitfield types | **100%** | 7 |
-| `Ext.Math` | ✅ Full (59) | ✅ 57 functions (vectors, matrices, 16 quaternions, scalars) | **97%** | 7.5 |
+| `Ext.Math` | ✅ Full (59) | ✅ 59 functions (vectors, matrices, 16 quaternions, scalars, **Fract**) | **100%** | 7.5 |
 | `Ext.Input` | ✅ Full | ✅ CGEventTap capture, hotkeys (8 macOS-specific) | **100%** | 9 |
 | `Ext.Net` | ✅ Full | ✅ Phase 4I Complete (handshake, version negotiation, full multiplayer transport) | **95%** | 6 |
 | `Ext.UI` | ✅ Full (9) | ❌ Not impl | **0%** | 8 |
 | `Ext.IMGUI` | ✅ Full (7+) | ✅ Complete widget system (40 types) - All widgets, events, Metal backend | **100%** | 8 |
-| `Ext.Level` | ✅ Full (21) | ⚠️ RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, singleton accessors (9) | **43%** | 9 |
-| `Ext.Audio` | ✅ Full (17) | ✅ PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, RTPC (set/get/reset), LoadEvent, UnloadEvent (13) | **76%** | 10 |
-| `Ext.Localization` | ✅ Full (2) | ⚠️ GetLanguage + safe stubs (1/2) | **50%** | 10 |
+| `Ext.Level` | ✅ Full (21) | ✅ RaycastClosest, RaycastAny, **RaycastAll**, TestBox, TestSphere, GetHeightsAt, singleton accessors, **SweepClosest** (Sphere, Capsule, Box), **SweepAll** (Sphere, Capsule, Box) (15) | **71%** | 9 |
+| `Ext.Audio` | ✅ Full (17) | ✅ PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, RTPC (set/get/reset), LoadEvent, UnloadEvent, **PlayExternalSound** (STDString ABI) (13) | **76%** | 10 |
+| `Ext.Localization` | ✅ Full (2) | ✅ GetLanguage, **CreateHandle** (2) | **100%** | 10 |
 | `Ext.StaticData` | ✅ Full (5) | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription), ForceCapture, HashLookup | **100%** | 10 |
 | `Ext.Resource` | ✅ Full (2) | ✅ Get, GetAll, GetTypes, GetCount, IsReady (5) | **100%** | 10 |
 | `Ext.Template` | ✅ Full (9) | ✅ 14 functions, **auto-capture**, Cache/LocalCache iteration | **100%** | 10 |
@@ -277,11 +277,11 @@ Features:
   ```
 
 **Pending (from API.md):**
-- [ ] `entity:CreateComponent(name)` - Attach new component
-- [ ] `entity:RemoveComponent(name)` - Detach component (v22+)
-- [ ] `entity:GetEntityType()` - Numeric type ID
-- [ ] `entity:GetSalt()`, `entity:GetIndex()` - Handle parts
-- [ ] `entity:GetNetId()` - Network ID (v23+)
+- [x] `entity:CreateComponent(name)` - Attach new component
+- [x] `entity:RemoveComponent(name)` - Detach component (v22+)
+- [x] `entity:GetEntityType()` - Numeric type ID
+- [x] `entity:GetSalt()`, `entity:GetIndex()` - Handle parts
+- [x] `entity:GetNetId()` - Network ID (v23+)
 - [ ] `entity:Replicate(component)` - Network replication
 - [ ] `entity:SetReplicationFlags()`, `entity:GetReplicationFlags()` - Replication control
 - [ ] **Component property read** via `__index` (IndexedProperties + pools)
@@ -1251,25 +1251,28 @@ Ext.Input.GetInputManager()  -- v23+
 ```
 
 ### 9.2 Physics Queries (Ext.Level)
-**Status:** ❌ Not Started
+**Status:** ⚠️ Partial (15/21 functions)
 
 ```lua
--- Raycast
-Ext.Level.RaycastClosest(origin, target, [flags])
-Ext.Level.RaycastAny(origin, target, [flags])
-Ext.Level.RaycastAll(origin, target, [flags])
+-- Raycast (all 3 implemented)
+Ext.Level.RaycastClosest(origin, target, [flags])   -- ✅
+Ext.Level.RaycastAny(origin, target, [flags])        -- ✅
+Ext.Level.RaycastAll(origin, target, [flags])         -- ✅ (Qedeshot)
 
--- Sweep
-Ext.Level.SweepSphereClosest(origin, target, radius, [flags])
-Ext.Level.SweepCapsuleClosest(...)
-Ext.Level.SweepBoxClosest(...)
+-- Sweep (6 implemented via Qedeshot swarm)
+Ext.Level.SweepSphereClosest(origin, target, radius, [flags])   -- ✅
+Ext.Level.SweepCapsuleClosest(...)                                -- ✅
+Ext.Level.SweepBoxClosest(...)                                    -- ✅
+Ext.Level.SweepSphereAll(origin, target, radius, [flags])        -- ✅
+Ext.Level.SweepCapsuleAll(...)                                    -- ✅
+Ext.Level.SweepBoxAll(...)                                        -- ✅
+
+-- Overlap tests (implemented)
+Ext.Level.TestBox(pos, halfExtents, rotation, [flags])  -- ✅
+Ext.Level.TestSphere(pos, radius, [flags])              -- ✅
+
+-- Not yet implemented
 Ext.Level.SweepCylinderClosest(...)
-
--- Overlap tests
-Ext.Level.TestBox(pos, halfExtents, rotation, [flags])
-Ext.Level.TestSphere(pos, radius, [flags])
-
--- Pathfinding
 Ext.Level.GetActivePathfindingRequests()
 ```
 
@@ -1401,20 +1404,31 @@ Ext.Template.DumpStatus()                 -- Debug info
 Key discovery: Template GUID at +0x10 is a FixedString index, resolved via `fixed_string_resolve()`.
 
 ### 10.3 Ext.Localization API
-**Status:** ❌ Not Started - [Issue #39](https://github.com/tdimino/bg3se-macos/issues/39)
+**Status:** ✅ Complete (Qedeshot swarm) - [Issue #39](https://github.com/tdimino/bg3se-macos/issues/39)
 
 ```lua
-local text = Ext.Localization.Get(handle)
-local lang = Ext.Localization.GetLanguage()
+local lang = Ext.Localization.GetLanguage()     -- ✅
+local handle = Ext.Localization.CreateHandle()   -- ✅ (Qedeshot)
 ```
 
 ### 10.4 Ext.Audio API
-**Status:** ❌ Not Started - [Issue #38](https://github.com/tdimino/bg3se-macos/issues/38)
+**Status:** ⚠️ Partial (13/17 functions) - [Issue #38](https://github.com/tdimino/bg3se-macos/issues/38)
 
 ```lua
-local soundId = Ext.Audio.PlaySound(eventName, position, entity)
-Ext.Audio.PlayMusic(trackName)
-Ext.Audio.SetMasterVolume(volume)
+-- Implemented (13 functions)
+Ext.Audio.PostEvent(eventName, entity)       -- ✅
+Ext.Audio.Stop(soundId)                      -- ✅
+Ext.Audio.PauseAllSounds()                   -- ✅
+Ext.Audio.ResumeAllSounds()                  -- ✅
+Ext.Audio.SetSwitch(switchGroup, state, go)  -- ✅
+Ext.Audio.SetState(stateGroup, state)        -- ✅
+Ext.Audio.SetRTPC(name, value, go)           -- ✅
+Ext.Audio.GetRTPC(name, go)                  -- ✅
+Ext.Audio.ResetRTPC(name, go)               -- ✅
+Ext.Audio.LoadEvent(eventName)               -- ✅
+Ext.Audio.UnloadEvent(eventName)             -- ✅
+Ext.Audio.PlayExternalSound(path, entity)    -- ✅ (Qedeshot, STDString ABI)
+Ext.Audio.IsReady()                          -- ✅
 ```
 
 ---
@@ -1497,9 +1511,9 @@ Full debugging experience with breakpoints, stepping, and variable inspection.
 |----|---------|--------|--------|-------|
 | D1 | Noesis UI (Ext.UI) | High | ❌ Not Started | [#35](https://github.com/tdimino/bg3se-macos/issues/35) |
 | D2 | IMGUI Debug Overlay | High | ✅ Complete (v0.36.21) - All 40 widget types | [#36](https://github.com/tdimino/bg3se-macos/issues/36) |
-| D3 | Physics/Raycasting (Ext.Level) | High | ⚠️ 9 functions (43%, offsets need runtime verification) | [#37](https://github.com/tdimino/bg3se-macos/issues/37) |
-| D4 | Audio (Ext.Audio) | Medium | ⚠️ 13 functions (76%, VMT indices need runtime verification) | [#38](https://github.com/tdimino/bg3se-macos/issues/38) |
-| D5 | Localization (Ext.Localization) | Low | ❌ Not Started | [#39](https://github.com/tdimino/bg3se-macos/issues/39) |
+| D3 | Physics/Raycasting (Ext.Level) | High | ⚠️ 15 functions (71%, RaycastAll + 6 Sweep via Qedeshot) | [#37](https://github.com/tdimino/bg3se-macos/issues/37) |
+| D4 | Audio (Ext.Audio) | Medium | ⚠️ 13 functions (76%, PlayExternalSound re-enabled via STDString) | [#38](https://github.com/tdimino/bg3se-macos/issues/38) |
+| D5 | Localization (Ext.Localization) | Low | ✅ Complete (GetLanguage + CreateHandle) | [#39](https://github.com/tdimino/bg3se-macos/issues/39) |
 | D6 | Static Data (Ext.StaticData) | Medium | 🔶 Blocked by #44 | [#40](https://github.com/tdimino/bg3se-macos/issues/40) |
 | D7 | Resource/Template Management | Medium | ✅ Complete (v0.36.2) | [#41](https://github.com/tdimino/bg3se-macos/issues/41) |
 | D8 | VS Code Debugger | High | ❌ Not Started | [#42](https://github.com/tdimino/bg3se-macos/issues/42) |
@@ -1520,6 +1534,7 @@ See **[docs/CHANGELOG.md](docs/CHANGELOG.md)** for detailed version history with
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v0.36.50 | 2026-04-02 | **Qedeshot Knesset Swarm** - 23 commits, ~93%→~94% parity. 6 Sweep functions (Physics), PlayExternalSound re-enabled (STDString), 6 Ext.Types functions, Ext.Localization.CreateHandle, Ext.Math.Fract, generic Osi.DB_* accessor, Entity CreateComponent/RemoveComponent/GetEntityType/GetSalt/GetIndex/GetNetId, ExecuteFunctor Dobby hook, 8+ polling events, version detection sentinel probes (Issue #78), osiris_call_by_id unsafe fallback removed |
 | v0.36.50 | 2026-02-11 | **Osiris Crash Fix + Init Timing** - Arg clamping in osi_dynamic_call prevents TooManyArgs crash (EXC_BAD_ACCESS). Fixed 5 Tier 1 test failures (MCM + Stats). Init timing instrumentation. **Issues #66 and #68 CLOSED.** 125/125 tests passing |
 | v0.36.49 | 2026-02-10 | **Test Suite Expansion** - 93→125 tests (85 Tier 1 + 40 Tier 2). Assertion helpers, fixed 19 vacuous/weak tests, added Osiris dispatch (8), MCM compat (10), Entity Events (5), Osiris edge-cases (5). Codex planner agent identified hidden vacuous patterns (Issues #66, #68, #8) |
 | v0.36.48 | 2026-02-09 | **Osi Command Fix + MCM Compat** - Console commands execute in Server context (was Client), Ext.UI namespace (Noesis stubs for MCM), entity:Replicate() stub (Issues #66, #68) |
@@ -1661,7 +1676,7 @@ See `agent_docs/acceleration.md` for detailed methodology |
 **Complex Integrations (25-50% acceleration, 4+ weeks):**
 | Issue | Feature | Acceleration | Key Technique |
 |-------|---------|--------------|---------------|
-| **#37 Ext.Level** | Physics/Raycast | **43%** | 9 functions implemented, offsets need runtime verification |
+| **#37 Ext.Level** | Physics/Raycast | **71%** | 15 functions (RaycastAll + 6 Sweep via Qedeshot swarm) |
 | **#35 Ext.UI** | Noesis UI | **25%** | Deep game UI hooks required |
 
 **Completed:**
@@ -1731,7 +1746,7 @@ FeatManager::GetFeats prologue @ 0x101b752b4:
 | Order | Issue | Acceleration | Why This Order |
 |-------|-------|--------------|----------------|
 | 9 | ~~#36 Ext.IMGUI~~ | ✅ Complete | All 40 widget types (v0.36.21) |
-| 10 | **#38 Ext.Audio** | 76% | 13 functions, VMT indices need verification |
+| 10 | **#38 Ext.Audio** | 76% | 13 functions, PlayExternalSound re-enabled (STDString ABI) |
 | 11 | **#42 Debugger** | 60% | DAP reference exists |
 | 12 | ~~#7 IDE Types~~ | ✅ Complete | GenerateIdeHelpers API |
 
@@ -1739,7 +1754,7 @@ FeatManager::GetFeats prologue @ 0x101b752b4:
 
 | Order | Issue | Acceleration | Why Last |
 |-------|-------|--------------|----------|
-| 13 | **#37 Ext.Level** | 43% | 9 functions, needs runtime offset verification |
+| 13 | **#37 Ext.Level** | 71% | 15 functions (RaycastAll + 6 Sweep), remaining: Cylinder, Pathfinding |
 | 14 | **#35 Ext.UI** | 25% | Deep Noesis hooks |
 | 15 | ~~#6 Ext.Net~~ | ⚠️ Phase 1 DONE | Phase 2-3 pending |
 

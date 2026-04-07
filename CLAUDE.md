@@ -130,7 +130,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 
 ## Current API Status
 
-~94% Windows BG3SE parity. Key namespaces: Osi.* (40+ functions), Ext.Stats (100% parity, 52 functions), Ext.Entity (1,999 components), Ext.Events (33 events), Ext.IMGUI (40 widgets), Ext.Net (RakNet backend).
+~94% Windows BG3SE parity. Key namespaces: Osi.* (40+ functions, generic DB_* accessor), Ext.Stats (100% parity, 52 functions), Ext.Entity (1,999 components, CreateComponent/RemoveComponent, GetEntityType/GetSalt/GetIndex/GetNetId), Ext.Events (33 events + ExecuteFunctor hook), Ext.IMGUI (40 widgets), Ext.Net (RakNet backend), Ext.Level (15 functions incl. 6 Sweep + RaycastAll), Ext.Audio (13 functions + PlayExternalSound via STDString), Ext.Types (9 functions incl. GenerateIdeHelpers), Ext.Math (Random + Fract), Ext.Localization (GetLanguage + CreateHandle). Version detection sentinel probes for game update tolerance.
 
 @agent_docs/api-status.md — Full per-namespace breakdown. Read when implementing new APIs or checking parity.
 

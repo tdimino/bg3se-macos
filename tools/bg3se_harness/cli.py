@@ -285,6 +285,12 @@ def cmd_status(args):
     return 0
 
 
+def cmd_quit(args):
+    result = launch_mod.quit_game(force=getattr(args, "force", False))
+    print(json.dumps(result, indent=2))
+    return 0 if result["success"] else 1
+
+
 def cmd_flags(args):
     group = getattr(args, "group", None)
     items = list_flags(group=group)
@@ -412,8 +418,10 @@ def main():
     p_eval = sub.add_parser("eval", help="Execute Lua from a file or stdin in the running game")
     p_eval.add_argument("source", help="Path to .lua file, or '-' for stdin")
 
-    # status
+    # status / quit
     sub.add_parser("status", help="Check game/socket/patch status")
+    p_quit = sub.add_parser("quit", help="Quit the running game")
+    p_quit.add_argument("--force", action="store_true", help="Skip graceful quit, send SIGTERM immediately")
 
     # entity
     p_entity = sub.add_parser("entity", help="Inspect a live entity by GUID")
@@ -634,6 +642,7 @@ def main():
         "run": cmd_run,
         "eval": cmd_eval,
         "status": cmd_status,
+        "quit": cmd_quit,
         "screenshot": cmd_screenshot,
         "entity": cmd_entity,
         "entity-search": cmd_entity_search,
