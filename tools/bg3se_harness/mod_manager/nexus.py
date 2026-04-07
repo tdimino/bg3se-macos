@@ -27,6 +27,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from html.parser import HTMLParser
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -450,6 +451,246 @@ def _pick_primary_file(mod_id: int, game: str) -> tuple[int | None, dict | None]
         return None, _error("api_error", "Could not determine file_id from files list.")
 
     return fid, None
+
+
+# ---------------------------------------------------------------------------
+# HTML stripping (for changelog text)
+# ---------------------------------------------------------------------------
+
+class _HTMLStripper(HTMLParser):
+    """Collect text content from an HTML fragment, dropping all tags."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._chunks: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self._chunks.append(data)
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag in ("br", "p", "li", "div"):
+            self._chunks.append("\n")
+
+    def handle_endtag(self, tag) -> None:
+        if tag in ("p", "li", "div"):
+            self._chunks.append("\n")
+
+    def get_text(self) -> str:
+        joined = "".join(self._chunks)
+        # Collapse runs of whitespace within lines, preserve line breaks.
+        lines = [" ".join(line.split()) for line in joined.splitlines()]
+        return "\n".join(line for line in lines if line).strip()
+
+
+def _strip_html(text: str) -> str:
+    """Convert an HTML changelog fragment to clean plain text."""
+    if not text:
+        return ""
+    parser = _HTMLStripper()
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception:
+        return text
+    return parser.get_text()
+
+
+# ---------------------------------------------------------------------------
+# Mod files / changelog / updated endpoints
+# ---------------------------------------------------------------------------
+
+def get_mod_files(mod_id: int, game: str = _DEFAULT_GAME) -> dict:
+    """Fetch the file list for a single mod.
+
+    Wraps ``/games/{game}/mods/{mod_id}/files.json``.  Each entry is
+    flattened to the fields a harness consumer typically wants.
+
+    Returns::
+
+        {
+            "mod_id": int,
+            "game": str,
+            "files": [
+                {
+                    "file_id": int,
+                    "name": str,
+                    "version": str,
+                    "category": str,        # MAIN / OPTIONAL / OLD_VERSION / ...
+                    "category_id": int,
+                    "is_primary": bool,     # category == MAIN
+                    "size_kb": int,
+                    "uploaded_timestamp": int,
+                    "uploaded_at": str,     # ISO timestamp from API
+                    "description": str,
+                    "changelog_html": str,
+                    "external_virus_scan_url": str,
+                }
+            ],
+            "count": int,
+        }
+
+    On failure returns ``{"success": False, ...}``.
+    """
+    data, err = _try_request(f"/games/{game}/mods/{mod_id}/files.json")
+    if err:
+        return err
+
+    if not isinstance(data, dict):
+        return _error("api_error", f"Unexpected response format for files of mod {mod_id}.")
+
+    raw_files = data.get("files")
+    if not isinstance(raw_files, list):
+        raw_files = []
+
+    files = []
+    for entry in raw_files:
+        if not isinstance(entry, dict):
+            continue
+        category = (entry.get("category_name") or "").upper()
+        files.append({
+            "file_id": entry.get("file_id"),
+            "name": entry.get("name") or entry.get("file_name") or "",
+            "version": entry.get("version") or "",
+            "category": category,
+            "category_id": entry.get("category_id"),
+            "is_primary": category == "MAIN" or entry.get("category_id") == 1,
+            "size_kb": entry.get("size_kb") or entry.get("size") or 0,
+            "uploaded_timestamp": entry.get("uploaded_timestamp") or 0,
+            "uploaded_at": entry.get("uploaded_time") or "",
+            "description": entry.get("description") or "",
+            "changelog_html": entry.get("changelog_html") or "",
+            "external_virus_scan_url": entry.get("external_virus_scan_url") or "",
+        })
+
+    return {
+        "mod_id": mod_id,
+        "game": game,
+        "files": files,
+        "count": len(files),
+    }
+
+
+def get_changelogs(mod_id: int, game: str = _DEFAULT_GAME) -> dict:
+    """Fetch all version changelogs for a single mod.
+
+    Wraps ``/games/{game}/mods/{mod_id}/changelogs.json``.  The Nexus API
+    returns a JSON object whose keys are version strings and whose values
+    are lists of HTML-fragment changelog entries.  Each entry is converted
+    to plain text via :func:`_strip_html`.
+
+    Returns::
+
+        {
+            "mod_id": int,
+            "game": str,
+            "versions": [
+                {
+                    "version": str,
+                    "entries": [str, ...],   # plain-text bullet points
+                    "entries_html": [str, ...],  # original HTML
+                }
+            ],
+            "count": int,
+        }
+
+    On failure returns ``{"success": False, ...}``.
+    """
+    data, err = _try_request(f"/games/{game}/mods/{mod_id}/changelogs.json")
+    if err:
+        return err
+
+    if not isinstance(data, dict):
+        return _error("api_error", f"Unexpected response format for changelogs of mod {mod_id}.")
+
+    versions = []
+    for version, entries in data.items():
+        if not isinstance(entries, list):
+            continue
+        plain = [_strip_html(e) for e in entries if isinstance(e, str)]
+        versions.append({
+            "version": version,
+            "entries": [e for e in plain if e],
+            "entries_html": [e for e in entries if isinstance(e, str)],
+        })
+
+    # Sort newest version first using a tolerant numeric key.
+    def _version_key(v: dict) -> tuple:
+        parts = []
+        for chunk in (v.get("version") or "").replace("-", ".").split("."):
+            try:
+                parts.append(int(chunk))
+            except ValueError:
+                parts.append(0)
+        return tuple(parts)
+
+    versions.sort(key=_version_key, reverse=True)
+
+    return {
+        "mod_id": mod_id,
+        "game": game,
+        "versions": versions,
+        "count": len(versions),
+    }
+
+
+def get_updated(period: str = "1w", game: str = _DEFAULT_GAME) -> dict:
+    """List recently-updated mods for the given game.
+
+    Wraps ``/games/{game}/mods/updated.json?period=...``.  The valid period
+    values are ``1d``, ``1w``, and ``1m`` per the Nexus public API.
+
+    Returns::
+
+        {
+            "game": str,
+            "period": str,
+            "mods": [
+                {
+                    "mod_id": int,
+                    "latest_file_update": int,    # unix timestamp
+                    "latest_mod_activity": int,   # unix timestamp
+                }
+            ],
+            "count": int,
+        }
+
+    On failure returns ``{"success": False, ...}``.
+    """
+    if period not in ("1d", "1w", "1m"):
+        return _error(
+            "validation_error",
+            f"Invalid period {period!r}; must be one of 1d, 1w, 1m.",
+        )
+
+    data, err = _try_request(
+        f"/games/{game}/mods/updated.json",
+        params={"period": period},
+    )
+    if err:
+        return err
+
+    if not isinstance(data, list):
+        return _error("api_error", "Unexpected response format from updated endpoint.")
+
+    mods = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        mods.append({
+            "mod_id": entry.get("mod_id"),
+            "latest_file_update": entry.get("latest_file_update") or 0,
+            "latest_mod_activity": entry.get("latest_mod_activity") or 0,
+        })
+
+    # Most recently updated first.
+    mods.sort(key=lambda m: m.get("latest_file_update") or 0, reverse=True)
+
+    return {
+        "game": game,
+        "period": period,
+        "mods": mods,
+        "count": len(mods),
+    }
 
 
 # ---------------------------------------------------------------------------

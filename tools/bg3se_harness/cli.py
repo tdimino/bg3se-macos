@@ -572,6 +572,16 @@ def main():
     p_ms = mod_sub.add_parser("search", help="Search Nexus Mods")
     p_ms.add_argument("query", help="Search query")
 
+    p_mch = mod_sub.add_parser("changelog", help="Show all version changelogs for a Nexus mod")
+    p_mch.add_argument("mod_id", type=int, help="Nexus mod ID")
+
+    p_mver = mod_sub.add_parser("versions", help="List file versions for a Nexus mod")
+    p_mver.add_argument("mod_id", type=int, help="Nexus mod ID")
+
+    p_mup = mod_sub.add_parser("updated", help="List recently-updated BG3 mods on Nexus")
+    p_mup.add_argument("--period", choices=("1d", "1w", "1m"), default="1w",
+                       help="Time window: 1d, 1w (default), or 1m")
+
     mod_sub.add_parser("backup", help="Backup modsettings.lsx")
 
     # parity

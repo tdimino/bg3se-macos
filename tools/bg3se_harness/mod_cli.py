@@ -85,6 +85,24 @@ def cmd_mod(args):
         print(json.dumps(result, indent=2))
         return 0
 
+    elif subcmd == "changelog":
+        from .mod_manager.nexus import get_changelogs
+        result = get_changelogs(args.mod_id)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success", True) else 1
+
+    elif subcmd == "versions":
+        from .mod_manager.nexus import get_mod_files
+        result = get_mod_files(args.mod_id)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success", True) else 1
+
+    elif subcmd == "updated":
+        from .mod_manager.nexus import get_updated
+        result = get_updated(period=args.period)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success", True) else 1
+
     elif subcmd == "backup":
         from .mod_manager.modsettings import backup_modsettings
         result = backup_modsettings()
