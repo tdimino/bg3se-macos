@@ -233,6 +233,137 @@ class NexusClientTests(unittest.TestCase):
         self.assertEqual(nexus._strip_html(""), "")
         self.assertEqual(nexus._strip_html(None or ""), "")
 
+    # -- Version sort key --------------------------------------------------
+
+    def test_version_sort_key_semver_ordering(self) -> None:
+        versions = ["0.36.49", "0.36.50", "0.10.0-beta", "1.2.3"]
+        versions.sort(key=nexus._version_sort_key, reverse=True)
+        self.assertEqual(versions, ["1.2.3", "0.36.50", "0.36.49", "0.10.0-beta"])
+
+    def test_version_sort_key_handles_month_names(self) -> None:
+        # Mod 2172's real pattern: the old impl turned "April" into 0 and
+        # couldn't distinguish consecutive months within the same year.
+        versions = ["2024April-30", "2024May-1", "2024March-15", "2023December-31"]
+        versions.sort(key=nexus._version_sort_key, reverse=True)
+        self.assertEqual(
+            versions,
+            ["2024May-1", "2024April-30", "2024March-15", "2023December-31"],
+        )
+
+    def test_version_sort_key_handles_abbreviated_months_within_year(self) -> None:
+        # Within a fixed year, abbreviated months must sort chronologically.
+        versions = ["2024Mar-15", "2024Feb-1", "2024Jan-1", "2024Dec-31"]
+        versions.sort(key=nexus._version_sort_key, reverse=True)
+        self.assertEqual(
+            versions,
+            ["2024Dec-31", "2024Mar-15", "2024Feb-1", "2024Jan-1"],
+        )
+
+    def test_version_sort_key_handles_iso_dates(self) -> None:
+        versions = ["2024-04-30", "2024-05-01", "2023-12-31"]
+        versions.sort(key=nexus._version_sort_key, reverse=True)
+        self.assertEqual(versions, ["2024-05-01", "2024-04-30", "2023-12-31"])
+
+    def test_version_sort_key_handles_empty_and_unknown(self) -> None:
+        self.assertEqual(nexus._version_sort_key(""), ())
+        # Unknown alphabetic tokens collapse to 0 but don't crash.
+        self.assertEqual(nexus._version_sort_key("beta"), (0,))
+        self.assertEqual(nexus._version_sort_key("1.0-rc1"), (1, 0, 0, 1))
+
+    def test_get_changelogs_sorts_month_name_versions_chronologically(self) -> None:
+        payload = {
+            "2024April-30": ["<p>April release</p>"],
+            "2024May-1":    ["<p>May release</p>"],
+            "2024March-15": ["<p>March release</p>"],
+        }
+        with _patch_urlopen(payload):
+            result = nexus.get_changelogs(2172)
+
+        versions = [v["version"] for v in result["versions"]]
+        self.assertEqual(versions, ["2024May-1", "2024April-30", "2024March-15"])
+
+    # -- 403 disambiguation ------------------------------------------------
+
+    def _make_http_error(self, code: int, body: bytes) -> "urllib.error.HTTPError":
+        import urllib.error
+        return urllib.error.HTTPError(
+            url="https://api.nexusmods.com/v1/games/baldursgate3/mods/99999.json",
+            code=code,
+            msg="Forbidden" if code == 403 else "Unauthorized",
+            hdrs=None,
+            fp=io.BytesIO(body),
+        )
+
+    def test_403_content_restricted_from_json_message(self) -> None:
+        body = json.dumps({
+            "message": "You do not have permission to view this mod. "
+                       "Adult content is hidden by your content blocking preferences.",
+        }).encode("utf-8")
+        err = self._make_http_error(403, body)
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.get_mod_info(99999)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "content_restricted")
+        self.assertEqual(result["status_code"], 403)
+        # The Nexus-provided message should be preserved.
+        self.assertIn("permission to view", result["message"])
+
+    def test_403_content_restricted_from_plain_text_body(self) -> None:
+        # Not all Nexus error pages are JSON — sniff raw body too.
+        body = b"<html><body>This mod is hidden by content blocking.</body></html>"
+        err = self._make_http_error(403, body)
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.get_mod_info(99999)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "content_restricted")
+        # No JSON message → synthesised default should mention content blocking.
+        self.assertIn("content", result["message"].lower())
+
+    def test_403_on_mod_path_defaults_to_content_restricted(self) -> None:
+        # Even when the body has no explicit content-block marker, a 403 on a
+        # per-mod path (after successful HTTP auth) means Nexus is blocking
+        # that specific mod, not that the API key is invalid.
+        body = json.dumps({"message": "Mod not available: 22324"}).encode("utf-8")
+        err = self._make_http_error(403, body)
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.get_mod_info(22324)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "content_restricted")
+        self.assertEqual(result["status_code"], 403)
+        # Nexus's terse phrase should be preserved verbatim.
+        self.assertIn("Mod not available", result["message"])
+
+    def test_403_on_users_validate_is_auth_error(self) -> None:
+        # A 403 on /users/validate.json is definitively an API key problem.
+        import urllib.error
+        err = urllib.error.HTTPError(
+            url="https://api.nexusmods.com/v1/users/validate.json",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(b'{"message":"Invalid API key."}'),
+        )
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.check_api_status()
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "auth_error")
+        self.assertEqual(result["status_code"], 403)
+
+    def test_401_always_auth_error(self) -> None:
+        # 401 should never be reclassified as content-restricted.
+        body = b'{"message":"This mod has adult content blocking enabled."}'
+        err = self._make_http_error(401, body)
+        with mock.patch.object(nexus.urllib.request, "urlopen", side_effect=err):
+            result = nexus.get_mod_info(99999)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_type"], "auth_error")
+        self.assertEqual(result["status_code"], 401)
+
 
 # ---------------------------------------------------------------------------
 # Entry point
