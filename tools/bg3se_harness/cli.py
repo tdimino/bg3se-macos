@@ -26,6 +26,7 @@ from .flags import (
 from .probe import cmd_probe
 from .menu import cmd_menu
 from .mod_cli import cmd_mod
+from .mod_manager.wiki import cmd_wiki
 from .parity import cmd_parity
 from .savegames import cmd_save
 from .screenshot import cmd_screenshot
@@ -584,6 +585,29 @@ def main():
 
     mod_sub.add_parser("backup", help="Backup modsettings.lsx")
 
+    # wiki — bg3.wiki cross-reference
+    p_wiki = sub.add_parser("wiki", help="Query bg3.wiki for spell/item data")
+    wiki_sub = p_wiki.add_subparsers(dest="wiki_command", required=True)
+
+    p_ws = wiki_sub.add_parser("spell", help="Look up a spell page on bg3.wiki by name")
+    p_ws.add_argument("name", help="Spell display name (e.g. Fireball)")
+    p_ws.add_argument("--no-cache", action="store_true",
+                      help="Bypass the local 24h file cache")
+
+    p_wi = wiki_sub.add_parser("item", help="Look up an item/weapon page on bg3.wiki by name")
+    p_wi.add_argument("name", help='Item display name (e.g. "Longsword +1")')
+    p_wi.add_argument("--no-cache", action="store_true",
+                      help="Bypass the local 24h file cache")
+
+    p_wv = wiki_sub.add_parser("verify", help="Fetch a wiki page and (optionally) cross-check its engine uid")
+    p_wv.add_argument("page", help="Exact wiki page title")
+    p_wv.add_argument("--expect-uid", dest="expect_uid", default=None,
+                      help="Expected engine stat name (e.g. WPN_HUM_Longsword_A_1)")
+    p_wv.add_argument("--no-cache", action="store_true",
+                      help="Bypass the local 24h file cache")
+
+    wiki_sub.add_parser("clear-cache", help="Wipe the local wiki page cache")
+
     # parity
     p_parity = sub.add_parser("parity", help="Windows BG3SE parity audit")
     parity_sub = p_parity.add_subparsers(dest="parity_command", required=True)
@@ -670,6 +694,7 @@ def main():
         "author": cmd_author,
         "compat": cmd_compat,
         "mod": cmd_mod,
+        "wiki": cmd_wiki,
         "parity": cmd_parity,
         "doctor": cmd_doctor,
         "save": cmd_save,
