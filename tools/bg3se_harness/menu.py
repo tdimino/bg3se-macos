@@ -54,6 +54,7 @@ _kCGEventLeftMouseDown = 1
 _kCGEventLeftMouseUp = 2
 _kCGMouseButtonLeft = 0
 _kCGHIDEventTap = 0
+_kVK_Space = 49
 
 
 def cg_click(x, y):
@@ -88,6 +89,63 @@ def cg_click(x, y):
     qs.CFRelease(ev_down)
     qs.CFRelease(ev_up)
     return True
+
+
+def cg_key(keycode):
+    """Send a key press at the system level via CGEvent."""
+    qs = _get_appservices()
+
+    qs.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+    qs.CGEventCreateKeyboardEvent.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool,
+    ]
+    qs.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    qs.CFRelease.argtypes = [ctypes.c_void_p]
+
+    ev_down = qs.CGEventCreateKeyboardEvent(None, keycode, True)
+    ev_up = qs.CGEventCreateKeyboardEvent(None, keycode, False)
+    if not ev_down or not ev_up:
+        if ev_down:
+            qs.CFRelease(ev_down)
+        if ev_up:
+            qs.CFRelease(ev_up)
+        return False
+
+    qs.CGEventPost(_kCGHIDEventTap, ev_down)
+    time.sleep(0.05)
+    qs.CGEventPost(_kCGHIDEventTap, ev_up)
+
+    qs.CFRelease(ev_down)
+    qs.CFRelease(ev_up)
+    return True
+
+
+def dismiss_splash_aggressive():
+    """Dismiss the BG3 splash screen via CGEvent Space key.
+
+    Activates the BG3 window, then sends a CGEvent Space key. Uses
+    only Space (not a center click) to avoid accidentally activating
+    menu buttons after the splash has already been dismissed.
+    """
+    focused = False
+    try:
+        r = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to '
+             'set frontmost of process "Baldur\'s Gate 3" to true'],
+            capture_output=True, timeout=5,
+        )
+        focused = r.returncode == 0
+        if focused:
+            time.sleep(0.3)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    if not focused:
+        return {"success": False, "error": "could not focus BG3 window"}
+
+    sent_key = cg_key(_kVK_Space)
+    return {"success": sent_key, "methods": {"cg_key_space": sent_key}}
 
 
 # ============================================================================

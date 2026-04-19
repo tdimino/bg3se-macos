@@ -184,12 +184,12 @@ def cmd_launch(args):
         extra_flags=extra_flags,
     )
 
-    # Health check (longer timeout when loading a save)
+    # Health check — also dismisses splash screen via CGEvent
     print("Waiting for SE socket...", file=sys.stderr)
     timeout = getattr(args, "timeout", None)
     if timeout is None:
         timeout = launch_mod.default_timeout(continue_game, load_save)
-    health = launch_mod.wait_for_socket(timeout=timeout)
+    health = launch_mod.wait_for_socket(timeout=timeout, dismiss_splash=True)
     health["pid"] = proc.pid
     health["patch"] = pr
     health["continue_game"] = continue_game
@@ -238,10 +238,10 @@ def cmd_test(args):
         extra_flags=extra_flags,
     )
 
-    # Wait for socket
+    # Wait for socket — also dismisses splash screen via CGEvent
     print("Waiting for SE socket...", file=sys.stderr)
     timeout = launch_mod.default_timeout(continue_game, load_save)
-    health = launch_mod.wait_for_socket(timeout=timeout)
+    health = launch_mod.wait_for_socket(timeout=timeout, dismiss_splash=True)
     if not health.get("socket_connected"):
         health["stage"] = "health"
         health["pid"] = proc.pid

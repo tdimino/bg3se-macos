@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
-import threading
 import time
 
 from .config import BG3_EXEC, HEALTH_TIMEOUT, HEALTH_TIMEOUT_CONTINUE, SOCKET_PATH
@@ -63,83 +63,7 @@ def launch(continue_game=False, load_save=None, extra_flags=None):
     flags_desc = " ".join(cmd[4:]) if len(cmd) > 4 else "(no extra flags)"
     print(f"Launched BG3 (pid {proc.pid}) [{flags_desc}]", file=sys.stderr)
 
-    # Auto-dismiss "Press to Continue" splash screen + navigate main menu.
-    # BG3 shows a Noesis UI modal after launcher close that blocks even with
-    # -continueGame. After dismissing the splash, if continue_game is set,
-    # we use Vision OCR to detect the main menu and click "Continue".
-    if continue_game or load_save:
-        navigate = "Continue" if continue_game else None
-        _dismiss_continue_screen(proc, navigate_menu=navigate)
-
     return proc
-
-
-def _dismiss_continue_screen(proc, delay=8, retries=5, navigate_menu=None):
-    """Dismiss 'Click to Continue' splash and optionally navigate the main menu.
-
-    Phase 1: Send Space key to dismiss the Noesis UI splash modal.
-    Phase 2: If navigate_menu is set (e.g. "Continue"), use Vision OCR to
-             detect the main menu and click the specified button.
-
-    Runs in a daemon thread to not block the caller.
-    """
-    def dismisser():
-        from .menu import dismiss_splash, detect_menu, click_menu_button
-
-        # Phase 1: Dismiss splash screen
-        for attempt in range(retries):
-            time.sleep(delay if attempt == 0 else 3)
-            if proc.poll() is not None:
-                return
-
-            result = dismiss_splash()
-            if result.get("success"):
-                print(f"Sent Space to BG3 window (attempt {attempt + 1}/{retries})",
-                      file=sys.stderr)
-            else:
-                print(f"Dismiss failed (attempt {attempt + 1}/{retries}): "
-                      f"{result.get('error', 'unknown')}", file=sys.stderr)
-                if "not found" in result.get("error", "").lower():
-                    return
-
-            # Check if socket is alive (splash dismissed, SE loaded)
-            try:
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                s.settimeout(2)
-                s.connect(SOCKET_PATH)
-                s.close()
-                print("SE socket alive — splash dismissed", file=sys.stderr)
-                return
-            except (ConnectionRefusedError, FileNotFoundError, OSError):
-                pass
-
-        # Phase 2: Navigate main menu if requested
-        if not navigate_menu:
-            return
-
-        print(f"Attempting menu navigation: click '{navigate_menu}'...",
-              file=sys.stderr)
-
-        for attempt in range(retries):
-            if proc.poll() is not None:
-                return
-            time.sleep(2)
-
-            result = click_menu_button(navigate_menu)
-            if result.get("success"):
-                print(f"Clicked '{navigate_menu}' on main menu", file=sys.stderr)
-                return
-
-            available = result.get("available_buttons", [])
-            if available:
-                print(f"Menu visible but '{navigate_menu}' not found. "
-                      f"Available: {available}", file=sys.stderr)
-            else:
-                print(f"Menu not yet visible (attempt {attempt + 1}/{retries})",
-                      file=sys.stderr)
-
-    thread = threading.Thread(target=dismisser, daemon=True)
-    thread.start()
 
 
 def default_timeout(continue_game=False, load_save=None):
@@ -149,24 +73,52 @@ def default_timeout(continue_game=False, load_save=None):
     return HEALTH_TIMEOUT
 
 
-def wait_for_socket(timeout=HEALTH_TIMEOUT):
+_MAX_DISMISS_ATTEMPTS = 8
+
+
+def wait_for_socket(timeout=HEALTH_TIMEOUT, dismiss_splash=False):
+    """Wait for the SE socket to respond to Lua commands.
+
+    When dismiss_splash is True, periodically sends a CGEvent Space key
+    to dismiss the BG3 'Press Any Key' splash screen while waiting.
+    Dismissal stops as soon as the socket accepts a connection (splash
+    is gone at that point) or after _MAX_DISMISS_ATTEMPTS, whichever
+    comes first. Only returns success when the socket responds to a
+    command, not merely when it accepts a connection.
+    """
     start = time.monotonic()
     interval = 0.5
+    dismiss_delay = 5.0
+    dismiss_interval = 3.0
+    last_dismiss = 0.0
+    dismiss_count = 0
+    socket_ever_connected = False
 
     while (time.monotonic() - start) < timeout:
+        elapsed = time.monotonic() - start
+
+        if (dismiss_splash
+                and not socket_ever_connected
+                and dismiss_count < _MAX_DISMISS_ATTEMPTS
+                and elapsed >= dismiss_delay):
+            since_last = elapsed - last_dismiss
+            if last_dismiss == 0 or since_last >= dismiss_interval:
+                last_dismiss = elapsed
+                dismiss_count += 1
+                _try_dismiss_splash(dismiss_count)
+
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(2)
             sock.connect(SOCKET_PATH)
+            socket_ever_connected = True
 
-            # Drain welcome message / prompt
             time.sleep(0.3)
             try:
                 sock.recv(4096)
             except socket.timeout:
                 pass
 
-            # Send version query
             sock.sendall(b"Ext.GetVersion()\n")
             time.sleep(0.5)
 
@@ -181,23 +133,38 @@ def wait_for_socket(timeout=HEALTH_TIMEOUT):
                 pass
 
             sock.close()
-            elapsed = int((time.monotonic() - start) * 1000)
 
-            # Strip ANSI codes for parsing
-            import re
-            text = re.sub(rb'\033\[[0-9;]*m', b'', response).decode("utf-8", errors="replace").strip()
-
-            return {
-                "socket_connected": True,
-                "se_version": text if text else "connected",
-                "elapsed_ms": elapsed,
-            }
+            if response:
+                text = re.sub(rb'\033\[[0-9;]*m', b'', response).decode(
+                    "utf-8", errors="replace").strip()
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                return {
+                    "socket_connected": True,
+                    "se_version": text if text else "connected",
+                    "elapsed_ms": elapsed_ms,
+                }
 
         except (ConnectionRefusedError, FileNotFoundError, OSError):
-            time.sleep(interval)
+            pass
 
-    elapsed = int((time.monotonic() - start) * 1000)
-    return {"socket_connected": False, "elapsed_ms": elapsed}
+        time.sleep(interval)
+
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    return {"socket_connected": False, "elapsed_ms": elapsed_ms}
+
+
+def _try_dismiss_splash(attempt):
+    """Send CGEvent key + click to dismiss the splash screen."""
+    try:
+        from .menu import dismiss_splash_aggressive
+        result = dismiss_splash_aggressive()
+        if result.get("success"):
+            methods = result.get("methods", {})
+            parts = [k for k, v in methods.items() if v]
+            print(f"Splash dismiss #{attempt} ({', '.join(parts)})",
+                  file=sys.stderr)
+    except Exception:
+        pass
 
 
 def is_running():
