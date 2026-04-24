@@ -34,8 +34,8 @@ tooling.
 | `build` | Build dylib via cmake, verify universal binary, deploy to Steam folder |
 | `patch` | Inject libbg3se.dylib into BG3 binary via insert_dylib |
 | `unpatch` | Restore original BG3 binary from backup |
-| `launch [--continue\|--save NAME]` | Build + patch + launch + socket health check |
-| `test [filter]` | Tier 1 regression tests, output structured JSON |
+| `launch [--continue\|--save NAME] [--no-skip-videos]` | Build + patch + launch + socket health check; skips intro videos by default |
+| `test [filter] [--no-skip-videos]` | Tier 1 regression tests, output structured JSON; skips intro videos by default |
 | `test --tier 2 [filter]` | Tier 2 in-game tests (requires loaded save) |
 | `run "<lua>"` | Send inline Lua to the running game via socket |
 | `eval script.lua` | Run a Lua file (stdin `-` for piping) |

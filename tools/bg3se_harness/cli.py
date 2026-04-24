@@ -109,6 +109,8 @@ def _add_launch_flags(parser):
                     help="Log file path (--logPath PATH)")
     g.add_argument("--ecb-checker", action="store_true",
                     help="Enable save system ECB checker + logging")
+    g.add_argument("--no-skip-videos", dest="skip_videos", action="store_false",
+                    default=True, help="Don't set video-skip preferences this run")
     g.add_argument("--flags", metavar="'...'",
                     help="Pass arbitrary game flags verbatim")
 
@@ -177,11 +179,13 @@ def cmd_launch(args):
         return 1
 
     # Launch with game flags
+    skip_videos = getattr(args, "skip_videos", True)
     print("Launching BG3...", file=sys.stderr)
     proc = launch_mod.launch(
         continue_game=continue_game,
         load_save=load_save,
         extra_flags=extra_flags,
+        skip_videos=skip_videos,
     )
 
     # Health check — also dismisses splash screen via CGEvent
@@ -231,11 +235,13 @@ def cmd_test(args):
         return 1
 
     # Launch
+    skip_videos = getattr(args, "skip_videos", True)
     print("Launching BG3...", file=sys.stderr)
     proc = launch_mod.launch(
         continue_game=continue_game,
         load_save=load_save,
         extra_flags=extra_flags,
+        skip_videos=skip_videos,
     )
 
     # Wait for socket — also dismisses splash screen via CGEvent

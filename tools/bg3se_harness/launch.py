@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 
-from .config import BG3_EXEC, HEALTH_TIMEOUT, HEALTH_TIMEOUT_CONTINUE, SOCKET_PATH
+from .config import (
+    BG3_EXEC, GRAPHIC_SETTINGS_PATH, HEALTH_TIMEOUT, HEALTH_TIMEOUT_CONTINUE,
+    SOCKET_PATH,
+)
 from .flags import build_flag_args
 
 
@@ -34,10 +39,93 @@ def ensure_no_launcher():
     )
 
 
-def launch(continue_game=False, load_save=None, extra_flags=None):
+def ensure_skip_videos():
+    """Set SkipVideo + SkipSplashScreen via defaults and graphicSettings.lsx.
+
+    Best-effort — never blocks launch on failure.
+    """
+    try:
+        # Layer 1: macOS UserDefaults (mirrors ensure_no_launcher pattern)
+        subprocess.run(
+            ["defaults", "write", "com.larian.bg3", "SkipVideo", "-bool", "true"],
+            capture_output=True,
+        )
+
+        # Layer 2: graphicSettings.lsx ConfigEntry injection
+        _upsert_graphic_settings({"SkipVideo": 1, "SkipSplashScreen": 1})
+    except Exception as exc:
+        print(f"Warning: skip-videos setup failed: {exc}", file=sys.stderr)
+
+
+def _upsert_graphic_settings(entries: dict[str, int]) -> None:
+    """Insert or update ConfigEntry nodes in graphicSettings.lsx."""
+    path = GRAPHIC_SETTINGS_PATH
+    if not path.exists():
+        return
+
+    try:
+        tree = ET.parse(path)
+    except (ET.ParseError, OSError) as exc:
+        print(f"Warning: could not parse {path}: {exc}", file=sys.stderr)
+        return
+
+    root = tree.getroot()
+
+    # Find the <children> node that holds ConfigEntry nodes
+    config_children = None
+    for children in root.iter("children"):
+        for node in children.findall("node"):
+            if node.get("id") == "ConfigEntry":
+                config_children = children
+                break
+        if config_children is not None:
+            break
+
+    if config_children is None:
+        return
+
+    # Index existing entries by MapKey
+    existing = {}
+    for node in config_children.findall("node"):
+        if node.get("id") != "ConfigEntry":
+            continue
+        for attr in node.findall("attribute"):
+            if attr.get("id") == "MapKey":
+                existing[attr.get("value")] = node
+                break
+
+    changed = False
+    for key, value in entries.items():
+        if key in existing:
+            # Update existing entry's Value attribute
+            for attr in existing[key].findall("attribute"):
+                if attr.get("id") == "Value":
+                    if attr.get("value") != str(value):
+                        attr.set("value", str(value))
+                        changed = True
+                    break
+        else:
+            # Create new ConfigEntry node
+            entry = ET.SubElement(config_children, "node", id="ConfigEntry")
+            ET.SubElement(entry, "attribute", id="MapKey", type="FixedString", value=key)
+            ET.SubElement(entry, "attribute", id="Type", type="int32", value="0")
+            ET.SubElement(entry, "attribute", id="Value", type="int32", value=str(value))
+            changed = True
+
+    if changed:
+        # Backup before first write
+        bak = path.with_suffix(".lsx.bak")
+        if not bak.exists():
+            shutil.copy2(path, bak)
+        tree.write(path, xml_declaration=True, encoding="unicode")
+
+
+def launch(continue_game=False, load_save=None, extra_flags=None, skip_videos=True):
     kill_existing()
     clean_socket()
     ensure_no_launcher()
+    if skip_videos:
+        ensure_skip_videos()
 
     # NoLauncher defaults key bypasses the Larian WebKit launcher.
     # insert_dylib bakes LC_LOAD_WEAK_DYLIB into the binary, so SE loads

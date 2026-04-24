@@ -18,6 +18,7 @@ DYLIB_INSTALL_NAME = "@loader_path/libbg3se.dylib"
 LARIAN_LOCAL = Path.home() / "Documents/Larian Studios/Baldur's Gate 3"
 MODS_DIR = LARIAN_LOCAL / "Mods"
 MODSETTINGS_PATH = LARIAN_LOCAL / "PlayerProfiles/Public/modsettings.lsx"
+GRAPHIC_SETTINGS_PATH = LARIAN_LOCAL / "graphicSettings.lsx"
 SAVES_DIR = LARIAN_LOCAL / "PlayerProfiles/Public/Savegames/Story"
 
 # Harness data paths

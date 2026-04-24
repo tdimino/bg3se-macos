@@ -141,11 +141,19 @@ See [ROADMAP.md](ROADMAP.md) for detailed progress.
 
 ## Modding Toolkit (`bg3se-harness`)
 
-The repo ships a 36-command Python CLI at `tools/bg3se_harness/` that drives
-the full Script Extender development workflow — build, patch, launch, test,
-game inspection, Lua hot-reload, screenshot, crashlog parsing, mod
-installation, Nexus Mods API queries, bg3.wiki cross-reference, Ghidra RE
-bridge — without ever leaving the terminal.
+One of the first command-line interfaces purpose-built for a AAA RPG.  We built
+a similar CLI for [cliamp](https://github.com/tdimino/cliamp) and saw the same
+pattern take hold there: once a game or application exposes its internals
+through a composable, JSON-emitting command line, agent-driven workflows emerge
+naturally.  We believe CLIs for games will become as second-nature as command
+palettes are in editors today, and we're excited to see what the modding
+community builds on top of this.
+
+The harness ships 36 commands spanning the full Script Extender lifecycle—build,
+patch, launch, test, entity inspection, RPG stats diffing, Lua hot-reload,
+screenshots, crash diagnostics, mod management, Nexus Mods API queries,
+bg3.wiki cross-reference, and a Ghidra RE bridge—all from the terminal, all
+emitting structured JSON.
 
 ```bash
 # Core pipeline

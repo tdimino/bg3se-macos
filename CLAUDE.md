@@ -81,7 +81,7 @@ PYTHONPATH=tools python3 -m bg3se_harness flags             # 40 discovered game
 PYTHONPATH=tools python3 -m bg3se_harness ghidra decompile <name|0xADDR>  # Ghidra RE bridge
 ```
 
-Uses `insert_dylib` for injection + `defaults write com.larian.bg3 NoLauncher 1` for launcher bypass. See `docs/harness.md` for full docs.
+Uses `insert_dylib` for injection + `defaults write com.larian.bg3 NoLauncher 1` for launcher bypass. Intro videos are skipped by default on `launch`/`test` (opt out with `--no-skip-videos`). See `docs/harness.md` for full docs.
 
 ## Commands (Legacy)
 
