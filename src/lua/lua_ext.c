@@ -847,6 +847,101 @@ static int lua_types_get_all_layouts(lua_State *L) {
     return 1;
 }
 
+// Ext.Types.GetValueType(obj) -> string or nil
+// Returns a debug-friendly type description for any Lua value.
+// Mirrors Windows BG3SE GetValueType — for non-userdata it falls back to
+// the standard Lua type name.
+static int lua_types_getvaluetype(lua_State *L) {
+    luaL_checkany(L, 1);
+    int t = lua_type(L, 1);
+
+    if (t == LUA_TUSERDATA || t == LUA_TLIGHTUSERDATA) {
+        // Try metatable __name first (same logic as GetObjectType)
+        if (lua_getmetatable(L, 1)) {
+            lua_getfield(L, -1, "__name");
+            if (lua_isstring(L, -1)) {
+                // __name is on stack — remove the metatable below it
+                lua_remove(L, -2);
+                return 1;
+            }
+            lua_pop(L, 2);  // pop __name (nil) + metatable
+        }
+        // Fall through: return "userdata"
+    }
+
+    lua_pushstring(L, lua_typename(L, t));
+    return 1;
+}
+
+// Ext.Types.Construct(typeName) -> object or nil
+// Constructs a new instance of a registered type. macOS stub: most C++ types
+// are not heap-constructible from Lua without the full C++ runtime, so we
+// return nil with a warning and let callers handle it gracefully.
+static int lua_types_construct(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+    LOG_LUA_WARN("Ext.Types.Construct('%s'): not supported on macOS (C++ object construction requires full runtime)", type_name);
+    lua_pushnil(L);
+    return 1;
+}
+
+// Ext.Types.GetHashSetValueAt(obj, index) -> value or nil
+// Returns the element at a given 0-based index in a BG3 hash-set proxy.
+// macOS: We don't have the C++ proxy metatables, so return nil gracefully.
+static int lua_types_gethashsetvalueat(lua_State *L) {
+    luaL_checkany(L, 1);
+    luaL_checkinteger(L, 2);
+    // Without full proxy infrastructure we cannot index into hash sets.
+    // Return nil so mods that check for nil can degrade gracefully.
+    lua_pushnil(L);
+    return 1;
+}
+
+// Ext.Types.GetFunctionLocation(func) -> (source, line) or (nil, nil)
+// Returns the source file and line number where a Lua function was defined.
+static int lua_types_getfunctionlocation(lua_State *L) {
+    if (!lua_isfunction(L, 1) || lua_iscfunction(L, 1)) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
+
+    lua_Debug ar;
+    lua_pushvalue(L, 1);
+    if (lua_getinfo(L, ">S", &ar)) {
+        lua_pushstring(L, ar.source);
+        lua_pushinteger(L, ar.linedefined);
+    } else {
+        lua_pushnil(L);
+        lua_pushnil(L);
+    }
+    return 2;
+}
+
+// Ext.Types.AddCustomFunction(typeName, property, func) -> boolean
+// Registers a custom Lua function on an existing type.
+// macOS stub: requires C++ property map infrastructure. Returns false.
+static int lua_types_addcustomfunction(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+    const char *property  = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    LOG_LUA_WARN("Ext.Types.AddCustomFunction('%s', '%s'): not supported on macOS", type_name, property);
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// Ext.Types.AddCustomProperty(typeName, property, getter[, setter]) -> boolean
+// Registers a custom getter/setter property on an existing type.
+// macOS stub: requires C++ property map infrastructure. Returns false.
+static int lua_types_addcustomproperty(lua_State *L) {
+    const char *type_name = luaL_checkstring(L, 1);
+    const char *property  = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    // setter (arg 4) is optional
+    LOG_LUA_WARN("Ext.Types.AddCustomProperty('%s', '%s'): not supported on macOS", type_name, property);
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 // Ext.Types.IsA(obj, typeName) -> boolean
 // Checks if an object is of a given type or inherits from it
 static int lua_types_isa(lua_State *L) {
@@ -920,9 +1015,27 @@ void lua_ext_register_types(lua_State *L, int ext_table_index) {
     lua_pushcfunction(L, lua_ide_helpers_generate);
     lua_setfield(L, -2, "GenerateIdeHelpers");
 
+    lua_pushcfunction(L, lua_types_getvaluetype);
+    lua_setfield(L, -2, "GetValueType");
+
+    lua_pushcfunction(L, lua_types_construct);
+    lua_setfield(L, -2, "Construct");
+
+    lua_pushcfunction(L, lua_types_gethashsetvalueat);
+    lua_setfield(L, -2, "GetHashSetValueAt");
+
+    lua_pushcfunction(L, lua_types_getfunctionlocation);
+    lua_setfield(L, -2, "GetFunctionLocation");
+
+    lua_pushcfunction(L, lua_types_addcustomfunction);
+    lua_setfield(L, -2, "AddCustomFunction");
+
+    lua_pushcfunction(L, lua_types_addcustomproperty);
+    lua_setfield(L, -2, "AddCustomProperty");
+
     lua_setfield(L, ext_table_index, "Types");
 
-    LOG_LUA_INFO("Ext.Types namespace registered (9 functions)");
+    LOG_LUA_INFO("Ext.Types namespace registered (15 functions)");
 }
 
 // ============================================================================
@@ -1849,6 +1962,151 @@ void lua_ext_register_global_helpers(lua_State *L) {
         "  Ext.Print('Usage: !mod_diag [errors|disable <mod>|enable <mod>]')\n"
         "end)\n";
 
+    // Fail-first parity stubs: tests that FAIL now and will PASS after implementation.
+    // Tier 2 (in-game): Entity handle methods require a live entity.
+    // Tier 1: namespace/function existence checks run console-only.
+
+    // Parity stubs part 1: Ext.Entity missing methods (tier 2, need loaded save)
+    static const char *console_cmd_test_parity_entity =
+        "BG3SE_AddTest(2, 'Parity.Entity.GetEntityType', function()\n"
+        "  local host = Osi.GetHostCharacter()\n"
+        "  AssertNotNil(host, 'host')\n"
+        "  local e = Ext.Entity.Get(host)\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetEntityType, 'function', 'entity:GetEntityType')\n"
+        "  local t = e:GetEntityType()\n"
+        "  AssertType(t, 'number', 'GetEntityType result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.GetSalt', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetSalt, 'function', 'entity:GetSalt')\n"
+        "  local s = e:GetSalt()\n"
+        "  AssertType(s, 'number', 'GetSalt result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.GetIndex', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetIndex, 'function', 'entity:GetIndex')\n"
+        "  local idx = e:GetIndex()\n"
+        "  AssertType(idx, 'number', 'GetIndex result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.GetNetId', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.GetNetId, 'function', 'entity:GetNetId')\n"
+        "  local nid = e:GetNetId()\n"
+        "  assert(nid == nil or type(nid) == 'number', 'GetNetId: nil or number')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.CreateComponent', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.CreateComponent, 'function', 'entity:CreateComponent')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Entity.RemoveComponent', function()\n"
+        "  local e = Ext.Entity.Get(Osi.GetHostCharacter())\n"
+        "  AssertNotNil(e, 'entity')\n"
+        "  AssertType(e.RemoveComponent, 'function', 'entity:RemoveComponent')\n"
+        "end)\n";
+
+    // Parity stubs part 2: Ext.Level missing functions (tier 2, need level loaded)
+    static const char *console_cmd_test_parity_level =
+        "BG3SE_AddTest(2, 'Parity.Level.RaycastAll', function()\n"
+        "  assert(Ext.Level.IsReady(), 'Level should be ready')\n"
+        "  AssertType(Ext.Level.RaycastAll, 'function', 'Level.RaycastAll')\n"
+        "  local src = {x=0,y=0,z=0}\n"
+        "  local dst = {x=0,y=-10,z=0}\n"
+        "  local ok, r = pcall(Ext.Level.RaycastAll, src, dst)\n"
+        "  assert(ok, 'RaycastAll should not crash: ' .. tostring(r))\n"
+        "  assert(type(r) == 'table', 'RaycastAll: expected table result')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepSphereClosest', function()\n"
+        "  assert(Ext.Level.IsReady(), 'Level should be ready')\n"
+        "  AssertType(Ext.Level.SweepSphereClosest, 'function', 'Level.SweepSphereClosest')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepSphereAll', function()\n"
+        "  AssertType(Ext.Level.SweepSphereAll, 'function', 'Level.SweepSphereAll')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepCapsuleClosest', function()\n"
+        "  AssertType(Ext.Level.SweepCapsuleClosest, 'function', 'Level.SweepCapsuleClosest')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepCapsuleAll', function()\n"
+        "  AssertType(Ext.Level.SweepCapsuleAll, 'function', 'Level.SweepCapsuleAll')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepBoxClosest', function()\n"
+        "  AssertType(Ext.Level.SweepBoxClosest, 'function', 'Level.SweepBoxClosest')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Parity.Level.SweepBoxAll', function()\n"
+        "  AssertType(Ext.Level.SweepBoxAll, 'function', 'Level.SweepBoxAll')\n"
+        "end)\n";
+
+    // Parity stubs part 3: Ext.Audio, Ext.Types, Ext.Math, Ext.Localization (tier 1)
+    static const char *console_cmd_test_parity_apis =
+        "BG3SE_AddTest(1, 'Parity.Audio.PlayExternalSound', function()\n"
+        "  AssertType(Ext.Audio.PlayExternalSound, 'function', 'Audio.PlayExternalSound')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Audio.LoadBank', function()\n"
+        "  AssertType(Ext.Audio.LoadBank, 'function', 'Audio.LoadBank')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Audio.UnloadBank', function()\n"
+        "  AssertType(Ext.Audio.UnloadBank, 'function', 'Audio.UnloadBank')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Audio.PrepareBank', function()\n"
+        "  AssertType(Ext.Audio.PrepareBank, 'function', 'Audio.PrepareBank')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.Serialize', function()\n"
+        "  AssertType(Ext.Types.Serialize, 'function', 'Types.Serialize')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.Unserialize', function()\n"
+        "  AssertType(Ext.Types.Unserialize, 'function', 'Types.Unserialize')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.Construct', function()\n"
+        "  AssertType(Ext.Types.Construct, 'function', 'Types.Construct')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.GetValueType', function()\n"
+        "  AssertType(Ext.Types.GetValueType, 'function', 'Types.GetValueType')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.GetHashSetValueAt', function()\n"
+        "  AssertType(Ext.Types.GetHashSetValueAt, 'function', 'Types.GetHashSetValueAt')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Types.GetFunctionLocation', function()\n"
+        "  AssertType(Ext.Types.GetFunctionLocation, 'function', 'Types.GetFunctionLocation')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Math.Smoothstep', function()\n"
+        "  AssertType(Ext.Math.Smoothstep, 'function', 'Math.Smoothstep')\n"
+        "  local v = Ext.Math.Smoothstep(0.0, 1.0, 0.5)\n"
+        "  AssertType(v, 'number', 'Smoothstep result')\n"
+        "  AssertEqualsFloat(v, 0.5, 0.01, 'Smoothstep(0,1,0.5)')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Math.IsNaN', function()\n"
+        "  AssertType(Ext.Math.IsNaN, 'function', 'Math.IsNaN')\n"
+        "  assert(Ext.Math.IsNaN(0/0) == true, 'IsNaN(nan) should be true')\n"
+        "  assert(Ext.Math.IsNaN(1.0) == false, 'IsNaN(1.0) should be false')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Localization.CreateHandle', function()\n"
+        "  AssertType(Ext.Loca.CreateHandle, 'function', 'Loca.CreateHandle')\n"
+        "  local ok, r = pcall(Ext.Loca.CreateHandle, 'test string')\n"
+        "  assert(ok, 'CreateHandle should not crash: ' .. tostring(r))\n"
+        "  assert(r ~= nil, 'CreateHandle should return a handle')\n"
+        "end)\n";
+
+    // Parity stubs part 4: Ext.Events functor/damage hooks (tier 1 existence + tier 2 fire)
+    static const char *console_cmd_test_parity_events =
+        "BG3SE_AddTest(1, 'Parity.Events.ExecuteFunctor', function()\n"
+        "  AssertNotNil(Ext.Events.ExecuteFunctor, 'ExecuteFunctor event object should exist')\n"
+        "  local ok, id = pcall(Ext.Events.ExecuteFunctor.Subscribe, Ext.Events.ExecuteFunctor, function() end)\n"
+        "  assert(ok and id ~= nil, 'ExecuteFunctor subscribe should succeed')\n"
+        "  if id then Ext.Events.ExecuteFunctor:Unsubscribe(id) end\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Events.BeforeDealDamage', function()\n"
+        "  -- BeforeDealDamage not yet implemented (I10 pending)\n"
+        "  AssertNotNil(Ext.Events.BeforeDealDamage, 'BeforeDealDamage event object should exist')\n"
+        "end)\n"
+        "BG3SE_AddTest(1, 'Parity.Events.DealDamage', function()\n"
+        "  -- DealDamage not yet implemented (I10 pending)\n"
+        "  AssertNotNil(Ext.Events.DealDamage, 'DealDamage event object should exist')\n"
+        "end)\n";
+
     // Execute each command registration chunk
     const char *console_cmds[] = {
         console_cmd_probe, console_cmd_dumpstat, console_cmd_findstr,
@@ -1862,6 +2120,11 @@ void lua_ext_register_global_helpers(lua_State *L) {
         console_cmd_test_ingame, console_cmd_test_ingame2,
         console_cmd_test_osiris, console_cmd_test_osiris_edge,
         console_cmd_test_entity_events,
+        // Fail-first parity stubs (FAIL now, PASS after implementation)
+        console_cmd_test_parity_entity,
+        console_cmd_test_parity_level,
+        console_cmd_test_parity_apis,
+        console_cmd_test_parity_events,
         console_cmd_test_ingame_reg,
         console_cmd_ide,
         console_cmd_mod_diag

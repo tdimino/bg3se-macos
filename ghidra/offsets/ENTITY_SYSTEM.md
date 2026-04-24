@@ -16,10 +16,10 @@ BG3 uses an Entity Component System (ECS) with the same architecture on macOS as
 
 ## EntityHandle
 
-64-bit packed value:
-- **Bits 0-31**: Entity Index (within type)
-- **Bits 32-47**: Salt (generation counter)
-- **Bits 48-63**: Type Index (archetype)
+64-bit packed value (confirmed from Windows EntitySystem.h, 2026-04-01):
+- **Bits 0-31**: Entity Index (32-bit, within type pool)
+- **Bits 32-53**: Salt (22-bit, generation counter for reuse detection)
+- **Bits 54-63**: Entity Type (10-bit, archetype index, max 1023)
 
 ```c
 #define ENTITY_HANDLE_INVALID 0xFFFFFFFFFFFFFFFFULL
@@ -27,13 +27,17 @@ BG3 uses an Entity Component System (ECS) with the same architecture on macOS as
 static inline uint32_t entity_get_index(EntityHandle h) {
     return (uint32_t)(h & 0xFFFFFFFF);
 }
-static inline uint16_t entity_get_salt(EntityHandle h) {
-    return (uint16_t)((h >> 32) & 0xFFFF);
+static inline uint32_t entity_get_salt(EntityHandle h) {
+    return (uint32_t)((h >> 32) & 0x3FFFFF);  // 22 bits
 }
 static inline uint16_t entity_get_type(EntityHandle h) {
-    return (uint16_t)((h >> 48) & 0xFFFF);
+    return (uint16_t)(h >> 54);  // top 10 bits
 }
 ```
+
+**Note:** The guid_lookup.h had an incorrect 16-bit salt layout (>>48). The entity_system.c
+Lua bindings (GetEntityType, GetSalt, GetIndex) use the corrected decomposition above.
+Pure bit arithmetic—no Ghidra needed.
 
 ## Capturing EntityWorld
 
@@ -602,3 +606,57 @@ After fixing the hash function:
 local e = Ext.Entity.Get("S_PLA_...")
 _P(e.Health.Hp .. "/" .. e.Health.MaxHp)  -- "12/12"
 ```
+
+## ComponentOps (Add/Remove Component)
+
+**Discovered:** 2026-04-01 (Qedeshot swarm + Ghidra research)
+**Status:** Offset UNCONFIRMED — needs runtime probing
+
+### ComponentOps VMT Layout
+
+Confirmed from 100+ RTTI symbols in string table (e.g., `ecs::ComponentOps<esv::AnubisExecutorComponent>::AddImmediateDefaultComponent`):
+
+| VMT Index | Function |
+|-----------|----------|
+| 0 | Destructor (D1) |
+| 1 | Destructor (D0) |
+| 2 | SendComponentAttachedSignal |
+| 3 | SendComponentDetachedSignal / DefaultConstructComponents |
+| 4 | **AddImmediateDefaultComponent(EntityHandle, int retryCount)** |
+
+### EntityWorld Offset for ComponentOpsRegistry
+
+**Original estimate:** `EntityWorld + 0x368`
+**Revised estimate:** `EntityWorld + ~0x390` (from Ghidra analysis)
+**Status:** UNCONFIRMED — requires runtime probing
+
+Known EntityWorld offsets for context:
+
+| Offset | Member | Confidence |
+|--------|--------|------------|
+| `0x240` | ComponentCallbackRegistry (CCR) | Ghidra-verified |
+| `0x250` | RegisterPhaseEnded (bool) | Ghidra-verified |
+| `0x253` | PerformingECSUpdate (bool) | Ghidra-verified |
+| `0x2d0` | EntityStorageContainer* Storage | Ghidra-verified |
+| `0x350-0x3B0` | **ComponentOpsRegistry** (somewhere here) | Estimated |
+| `0x3c0` | ECBExecutor* | Ghidra-verified |
+| `0x3f0` | ImmediateWorldCache* Cache | Ghidra-verified |
+
+**Blocker:** FrameAllocator between Storage (0x2d0) and ComponentOps uses `alignas(64)` and
+contains platform-specific `pthread_mutex_t` whose ARM64 size is uncertain.
+
+### Runtime Probing Strategy
+
+1. From `g_EntityWorld`, probe 0x350-0x3B0 at 8-byte intervals
+2. For each candidate pointer P: check if `*(P)` has a VMT with 5 entries
+3. Check if VMT[4] points into code segment (AddImmediateDefaultComponent)
+4. Array size should be ~2700 (matching CCR component count)
+
+### ImmediateWorldCache Offsets
+
+| Offset | Member | Evidence |
+|--------|--------|----------|
+| +0x110 | Component data array base | `base + typeIndex * 0x80` |
+| +0x240 | ComponentCallbackRegistry* | Double dereference |
+| +0x248 | FrameAllocator* | Default sentinel |
+| +0x250 | EntityWorld* | Passed to GetComponent |

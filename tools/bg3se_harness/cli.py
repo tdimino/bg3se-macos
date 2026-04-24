@@ -27,6 +27,7 @@ from .probe import cmd_probe
 from .menu import cmd_menu
 from .mod_cli import cmd_mod
 from .parity import cmd_parity
+from .wiki import cmd_wiki  # bg3.wiki MediaWiki client
 from .savegames import cmd_save
 from .screenshot import cmd_screenshot
 from .stats_inspect import cmd_stats
@@ -108,6 +109,8 @@ def _add_launch_flags(parser):
                     help="Log file path (--logPath PATH)")
     g.add_argument("--ecb-checker", action="store_true",
                     help="Enable save system ECB checker + logging")
+    g.add_argument("--no-skip-videos", dest="skip_videos", action="store_false",
+                    default=True, help="Don't set video-skip preferences this run")
     g.add_argument("--flags", metavar="'...'",
                     help="Pass arbitrary game flags verbatim")
 
@@ -176,19 +179,21 @@ def cmd_launch(args):
         return 1
 
     # Launch with game flags
+    skip_videos = getattr(args, "skip_videos", True)
     print("Launching BG3...", file=sys.stderr)
     proc = launch_mod.launch(
         continue_game=continue_game,
         load_save=load_save,
         extra_flags=extra_flags,
+        skip_videos=skip_videos,
     )
 
-    # Health check (longer timeout when loading a save)
+    # Health check — also dismisses splash screen via CGEvent
     print("Waiting for SE socket...", file=sys.stderr)
     timeout = getattr(args, "timeout", None)
     if timeout is None:
         timeout = launch_mod.default_timeout(continue_game, load_save)
-    health = launch_mod.wait_for_socket(timeout=timeout)
+    health = launch_mod.wait_for_socket(timeout=timeout, dismiss_splash=True)
     health["pid"] = proc.pid
     health["patch"] = pr
     health["continue_game"] = continue_game
@@ -230,17 +235,19 @@ def cmd_test(args):
         return 1
 
     # Launch
+    skip_videos = getattr(args, "skip_videos", True)
     print("Launching BG3...", file=sys.stderr)
     proc = launch_mod.launch(
         continue_game=continue_game,
         load_save=load_save,
         extra_flags=extra_flags,
+        skip_videos=skip_videos,
     )
 
-    # Wait for socket
+    # Wait for socket — also dismisses splash screen via CGEvent
     print("Waiting for SE socket...", file=sys.stderr)
     timeout = launch_mod.default_timeout(continue_game, load_save)
-    health = launch_mod.wait_for_socket(timeout=timeout)
+    health = launch_mod.wait_for_socket(timeout=timeout, dismiss_splash=True)
     if not health.get("socket_connected"):
         health["stage"] = "health"
         health["pid"] = proc.pid
@@ -283,6 +290,12 @@ def cmd_status(args):
     }
     print(json.dumps(result, indent=2))
     return 0
+
+
+def cmd_quit(args):
+    result = launch_mod.quit_game(force=getattr(args, "force", False))
+    print(json.dumps(result, indent=2))
+    return 0 if result["success"] else 1
 
 
 def cmd_flags(args):
@@ -412,8 +425,10 @@ def main():
     p_eval = sub.add_parser("eval", help="Execute Lua from a file or stdin in the running game")
     p_eval.add_argument("source", help="Path to .lua file, or '-' for stdin")
 
-    # status
+    # status / quit
     sub.add_parser("status", help="Check game/socket/patch status")
+    p_quit = sub.add_parser("quit", help="Quit the running game")
+    p_quit.add_argument("--force", action="store_true", help="Skip graceful quit, send SIGTERM immediately")
 
     # entity
     p_entity = sub.add_parser("entity", help="Inspect a live entity by GUID")
@@ -564,7 +579,40 @@ def main():
     p_ms = mod_sub.add_parser("search", help="Search Nexus Mods")
     p_ms.add_argument("query", help="Search query")
 
+    p_mch = mod_sub.add_parser("changelog", help="Show all version changelogs for a Nexus mod")
+    p_mch.add_argument("mod_id", type=int, help="Nexus mod ID")
+
+    p_mver = mod_sub.add_parser("versions", help="List file versions for a Nexus mod")
+    p_mver.add_argument("mod_id", type=int, help="Nexus mod ID")
+
+    p_mup = mod_sub.add_parser("updated", help="List recently-updated BG3 mods on Nexus")
+    p_mup.add_argument("--period", choices=("1d", "1w", "1m"), default="1w",
+                       help="Time window: 1d, 1w (default), or 1m")
+
     mod_sub.add_parser("backup", help="Backup modsettings.lsx")
+
+    # wiki — bg3.wiki cross-reference
+    p_wiki = sub.add_parser("wiki", help="Query bg3.wiki for spell/item data")
+    wiki_sub = p_wiki.add_subparsers(dest="wiki_command", required=True)
+
+    p_ws = wiki_sub.add_parser("spell", help="Look up a spell page on bg3.wiki by name")
+    p_ws.add_argument("name", help="Spell display name (e.g. Fireball)")
+    p_ws.add_argument("--no-cache", action="store_true",
+                      help="Bypass the local 24h file cache")
+
+    p_wi = wiki_sub.add_parser("item", help="Look up an item/weapon page on bg3.wiki by name")
+    p_wi.add_argument("name", help='Item display name (e.g. "Longsword +1")')
+    p_wi.add_argument("--no-cache", action="store_true",
+                      help="Bypass the local 24h file cache")
+
+    p_wv = wiki_sub.add_parser("verify", help="Fetch a wiki page and (optionally) cross-check its engine uid")
+    p_wv.add_argument("page", help="Exact wiki page title")
+    p_wv.add_argument("--expect-uid", dest="expect_uid", default=None,
+                      help="Expected engine stat name (e.g. WPN_HUM_Longsword_A_1)")
+    p_wv.add_argument("--no-cache", action="store_true",
+                      help="Bypass the local 24h file cache")
+
+    wiki_sub.add_parser("clear-cache", help="Wipe the local wiki page cache")
 
     # parity
     p_parity = sub.add_parser("parity", help="Windows BG3SE parity audit")
@@ -634,6 +682,7 @@ def main():
         "run": cmd_run,
         "eval": cmd_eval,
         "status": cmd_status,
+        "quit": cmd_quit,
         "screenshot": cmd_screenshot,
         "entity": cmd_entity,
         "entity-search": cmd_entity_search,
@@ -651,6 +700,7 @@ def main():
         "author": cmd_author,
         "compat": cmd_compat,
         "mod": cmd_mod,
+        "wiki": cmd_wiki,
         "parity": cmd_parity,
         "doctor": cmd_doctor,
         "save": cmd_save,

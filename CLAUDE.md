@@ -21,7 +21,7 @@ macOS port of Norbyte's Script Extender for Baldur's Gate 3. Goal: feature parit
 - `src/entity/` - Entity Component System (GUID lookup, components)
 - `ghidra/offsets/` - Reverse-engineered offsets documentation
 
-## Modding Toolkit (29 Commands)
+## Modding Toolkit (36 Commands)
 
 ```bash
 # Core pipeline
@@ -54,6 +54,15 @@ PYTHONPATH=tools python3 -m bg3se_harness mod install <path.pak>  # Install loca
 PYTHONPATH=tools python3 -m bg3se_harness mod enable <name> # Enable in modsettings.lsx
 PYTHONPATH=tools python3 -m bg3se_harness mod search <query>  # Search Nexus Mods API
 
+# Web integrations (Nexus + bg3.wiki — stdlib urllib, 24h file cache)
+PYTHONPATH=tools python3 -m bg3se_harness mod changelog <id>       # Nexus changelogs (HTML stripped, newest-first)
+PYTHONPATH=tools python3 -m bg3se_harness mod versions <id>        # Nexus file list (file_id, version, category, size)
+PYTHONPATH=tools python3 -m bg3se_harness mod updated --period 1w  # Recently-updated mods (1d/1w/1m)
+PYTHONPATH=tools python3 -m bg3se_harness wiki spell "Fireball"    # Parsed {{Feature page}} template fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki item "Longsword +1" # Parsed {{WeaponPage}} / {{ArmourPage}} fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki verify "Fireball" --expect-uid Projectile_Fireball  # Offline uid cross-check
+PYTHONPATH=tools python3 -m bg3se_harness wiki clear-cache         # Wipe ~/.config/bg3se-harness/wiki_cache/
+
 # Parity + compatibility + diagnostics
 PYTHONPATH=tools python3 -m bg3se_harness parity scan       # Compare Ext table vs Windows baseline
 PYTHONPATH=tools python3 -m bg3se_harness parity missing    # List gaps (offline)
@@ -72,7 +81,7 @@ PYTHONPATH=tools python3 -m bg3se_harness flags             # 40 discovered game
 PYTHONPATH=tools python3 -m bg3se_harness ghidra decompile <name|0xADDR>  # Ghidra RE bridge
 ```
 
-Uses `insert_dylib` for injection + `defaults write com.larian.bg3 NoLauncher 1` for launcher bypass. See `docs/harness.md` for full docs.
+Uses `insert_dylib` for injection + `defaults write com.larian.bg3 NoLauncher 1` for launcher bypass. Intro videos are skipped by default on `launch`/`test` (opt out with `--no-skip-videos`). See `docs/harness.md` for full docs.
 
 ## Commands (Legacy)
 
@@ -130,7 +139,7 @@ Use `bg3se-macos-ghidra` skill for Ghidra workflows and ARM64 patterns.
 
 ## Current API Status
 
-~94% Windows BG3SE parity. Key namespaces: Osi.* (40+ functions), Ext.Stats (100% parity, 52 functions), Ext.Entity (1,999 components), Ext.Events (33 events), Ext.IMGUI (40 widgets), Ext.Net (RakNet backend).
+~94% Windows BG3SE parity. Key namespaces: Osi.* (40+ functions, generic DB_* accessor), Ext.Stats (100% parity, 52 functions), Ext.Entity (1,999 components, CreateComponent/RemoveComponent, GetEntityType/GetSalt/GetIndex/GetNetId), Ext.Events (33 events + ExecuteFunctor hook), Ext.IMGUI (40 widgets), Ext.Net (RakNet backend), Ext.Level (15 functions incl. 6 Sweep + RaycastAll), Ext.Audio (13 functions + PlayExternalSound via STDString), Ext.Types (9 functions incl. GenerateIdeHelpers), Ext.Math (Random + Fract), Ext.Localization (GetLanguage + CreateHandle). Version detection sentinel probes for game update tolerance.
 
 @agent_docs/api-status.md — Full per-namespace breakdown. Read when implementing new APIs or checking parity.
 

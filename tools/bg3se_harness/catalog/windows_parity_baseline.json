@@ -1,7 +1,14 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "Expected Windows BG3SE API surface. Used by 'parity scan' to detect gaps.",
   "known_version": "4.1.1.7209685",
+  "notes": [
+    "Ext.UI excluded: NoesisGUI not available on macOS (client-only, Noesis dependency).",
+    "Ext.Entity replication functions excluded: Replicate, SetReplicationFlags, GetReplicationFlags are Windows-only network replication hooks.",
+    "Ext.Level: 20 functions from Windows Level.inl (SweepCylinder not in actual source).",
+    "Ext.Audio: Windows ClientAudio.inl has 16 functions; GetSoundObjectId and IsReady are macOS additions not in Windows.",
+    "Ext.Types: Windows Types.inl has 14 functions; AddCustomProperty excluded as low-priority client-side feature."
+  ],
   "namespaces": {
     "Ext.Stats": {
       "functions": [
@@ -14,15 +21,36 @@
       "owner_file": "src/lua/lua_stats.c"
     },
     "Ext.Entity": {
-      "functions": ["Get", "GetAllEntities", "GetAllEntitiesWithComponent", "Subscribe", "Unsubscribe"],
-      "status": "complete",
-      "notes": "1999 components, 462 layouts",
+      "functions": [
+        "Get", "GetAllEntities", "GetAllEntitiesWithComponent", "GetAllEntitiesWithUuid",
+        "GetEntitiesAroundPosition", "HandleToUuid", "UuidToHandle",
+        "Create", "Destroy",
+        "Subscribe", "Unsubscribe",
+        "OnCreate", "OnCreateDeferred", "OnCreateOnce", "OnCreateDeferredOnce",
+        "OnDestroy", "OnDestroyDeferred", "OnDestroyOnce", "OnDestroyDeferredOnce",
+        "OnSystemUpdate", "OnSystemPostUpdate",
+        "EnableTracing", "GetTrace", "ClearTrace",
+        "GetRegisteredComponentTypes",
+        "GetEntityType", "GetSalt", "GetIndex", "GetNetId",
+        "CreateComponent", "RemoveComponent"
+      ],
+      "status": "partial",
+      "notes": "Replication functions (Replicate, SetReplicationFlags, GetReplicationFlags) excluded — Windows-only network hooks. GetEntityType/GetSalt/GetIndex/GetNetId/CreateComponent/RemoveComponent not yet implemented.",
       "owner_file": "src/entity/entity_system.c"
     },
     "Ext.Events": {
       "functions": ["Subscribe", "Throw", "Unsubscribe"],
+      "events": [
+        "SessionLoaded", "SessionUnloaded", "SessionPause", "SessionUnpause",
+        "ResetCompleted", "StatsLoaded", "ModuleLoadStarted",
+        "GameStateChanged", "KeyInput", "DoConsoleCommand", "LuaConsoleInput",
+        "TurnStarted", "TurnEnded", "CombatStarted", "CombatEnded",
+        "StatusApplied", "StatusRemoved", "EquipmentChanged", "LevelUp",
+        "ExecuteFunctor", "BeforeDealDamage", "DealDamage"
+      ],
       "events_count": 33,
-      "status": "complete",
+      "status": "partial",
+      "notes": "ExecuteFunctor, BeforeDealDamage, DealDamage hooks not yet implemented (need Dobby hooks + Ghidra addresses).",
       "owner_file": "src/lua/lua_events.c"
     },
     "Ext.IMGUI": {
@@ -75,8 +103,15 @@
       "owner_file": "src/lua/lua_events.c"
     },
     "Ext.Types": {
-      "functions": ["GetAllTypes", "GetTypeInfo", "GetObjectType", "TypeOf", "IsA", "Validate", "GetComponentLayout", "GetAllLayouts", "GenerateIdeHelpers"],
-      "status": "complete",
+      "functions": [
+        "GetAllTypes", "GetValueType", "GetTypeInfo", "GetObjectType",
+        "TypeOf", "IsA", "Validate",
+        "Serialize", "Unserialize", "Construct",
+        "GetHashSetValueAt", "GetFunctionLocation",
+        "GetComponentLayout", "GetAllLayouts", "GenerateIdeHelpers"
+      ],
+      "status": "partial",
+      "notes": "Serialize, Unserialize, Construct, GetHashSetValueAt, GetFunctionLocation, GetValueType not yet implemented. AddCustomFunction/AddCustomProperty excluded (client-side only). Windows Types.inl has 14 core functions.",
       "owner_file": "src/lua/lua_context.c"
     },
     "Ext.Debug": {
@@ -102,13 +137,28 @@
       "owner_file": "src/lua/lua_template.c"
     },
     "Ext.Level": {
-      "functions": ["RaycastClosest", "RaycastAny", "TestBox", "TestSphere", "GetHeightsAt", "GetCurrentLevel", "GetPhysicsScene", "GetAiGrid", "IsReady"],
-      "status": "complete",
+      "functions": [
+        "GetEntitiesOnTile", "GetTileDebugInfo", "GetHeightsAt",
+        "BeginPathfinding", "BeginPathfindingImmediate",
+        "FindPath", "ReleasePath", "GetPathById", "GetActivePathfindingRequests",
+        "RaycastClosest", "RaycastAny", "RaycastAll",
+        "SweepSphereClosest", "SweepCapsuleClosest", "SweepBoxClosest",
+        "SweepSphereAll", "SweepCapsuleAll", "SweepBoxAll",
+        "TestBox", "TestSphere"
+      ],
+      "status": "partial",
+      "notes": "20 functions from Windows Level.inl. Currently 9 implemented (RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt + singleton accessors). Missing: RaycastAll, 6 Sweep functions, pathfinding, GetEntitiesOnTile, GetTileDebugInfo.",
       "owner_file": "src/level/level_manager.c"
     },
     "Ext.Audio": {
-      "functions": ["PostEvent", "Stop", "PauseAllSounds", "ResumeAllSounds", "SetSwitch", "SetState", "SetRTPC", "GetRTPC", "ResetRTPC", "LoadEvent", "UnloadEvent", "GetSoundObjectId", "IsReady"],
-      "status": "complete",
+      "functions": [
+        "PostEvent", "Stop", "PauseAllSounds", "ResumeAllSounds",
+        "SetSwitch", "SetState", "SetRTPC", "GetRTPC", "ResetRTPC",
+        "LoadEvent", "UnloadEvent",
+        "PlayExternalSound", "LoadBank", "UnloadBank", "PrepareBank", "UnprepareBank"
+      ],
+      "status": "partial",
+      "notes": "16 functions from Windows ClientAudio.inl. Currently 11 implemented (missing PlayExternalSound, LoadBank, UnloadBank, PrepareBank, UnprepareBank). GetSoundObjectId and IsReady are macOS-specific additions.",
       "owner_file": "src/audio/audio_manager.c"
     },
     "Ext.Osiris": {
@@ -117,9 +167,9 @@
       "owner_file": "src/lua/lua_osiris.c"
     },
     "Ext.Localization": {
-      "functions": ["Get", "GetAll", "CreateHandle", "UpdateHandle"],
+      "functions": ["GetTranslatedString", "UpdateTranslatedString", "CreateHandle"],
       "status": "partial",
-      "notes": "Basic get/set works. Advanced handle creation may have gaps.",
+      "notes": "Windows Localization.inl has GetTranslatedString + UpdateTranslatedString. CreateHandle is an extension. Basic get/set works; CreateHandle not yet implemented.",
       "owner_file": "src/lua/lua_localization.c"
     },
     "Ext.Utils": {
@@ -128,8 +178,28 @@
       "owner_file": "src/lua/lua_ext.c"
     },
     "Ext.Math": {
-      "functions": ["Random"],
-      "status": "complete",
+      "functions": [
+        "Add", "Sub", "Mul", "Div",
+        "Normalize", "Cross", "Dot", "Distance", "Length", "Angle",
+        "Reflect", "Project", "Perpendicular",
+        "Inverse", "Transpose", "Determinant", "OuterProduct",
+        "Rotate", "Translate", "Scale",
+        "BuildRotation3", "BuildRotation4", "BuildTranslation", "BuildScale",
+        "BuildFromEulerAngles3", "BuildFromEulerAngles4",
+        "BuildFromAxisAngle3", "BuildFromAxisAngle4",
+        "ExtractEulerAngles", "ExtractAxisAngle", "Decompose",
+        "QuatFromEuler", "QuatFromToRotation",
+        "QuatDot", "QuatSlerp",
+        "QuatToMat3", "QuatToMat4", "Mat3ToQuat", "Mat4ToQuat",
+        "QuatNormalize", "QuatInverse", "QuatRotate", "QuatRotateAxisAngle",
+        "QuatLength", "QuatMul",
+        "Random", "Round", "Fract", "Trunc", "Sign", "Clamp",
+        "Smoothstep", "Lerp",
+        "Asin", "Acos", "Atan", "Atan2",
+        "IsNaN", "IsInf"
+      ],
+      "status": "partial",
+      "notes": "59 functions in Windows Math.inl. Currently 57 implemented. Missing: Smoothstep, IsNaN (or IsInf — verify which 2 are absent).",
       "owner_file": "src/math/lua_math.c"
     },
     "Ext.RegisterNetListener": {

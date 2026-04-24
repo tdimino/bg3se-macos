@@ -28,7 +28,7 @@ def cmd_mod(args):
         from .mod_manager.registry import list_mods
         result = list_mods()
         print(json.dumps(result, indent=2))
-        return 0
+        return 0 if result.get("success", True) else 1
 
     elif subcmd == "install":
         source = args.source
@@ -83,12 +83,30 @@ def cmd_mod(args):
         from .mod_manager.nexus import search_mods
         result = search_mods(args.query)
         print(json.dumps(result, indent=2))
-        return 0
+        return 0 if result.get("success", True) else 1
+
+    elif subcmd == "changelog":
+        from .mod_manager.nexus import get_changelogs
+        result = get_changelogs(args.mod_id)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success", True) else 1
+
+    elif subcmd == "versions":
+        from .mod_manager.nexus import get_mod_files
+        result = get_mod_files(args.mod_id)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success", True) else 1
+
+    elif subcmd == "updated":
+        from .mod_manager.nexus import get_updated
+        result = get_updated(period=args.period)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success", True) else 1
 
     elif subcmd == "backup":
         from .mod_manager.modsettings import backup_modsettings
         result = backup_modsettings()
         print(json.dumps(result, indent=2))
-        return 0
+        return 0 if result.get("success", True) else 1
 
     return 1

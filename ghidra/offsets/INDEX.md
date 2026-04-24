@@ -34,7 +34,9 @@ Reverse-engineered offset documentation from Ghidra analysis of the BG3 macOS bi
 | [PROTOTYPE_MANAGERS.md](PROTOTYPE_MANAGERS.md) | Spell/Status/Passive prototypes |
 | [TEMPLATE.md](TEMPLATE.md) | Game object templates |
 | [RESOURCE.md](RESOURCE.md) | Resource manager |
-| [FUNCTORS.md](FUNCTORS.md) | Stat functor system |
+| [FUNCTORS.md](FUNCTORS.md) | Stat functor system + damage hook signatures + RTTI refs |
+| [PHYSICS_LEVEL.md](PHYSICS_LEVEL.md) | PhysicsScene VMT, Sweep/Raycast, PhysicsHitAll struct |
+| [STDSTRING_ABI.md](STDSTRING_ABI.md) | ls::STDString 16-byte layout, SSO threshold, safe construction |
 | [GAMESTATE.md](GAMESTATE.md) | Game state machine |
 | [LOCALIZATION.md](LOCALIZATION.md) | Localization system |
 | [NOESIS_UI_FRAMEWORK.md](NOESIS_UI_FRAMEWORK.md) | UI framework analysis |

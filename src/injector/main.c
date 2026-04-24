@@ -169,6 +169,7 @@ static void set_arg_string(OsiArgumentDesc *arg, const char *value, int isGuid);
 static void set_arg_int(OsiArgumentDesc *arg, int32_t value);
 static void set_arg_real(OsiArgumentDesc *arg, float value);
 static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args);
+static int osi_value_to_lua(lua_State *L, OsiArgumentValue *val);
 static int osi_is_tagged(const char *character, const char *tag);
 static float osi_get_distance_to(const char *char1, const char *char2);
 static void osi_dialog_request_stop(const char *dialog);
@@ -1108,13 +1109,13 @@ static int lua_osi_dialogrequeststop(lua_State *L) {
         dialog = lua_tostring(L, 1);
     }
 
-    // Try real Osiris call first
-    if (pfn_InternalCall && dialog) {
+    // Try real Osiris call first (dispatch goes through g_divCall)
+    if (g_divCall && dialog) {
         LOG_LUA_INFO("Osi.DialogRequestStop('%s') - calling Osiris", dialog);
         osi_dialog_request_stop(dialog);
     } else {
         LOG_LUA_INFO("Osi.DialogRequestStop() called (no-op: %s)",
-                    dialog ? "InternalCall not available" : "no dialog specified");
+                    dialog ? "g_divCall not available" : "no dialog specified");
     }
 
     return 0;
@@ -1191,27 +1192,6 @@ static void track_player_guid(const char *guid) {
 }
 
 /**
- * DB_Players database accessor
- * Creates a table with a :Get() method that returns player list
- */
-static int lua_osi_db_players_get(lua_State *L) {
-    LOG_LUA_INFO("Osi.DB_Players:Get() called, known players: %d", g_knownPlayerCount);
-
-    // Return table of known players: { {guid1}, {guid2}, ... }
-    lua_newtable(L);
-
-    for (int i = 0; i < g_knownPlayerCount; i++) {
-        // Each entry is a table with the GUID as first element
-        lua_newtable(L);
-        lua_pushstring(L, g_knownPlayerGuids[i]);
-        lua_rawseti(L, -2, 1);  // t[1] = guid
-        lua_rawseti(L, -2, i + 1);  // result[i+1] = {guid}
-    }
-
-    return 1;
-}
-
-/**
  * Ext.Entity.GetDiscoveredPlayers() -> { guid1, guid2, ... }
  * Returns a simple array of discovered player GUIDs
  */
@@ -1225,6 +1205,139 @@ static int lua_entity_get_discovered_players(lua_State *L) {
 
     LOG_ENTITY_DEBUG("GetDiscoveredPlayers() returning %d players", g_knownPlayerCount);
     return 1;
+}
+
+// ============================================================================
+// Generic Osi.DB_<name> Accessor
+// ============================================================================
+
+/**
+ * Generic Osi.DB_<name>:Get([filter...]) read-only accessor.
+ *
+ * Security: this function is QUERY-ONLY. It dispatches via g_divQuery
+ * (preferred) or pfn_InternalQuery (fallback). The call path is not used.
+ *
+ * Stack on entry (called as method via `:` syntax):
+ *   1 = DB accessor table (has field "DBName" = the database name string)
+ *   2..N = optional filter arguments (match Osiris column order; nil = wildcard)
+ *
+ * Returns: table of rows, each row is a table of column values.
+ * Returns empty table if DB not found or query returns nothing.
+ */
+static int lua_osi_db_get(lua_State *L) {
+    lua_getfield(L, 1, "DBName");
+    const char *db_name = lua_tostring(L, -1);
+    lua_pop(L, 1);
+
+    if (!db_name || !*db_name) {
+        LOG_OSIRIS_WARN("Osi.DB_<?>:Get() called but DBName is missing");
+        lua_newtable(L);
+        return 1;
+    }
+
+    uint8_t arity = 0;
+    uint8_t funcType = OSI_FUNC_UNKNOWN;
+    osi_func_get_info(db_name, &arity, &funcType);
+
+    uint32_t funcId = osi_func_lookup_id(db_name);
+    if (funcId == INVALID_FUNCTION_ID) {
+        LOG_OSIRIS_DEBUG("Osi.%s:Get() — DB not yet discovered, returning empty", db_name);
+        lua_newtable(L);
+        return 1;
+    }
+
+    if (funcType != OSI_FUNC_DATABASE && funcType != OSI_FUNC_UNKNOWN) {
+        LOG_OSIRIS_WARN("Osi.%s:Get() — function type %d is not a database", db_name, funcType);
+        lua_newtable(L);
+        return 1;
+    }
+
+    if (!pfn_InternalQuery) {
+        LOG_OSIRIS_WARN("Osi.%s:Get() — pfn_InternalQuery not available", db_name);
+        lua_newtable(L);
+        return 1;
+    }
+
+    int numFilterArgs = lua_gettop(L) - 1;
+    int allocCount = (arity > 0) ? arity : (numFilterArgs > 0 ? numFilterArgs : 1);
+
+    OsiArgumentDesc *args = alloc_args(allocCount);
+    if (!args) {
+        LOG_OSIRIS_ERROR("Osi.%s:Get() — failed to allocate args", db_name);
+        lua_newtable(L);
+        return 1;
+    }
+
+    for (int i = 0; i < allocCount; i++) {
+        int luaArgIdx = i + 2;
+        if (luaArgIdx <= lua_gettop(L) && !lua_isnil(L, luaArgIdx)) {
+            int luaType = lua_type(L, luaArgIdx);
+            switch (luaType) {
+                case LUA_TSTRING: {
+                    const char *str = lua_tostring(L, luaArgIdx);
+                    int isGuid = (str && strlen(str) >= 36 && strchr(str, '-') != NULL);
+                    set_arg_string(&args[i], str, isGuid);
+                    break;
+                }
+                case LUA_TNUMBER:
+                    if (lua_isinteger(L, luaArgIdx)) {
+                        set_arg_int(&args[i], (int32_t)lua_tointeger(L, luaArgIdx));
+                    } else {
+                        set_arg_real(&args[i], (float)lua_tonumber(L, luaArgIdx));
+                    }
+                    break;
+                case LUA_TBOOLEAN:
+                    set_arg_int(&args[i], lua_toboolean(L, luaArgIdx) ? 1 : 0);
+                    break;
+                default:
+                    set_arg_string(&args[i], "", 0);
+                    break;
+            }
+        } else {
+            set_arg_string(&args[i], "", 0);
+        }
+        if (args[i].value.typeId == OSI_TYPE_NONE) {
+            args[i].value.typeId = OSI_TYPE_GUIDSTRING;
+        }
+    }
+
+    // funcId is used directly as dispatch handle (proven via runtime probe:
+    // OsirisFunctionHandle(Key[0..3]).Handle == OsiFunctionId for all Osiris funcs)
+    uint32_t dispatchHandle = funcId;
+    DivCallProc queryFn = g_divQuery ? g_divQuery : (DivCallProc)pfn_InternalQuery;
+
+    lua_newtable(L);
+    int rowCount = 0;
+
+    int result = queryFn(dispatchHandle, args);
+    while (result && rowCount < 10000) {
+        lua_newtable(L);
+        for (int i = 0; i < allocCount; i++) {
+            osi_value_to_lua(L, &args[i].value);
+            lua_rawseti(L, -2, i + 1);
+        }
+        rowCount++;
+        lua_rawseti(L, -2, rowCount);
+
+        result = queryFn(dispatchHandle, args);
+    }
+
+    // Pool-based allocation — no explicit free needed (pool resets on exhaustion)
+
+    LOG_OSIRIS_DEBUG("Osi.%s:Get() returned %d rows", db_name, rowCount);
+    return 1;
+}
+
+/**
+ * Create a generic Osi.DB_<name> accessor table.
+ * The table has a :Get() method and stores the db_name for dispatch.
+ */
+static void osi_push_db_accessor(lua_State *L, const char *db_name) {
+    lua_newtable(L);
+    lua_pushstring(L, db_name);
+    lua_setfield(L, -2, "DBName");
+    lua_pushcfunction(L, lua_osi_db_get);
+    lua_setfield(L, -2, "Get");
 }
 
 // ============================================================================
@@ -1364,9 +1477,10 @@ static int osi_dynamic_call(lua_State *L) {
     LOG_OSIRIS_DEBUG("Osi.%s: Called with %d args (funcId=0x%x, type=%s[%d], arity=%d)",
                 funcName, numArgs, funcId, osi_func_type_str(funcType), funcType, arity);
 
-    // Check if we have the required function pointers
-    if (!pfn_InternalQuery && !pfn_InternalCall) {
-        LOG_OSIRIS_DEBUG("Osi.%s: ERROR: No Osiris function pointers available", funcName);
+    // Check if we have any dispatch available (DivFunctions from RegisterDIVFunctions,
+    // or InternalQuery as fallback for query-only paths)
+    if (!g_divQuery && !g_divCall && !pfn_InternalQuery) {
+        LOG_OSIRIS_DEBUG("Osi.%s: ERROR: No Osiris dispatch available (RegisterDIVFunctions not fired)", funcName);
         lua_pushnil(L);
         return 1;
     }
@@ -1618,14 +1732,12 @@ static int osi_index_handler(lua_State *L) {
 
     LOG_OSIRIS_DEBUG("Looking up '%s'", key);
 
-    // Special case: DB_Players returns a table with :Get() method
-    if (strcmp(key, "DB_Players") == 0) {
-        lua_newtable(L);
-        lua_pushcfunction(L, lua_osi_db_players_get);
-        lua_setfield(L, -2, "Get");
-        // Cache it in the Osi table
-        lua_pushvalue(L, -1);  // Duplicate the table
-        lua_setfield(L, 1, "DB_Players");  // Osi.DB_Players = table
+    // Generic DB_<name> accessor for any Osiris database (read-only: Get only, no Delete).
+    // DB_Players is handled here too; the old per-player hack is superseded.
+    if (strncmp(key, "DB_", 3) == 0) {
+        osi_push_db_accessor(L, key);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, 1, key);
         return 1;
     }
 
@@ -1678,10 +1790,8 @@ static void register_osi_namespace(lua_State *L) {
     lua_pushcfunction(L, lua_osi_qry_startdialog_fixed);
     lua_setfield(L, -2, "QRY_StartDialog_Fixed");
 
-    // Create DB_Players table with :Get() method
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_osi_db_players_get);
-    lua_setfield(L, -2, "Get");
+    // Pre-register DB_Players using the generic accessor (read-only Get).
+    osi_push_db_accessor(L, "DB_Players");
     lua_setfield(L, -2, "DB_Players");
 
     // Create metatable for Osi with __index handler for dynamic function lookup
@@ -2506,16 +2616,10 @@ static int osiris_call_by_id(uint32_t funcId, OsiArgumentDesc *args) {
     if (g_divCall) {
         return g_divCall(funcId, args);
     }
-    // WARNING: InternalCall takes COsipParameterList*, NOT OsiArgumentDesc*.
-    // This fallback path is UNSAFE and will likely crash on ARM64.
-    // It only exists for the case where RegisterDIVFunctions hasn't fired yet.
-    if (pfn_InternalCall) {
-        LOG_OSIRIS_WARN("osiris_call_by_id: falling back to InternalCall (wrong struct type!)");
-        int result = pfn_InternalCall(funcId, (void *)args);
-        return result;
-    }
-    LOG_OSIRIS_DEBUG("ERROR: No call dispatch available (DivCall=%p, InternalCall=%p)",
-                     (void*)g_divCall, (void*)pfn_InternalCall);
+    // Fail closed: InternalCall takes COsiParameterList*, NOT OsiArgumentDesc*.
+    // Calling it with OsiArgumentDesc* crashes on ARM64 (different struct layout).
+    // RegisterDIVFunctions must fire before any Osi calls are safe.
+    LOG_OSIRIS_DEBUG("ERROR: g_divCall not available (RegisterDIVFunctions not yet called)");
     return 0;
 }
 
@@ -3183,9 +3287,14 @@ init_subsystems:
                 LOG_CORE_INFO("Found BG3 executable (index %u): %s", i, name);
                 LOG_CORE_DEBUG("  Base: %p, Slide: 0x%lx", binary_base, (long)slide);
 
+                // Provide binary base for sentinel probing (Issue #78).
+                // This enables version_detect_addresses_safe() to validate
+                // addresses via vm_read even on version mismatches.
+                version_detect_set_binary_base(binary_base);
+
                 // Gate all address-dependent init behind version check.
-                // If the game binary has been updated, our hardcoded TypeId/singleton
-                // addresses are stale and will cause crashes (Issue #73, #78).
+                // Now uses sentinel probes: if addresses are readable,
+                // minor version bumps are accepted as compatible.
                 if (!version_detect_addresses_safe()) {
                     log_message("[WARN] [Init] Skipping address-dependent subsystems "
                                 "(game version mismatch). Lua API and console still work.");
@@ -3238,10 +3347,19 @@ init_subsystems:
                     LOG_CORE_INFO("Localization system initialized");
 
                     // Initialize functor hooks (ExecuteFunctor/AfterExecuteFunctor events)
-                    if (functor_hooks_init(L)) {
-                        LOG_HOOKS_INFO("Functor hooks initialized");
+                    // IMPORTANT: Functor hooks use Dobby to patch CODE at specific addresses.
+                    // Unlike data reads (which sentinel probes validate), code patching is
+                    // unsafe on version mismatch — even a 1-byte shift corrupts instructions.
+                    // Only enable on exact version match.
+                    if (version_detect_matches()) {
+                        if (functor_hooks_init(L)) {
+                            LOG_HOOKS_INFO("Functor hooks initialized");
+                        } else {
+                            LOG_HOOKS_WARN("Functor hooks initialization failed (events won't fire)");
+                        }
                     } else {
-                        LOG_HOOKS_WARN("Functor hooks initialization failed (events won't fire)");
+                        LOG_HOOKS_INFO("Functor hooks SKIPPED (version mismatch — "
+                                       "code patching unsafe, data reads OK via sentinel probes)");
                     }
                 } // end version_detect_addresses_safe() gate
                 found = true;

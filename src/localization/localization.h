@@ -17,6 +17,11 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
+
+// Minimum buffer size for a localization handle string.
+// "h12345678g0000g0000g0000g000000000000" = 38 chars + NUL = 39 bytes.
+#define LOCA_HANDLE_BUF_SIZE 40
 
 // ============================================================================
 // Initialization
@@ -58,6 +63,19 @@ const char* localization_get(const char *handle, const char *fallback);
  * @return true if successful, false on error
  */
 bool localization_set(const char *handle, const char *value);
+
+/**
+ * Create a new unique localization handle string.
+ *
+ * Generates a handle in the BG3 format "h{8hex}g{4hex}g{4hex}g{4hex}g{12hex}".
+ * The caller can then register a translation with localization_set() using the
+ * returned handle.
+ *
+ * @param out   Caller-supplied buffer (at least LOCA_HANDLE_BUF_SIZE bytes)
+ * @param out_size Size of the buffer
+ * @return true on success, false if buffer is too small
+ */
+bool localization_create_handle(char *out, size_t out_size);
 
 // ============================================================================
 // Language Info

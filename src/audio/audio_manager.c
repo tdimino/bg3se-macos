@@ -43,10 +43,52 @@
 #define WWISE_VMT_RESUME_ALL       22
 #define WWISE_VMT_LOAD_EVENT       24
 #define WWISE_VMT_UNLOAD_EVENT     26
+// Additional VMT indices — TBD: verify via Ghidra for ARM64
+#define WWISE_VMT_PLAY_EXTERNAL    28   /* PlayExternalSound */
+#define WWISE_VMT_GET_ID_FROM_STR  30   /* GetIDFromString (SoundNameId) */
+#define WWISE_VMT_LOAD_BANK        32   /* LoadBank */
+#define WWISE_VMT_UNLOAD_BANK      34   /* UnloadBank */
+#define WWISE_VMT_PREPARE_BANK     36   /* PrepareBank */
 
 // Well-known sound object IDs
 #define SOUND_OBJECT_INVALID  0ULL
 #define SOUND_OBJECT_GLOBAL   1ULL
+
+// ============================================================================
+// ls::STDString Construction (verified via Ghidra — see STDSTRING_ABI.md)
+// ============================================================================
+
+// 16-byte libc++ layout with ls::StringAllocator. SSO threshold = 14 chars.
+typedef struct {
+    union {
+        struct { char *data; uint32_t size; uint32_t cap_flag; } l;
+        struct { char data[15]; uint8_t size_flag; } s;
+    };
+} LSSTDString;
+
+// Game's ls::STDString(const char*) constructor (Ghidra: 0x10651fb60)
+#define OFFSET_STDSTRING_CTOR  0x0651fb60ULL
+typedef void (*STDStringCtorFn)(LSSTDString *this_, const char *str);
+
+static void ls_stdstring_init(LSSTDString *out, const char *str, STDStringCtorFn ctor) {
+    size_t len = str ? strlen(str) : 0;
+    memset(out, 0, sizeof(*out));
+    if (len <= 14) {
+        // SSO path — no allocation, entirely inline
+        if (len > 0) memcpy(out->s.data, str, len);
+        out->s.data[len] = '\0';
+        out->s.size_flag = (uint8_t)len;  // bit 7 clear = short mode
+    } else if (ctor) {
+        // Long path — use game's constructor for MemoryManager-compatible allocation
+        ctor(out, str);
+    } else {
+        // Fallback: truncate to SSO (14 chars). Lossy but safe.
+        memcpy(out->s.data, str, 14);
+        out->s.data[14] = '\0';
+        out->s.size_flag = 14;
+        log_message("[Audio] WARNING: STDString ctor not resolved, truncating path to 14 chars");
+    }
+}
 
 // ============================================================================
 // Module State
@@ -56,6 +98,7 @@ static struct {
     bool initialized;
     void *main_binary_base;
     void **resource_manager_ptr;
+    STDStringCtorFn stdstring_ctor;
 } g_audio = {0};
 
 // ============================================================================
@@ -75,10 +118,14 @@ bool audio_manager_init(void *main_binary_base) {
     g_audio.main_binary_base = main_binary_base;
     g_audio.resource_manager_ptr = (void **)((uintptr_t)main_binary_base + OFFSET_RESOURCEMANAGER_PTR);
 
+    // Resolve ls::STDString constructor for PlayExternalSound path parameter
+    g_audio.stdstring_ctor = (STDStringCtorFn)((uintptr_t)main_binary_base + OFFSET_STDSTRING_CTOR);
+
     log_message("[Audio] Audio manager initialized");
     log_message("[Audio]   Base: %p", main_binary_base);
     log_message("[Audio]   ResourceManager::m_ptr at offset 0x%x -> %p",
                 OFFSET_RESOURCEMANAGER_PTR, (void *)g_audio.resource_manager_ptr);
+    log_message("[Audio]   STDString ctor: %p", (void *)g_audio.stdstring_ctor);
 
     g_audio.initialized = true;
     return true;
@@ -362,4 +409,175 @@ bool audio_unload_event(const char *event_name) {
     WwiseUnloadEventFn unload = (WwiseUnloadEventFn)func;
     unload(sm, event_name);
     return true;
+}
+
+// ============================================================================
+// Extended Bank/External Sound Management
+// ============================================================================
+
+/**
+ * GetIDFromString — get a SoundNameId (uint32_t) from an event/bank name string.
+ * Returns UINT32_MAX on failure (no valid ID found).
+ *
+ * On Windows: SoundNameId is a 4-byte integer returned by WwiseManager::GetIDFromString.
+ * The function has simple 4-byte return so no x8 buffer needed.
+ */
+typedef uint32_t (*WwiseGetIdFromStringFn)(void *this_, const char *name);
+
+static uint32_t get_sound_name_id(void *sm, const char *name) {
+    void *func = read_vmt_entry(sm, WWISE_VMT_GET_ID_FROM_STR);
+    if (!func) return UINT32_MAX;
+    WwiseGetIdFromStringFn get_id = (WwiseGetIdFromStringFn)func;
+    return get_id(sm, name);
+}
+
+/**
+ * PlayExternalSound — play a sound from a file path via a Wwise event.
+ *
+ * Windows signature:
+ *   bool PlayExternalSound(SoundObjectId obj, SoundNameId eventId,
+ *                          STDString& path, uint8_t codec,
+ *                          float positionSec, bool loop, void* callback)
+ *
+ * STDString ABI verified via Ghidra (see STDSTRING_ABI.md):
+ *   16 bytes, SSO threshold = 14 chars, constructor at 0x10651fb60.
+ *   We construct a proper LSSTDString on the stack and pass its address.
+ */
+typedef bool (*WwisePlayExternalFn)(void *this_,
+                                     uint64_t sound_object,
+                                     uint32_t event_id,
+                                     LSSTDString *path,
+                                     uint8_t codec,
+                                     float position_sec,
+                                     bool loop,
+                                     void *callback);
+
+bool audio_play_external_sound(uint64_t sound_object_id, const char *event_name,
+                                const char *file_path, uint8_t codec,
+                                float position_sec) {
+    if (!event_name || !file_path) return false;
+
+    void *sm = get_sound_manager();
+    if (!sm) {
+        log_message("[Audio] SoundManager not available for PlayExternalSound");
+        return false;
+    }
+
+    uint32_t event_id = get_sound_name_id(sm, event_name);
+    if (event_id == UINT32_MAX) {
+        log_message("[Audio] PlayExternalSound: could not resolve event ID for '%s'", event_name);
+        return false;
+    }
+
+    void *func = read_vmt_entry(sm, WWISE_VMT_PLAY_EXTERNAL);
+    if (!func) {
+        log_message("[Audio] PlayExternalSound VMT entry not found at index %d", WWISE_VMT_PLAY_EXTERNAL);
+        return false;
+    }
+
+    // Construct LSSTDString on stack (SSO for <=14 chars, game ctor for longer)
+    LSSTDString path_str;
+    ls_stdstring_init(&path_str, file_path, g_audio.stdstring_ctor);
+
+    WwisePlayExternalFn play = (WwisePlayExternalFn)func;
+    bool result = play(sm, sound_object_id, event_id, &path_str, codec, position_sec, false, NULL);
+
+    log_message("[Audio] PlayExternalSound('%s', path='%s', codec=%u, pos=%.2f) -> %s",
+                event_name, file_path, codec, position_sec, result ? "OK" : "FAIL");
+    return result;
+}
+
+/**
+ * LoadBank — load a Wwise sound bank.
+ *
+ * Windows: LoadBank(SoundNameId& bankId, char const* bankName)
+ * bankId is set by the callee. We pass a local uint32_t by address.
+ */
+typedef void (*WwiseLoadBankFn)(void *this_, uint32_t *out_bank_id, const char *bank_name);
+
+bool audio_load_bank(const char *bank_name) {
+    if (!bank_name) return false;
+
+    void *sm = get_sound_manager();
+    if (!sm) {
+        log_message("[Audio] SoundManager not available for LoadBank");
+        return false;
+    }
+
+    void *func = read_vmt_entry(sm, WWISE_VMT_LOAD_BANK);
+    if (!func) {
+        log_message("[Audio] LoadBank VMT entry not found at index %d", WWISE_VMT_LOAD_BANK);
+        return false;
+    }
+
+    uint32_t bank_id = UINT32_MAX;
+    WwiseLoadBankFn load = (WwiseLoadBankFn)func;
+    load(sm, &bank_id, bank_name);
+    return bank_id != UINT32_MAX;
+}
+
+/**
+ * UnloadBank — unload a Wwise sound bank.
+ *
+ * Windows: UnloadBank(SoundNameId bankId)
+ */
+typedef bool (*WwiseUnloadBankFn)(void *this_, uint32_t bank_id);
+
+bool audio_unload_bank(const char *bank_name) {
+    if (!bank_name) return false;
+
+    void *sm = get_sound_manager();
+    if (!sm) {
+        log_message("[Audio] SoundManager not available for UnloadBank");
+        return false;
+    }
+
+    uint32_t bank_id = get_sound_name_id(sm, bank_name);
+    if (bank_id == UINT32_MAX) {
+        log_message("[Audio] UnloadBank: could not resolve bank ID for '%s'", bank_name);
+        return false;
+    }
+
+    void *func = read_vmt_entry(sm, WWISE_VMT_UNLOAD_BANK);
+    if (!func) {
+        log_message("[Audio] UnloadBank VMT entry not found at index %d", WWISE_VMT_UNLOAD_BANK);
+        return false;
+    }
+
+    WwiseUnloadBankFn unload = (WwiseUnloadBankFn)func;
+    return unload(sm, bank_id);
+}
+
+/**
+ * PrepareBank — pre-load bank metadata for streaming.
+ * Same signature as LoadBank: callee sets bankId.
+ */
+bool audio_prepare_bank(const char *bank_name) {
+    if (!bank_name) return false;
+
+    void *sm = get_sound_manager();
+    if (!sm) {
+        log_message("[Audio] SoundManager not available for PrepareBank");
+        return false;
+    }
+
+    void *func = read_vmt_entry(sm, WWISE_VMT_PREPARE_BANK);
+    if (!func) {
+        log_message("[Audio] PrepareBank VMT entry not found at index %d", WWISE_VMT_PREPARE_BANK);
+        return false;
+    }
+
+    uint32_t bank_id = UINT32_MAX;
+    WwiseLoadBankFn prepare = (WwiseLoadBankFn)func;
+    prepare(sm, &bank_id, bank_name);
+    return bank_id != UINT32_MAX;
+}
+
+/**
+ * UnprepareBank — release prepared bank metadata.
+ * Windows implementation calls UnloadBank internally (same as UnloadBank).
+ */
+bool audio_unprepare_bank(const char *bank_name) {
+    /* Windows BG3SE UnprepareBank calls UnloadBank internally */
+    return audio_unload_bank(bank_name);
 }

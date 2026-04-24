@@ -108,21 +108,21 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Lua Runtime | ✅ Lua 5.4 with Ext API |
 | Mod Loading | ✅ PAK file reading, auto-detection |
 | Ext.Osiris | ✅ Event listeners, custom functions (NewCall/NewQuery/NewEvent/RaiseEvent/GetCustomFunctions), **server context guards** |
-| Ext.Entity | ✅ GUID lookup, **Dual EntityWorld** (client + server), **1,999 components registered** (534 layouts: 169 verified + 365 generated), **1,577 ARM64 sizes** + **702 Windows estimates** = **1,730 total** (87% coverage) |
+| Ext.Entity | ✅ GUID lookup, **Dual EntityWorld** (client + server), **1,999 components registered** (534 layouts: 169 verified + 365 generated), **1,577 ARM64 sizes** + **702 Windows estimates** = **1,730 total** (87% coverage), **CreateComponent, RemoveComponent, GetEntityType, GetSalt, GetIndex, GetNetId** |
 | Ext.Stats | ✅ **100% parity** — 15,774 stats, Get/GetAll/Create/Sync, CopyFrom, SetRawAttribute, ExecuteFunctors, TreasureTable/TreasureCategory stubs |
 | Ext.Events | ✅ 33 events (13 lifecycle + 17 engine + 2 functor + 1 network) with Prevent pattern, **runtime mod attribution** + `!mod_diag` |
 | Ext.IO | ✅ LoadFile, SaveFile, **AddPathOverride, GetPathOverride** |
 | Ext.Timer | ✅ WaitFor, WaitForRealtime, Cancel, Pause, Resume, **MicrosecTime, ClockEpoch, ClockTime, GameTime, DeltaTime, Ticks, Persistent timers (6 functions)** |
 | Ext.Vars | ✅ PersistentVars + User Variables + Mod Variables |
 | Ext.Input | ✅ Hotkeys, key injection |
-| Ext.Math | ✅ Vector/matrix operations, **16 quaternion functions**, scalar utils |
+| Ext.Math | ✅ Vector/matrix operations, **16 quaternion functions**, scalar utils, **Fract** |
 | Ext.Enums | ✅ 14 enum/bitfield types |
-| Ext.Types | ✅ Full reflection API (9 functions), **GenerateIdeHelpers** for VS Code IntelliSense |
+| Ext.Types | ✅ Full reflection API (9 functions incl. **GenerateIdeHelpers**) for VS Code IntelliSense |
 | Ext.StaticData | ✅ **All 9 types** (Feat, Race, Background, Origin, God, Class, Progression, ActionResource, FeatDescription) via ForceCapture |
 | Ext.Resource | ✅ Get, GetAll, GetTypes, GetCount (34 resource types) |
 | Ext.Template | ✅ **Auto-capture**, iteration (Cache/LocalCache), GUID resolution |
-| Ext.Level | ✅ **9 functions** - RaycastClosest, RaycastAny, TestBox, TestSphere, GetHeightsAt, singleton accessors |
-| Ext.Audio | ✅ **13 functions** - PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent |
+| Ext.Level | ✅ **15 functions** - RaycastClosest, RaycastAny, **RaycastAll**, TestBox, TestSphere, GetHeightsAt, singleton accessors, **SweepClosest** (Sphere, Capsule, Box), **SweepAll** (Sphere, Capsule, Box) |
+| Ext.Audio | ✅ **13 functions** - PostEvent, Stop, PauseAll, ResumeAll, SetSwitch, SetState, SetRTPC, GetRTPC, ResetRTPC, LoadEvent, UnloadEvent, **PlayExternalSound** (STDString ABI) |
 | Ext.Net | ✅ **Phase 4I Complete** - Full RakNet backend, PostMessageToServer/User/Client, BroadcastMessage, IsHost, IsReady, PeerVersion, **Request/Reply Callbacks** |
 | Ext.RegisterNetListener | ✅ Per-channel network message listener (MCM backbone) |
 | Net.CreateChannel | ✅ **Phase 4I Complete** - High-level channel API with SetHandler, **SetRequestHandler**, SendToServer, **RequestToServer with callbacks**, Broadcast |
@@ -132,10 +132,57 @@ This is just a sample—many more mods work out of the box. See **[docs/supporte
 | Lifetime Scoping | ✅ Prevents stale object access |
 | Context System | ✅ **Server/Client context awareness**, Ext.IsServer/IsClient/GetContext, two-phase bootstrap |
 | Debug Console | ✅ Socket + file + in-game overlay |
+| Osi.DB_* | ✅ Generic database query accessor (`Osi.DB_Players:Get()`, etc.) |
 | Crash Attribution | ✅ **Runtime mod tracking** — per-handler mod name, `!mod_diag` console, soft-disable, enhanced crash reports with mod context |
+| Version Detection | ✅ Sentinel address probes for game version mismatch tolerance (Issue #78) |
 | Testing | ✅ `!test` suite (85 tests), `!test_ingame` (40 tests), Debug.* helpers, Frida scripts |
 
 See [ROADMAP.md](ROADMAP.md) for detailed progress.
+
+## Modding Toolkit (`bg3se-harness`)
+
+One of the first command-line interfaces purpose-built for a AAA RPG.  We built
+a similar CLI for [cliamp](https://github.com/tdimino/cliamp) and saw the same
+pattern take hold there: once a game or application exposes its internals
+through a composable, JSON-emitting command line, agent-driven workflows emerge
+naturally.  We believe CLIs for games will become as second-nature as command
+palettes are in editors today, and we're excited to see what the modding
+community builds on top of this.
+
+The harness ships 36 commands spanning the full Script Extender lifecycle—build,
+patch, launch, test, entity inspection, RPG stats diffing, Lua hot-reload,
+screenshots, crash diagnostics, mod management, Nexus Mods API queries,
+bg3.wiki cross-reference, and a Ghidra RE bridge—all from the terminal, all
+emitting structured JSON.
+
+```bash
+# Core pipeline
+PYTHONPATH=tools python3 -m bg3se_harness status            # Game/socket/patch state
+PYTHONPATH=tools python3 -m bg3se_harness launch --continue # Auto-loads most recent save
+PYTHONPATH=tools python3 -m bg3se_harness test [filter]     # build + patch + launch + test → JSON
+PYTHONPATH=tools python3 -m bg3se_harness run "<lua>"       # Inline Lua via socket
+
+# Game inspection
+PYTHONPATH=tools python3 -m bg3se_harness entity <GUID>                      # Inspect entity components
+PYTHONPATH=tools python3 -m bg3se_harness stats WPN_Longsword --diff Shortsword  # RPG stats + diff
+PYTHONPATH=tools python3 -m bg3se_harness screenshot                         # Claude-Code-safe JPEG
+
+# Web integrations (Nexus + bg3.wiki, stdlib urllib, 24h file cache)
+PYTHONPATH=tools python3 -m bg3se_harness mod changelog 12345       # Per-version HTML-stripped changelog
+PYTHONPATH=tools python3 -m bg3se_harness mod versions 12345        # File list (id, category, size, ts)
+PYTHONPATH=tools python3 -m bg3se_harness mod updated --period 1w   # Recently-updated BG3 mods
+PYTHONPATH=tools python3 -m bg3se_harness wiki spell "Fireball"     # Parsed {{Feature page}} fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki item "Longsword +1"  # Parsed {{WeaponPage}} fields
+PYTHONPATH=tools python3 -m bg3se_harness wiki verify "Fireball" --expect-uid Projectile_Fireball
+```
+
+All commands emit JSON to stdout, so they compose with `jq`, pipe into tests,
+or ship straight into agent workflows. The harness is stdlib-only (no
+`requests` / `httpx`) and caches wiki lookups in
+`~/.config/bg3se-harness/wiki_cache/` with a 24-hour TTL.
+
+See [docs/harness.md](docs/harness.md) for the full command surface and
+[agent_docs/development.md](agent_docs/development.md) for workflow recipes.
 
 ## Documentation
 
@@ -258,6 +305,12 @@ bg3se-macos/
 │   └── ...                     # Other user-facing documentation
 │
 ├── tools/
+│   ├── bg3se_harness/          # 36-command Python CLI (build/patch/launch/test/inspect)
+│   │   ├── cli.py              #   Argparse root + handler dispatch
+│   │   ├── nexus.py            #   Nexus Mods API v1 client (search, info, files, changelogs, updated)
+│   │   ├── wiki.py             #   bg3.wiki MediaWiki client (spell, item, verify, clear-cache)
+│   │   ├── ghidra.py           #   Ghidra HTTP bridge (decompile, xrefs, strings)
+│   │   └── ...                 #   test_runner, launch, patch, stats_inspect, events, parity, ...
 │   ├── bg3se-console.c         # Standalone readline console client
 │   ├── extract_pak.py          # PAK file extractor
 │   ├── extract_typeids.py      # Generate TypeId header from binary

@@ -32,10 +32,22 @@
 #define EOCLEVEL_PHYSICS_SCENE_OFFSET       0x30   // PhysicsSceneBase*
 #define EOCLEVEL_AIGRID_OFFSET              0x80   // AiGrid*
 
-// PhysicsScene VMT indices (from Windows BG3SE, need ARM64 verification)
+// PhysicsScene VMT indices (from Windows BG3SE Physics.h vtable layout)
+// Derived from sequential vtable: dtor(0), InstantiateReadLock(1), Unload(2),
+// AddPhysicsObjects(3), RemovePhysicsObjects(4), AddPhysicsShape(5),
+// RemovePhysicsShape(6), then Raycast/Sweep/Test in declaration order.
 #define PHYSICS_VMT_RAYCAST_CLOSEST     7
 #define PHYSICS_VMT_RAYCAST_ALL         8
 #define PHYSICS_VMT_RAYCAST_ANY         9
+#define PHYSICS_VMT_SWEEP_SPHERE_CLOSEST    10
+#define PHYSICS_VMT_SWEEP_CAPSULE_CLOSEST   11
+#define PHYSICS_VMT_SWEEP_BOX_CLOSEST       12
+#define PHYSICS_VMT_SWEEP_CYLINDER_CLOSEST  13   /* SweepCylinderClosest — not exposed in Lua */
+#define PHYSICS_VMT_SWEEP_SPHERE_ALL        14
+#define PHYSICS_VMT_SWEEP_CAPSULE_ALL       15
+#define PHYSICS_VMT_SWEEP_BOX_ALL           16
+#define PHYSICS_VMT_SWEEP_CYLINDER_ALL      17   /* SweepCylinderAll — not exposed in Lua */
+#define PHYSICS_VMT_SWEEP_SHAPE_ALL         18   /* SweepShapeAll — not exposed in Lua */
 #define PHYSICS_VMT_TEST_BOX           20
 #define PHYSICS_VMT_TEST_SPHERE        24
 
@@ -189,6 +201,29 @@ typedef bool (*PhysicsRaycastClosestFn)(void *this_, LevelPhysicsHit *hit,
                                          uint32_t excludeGroup,
                                          int context);
 
+/**
+ * PhysicsScene::RaycastAll signature (from Windows, VMT[8]):
+ *   bool RaycastAll(vec3 src, vec3 dst, PhysicsHitAll& hits,
+ *                   uint32_t physType, uint32_t includeGroup,
+ *                   uint32_t excludeGroup, int context,
+ *                   int physObjIdx, int excludePhysObjIdx,
+ *                   optional<ScopedReadLock*>)
+ *
+ * PhysicsHitAll is passed by reference (pointer), so no x8 indirect return needed.
+ * The bool return fits in x0 directly.
+ */
+typedef bool (*PhysicsRaycastAllFn)(void *this_,
+                                     float sx, float sy, float sz,
+                                     float dx, float dy, float dz,
+                                     LevelPhysicsHitAll *hits,
+                                     uint32_t physType,
+                                     uint32_t includeGroup,
+                                     uint32_t excludeGroup,
+                                     int context,
+                                     int physObjIdx,
+                                     int excludePhysObjIdx,
+                                     void *optLock);  /* std::optional<ScopedReadLock*> = nullptr */
+
 typedef bool (*PhysicsRaycastAnyFn)(void *this_,
                                      float sx, float sy, float sz,
                                      float dx, float dy, float dz,
@@ -210,6 +245,317 @@ typedef bool (*PhysicsTestSphereFn)(void *this_,
                                      uint32_t physType,
                                      uint32_t includeGroup,
                                      uint32_t excludeGroup);
+
+// ============================================================================
+// Sweep Function Types
+// ============================================================================
+
+/**
+ * SweepSphereClosest — VMT[10]
+ * Windows: bool SweepSphereClosest(float radius, vec3 src, vec3 dst,
+ *                                  PhysicsHit& hit, physType, include, exclude,
+ *                                  context, physObjIdx, excludePhysObjIdx)
+ * Single hit by reference — no x8 indirect needed (bool return).
+ */
+typedef bool (*PhysicsSweepSphereClosestFn)(void *this_,
+                                             float radius,
+                                             float sx, float sy, float sz,
+                                             float dx, float dy, float dz,
+                                             LevelPhysicsHit *hit,
+                                             uint32_t physType,
+                                             uint32_t includeGroup,
+                                             uint32_t excludeGroup,
+                                             int context,
+                                             int physObjIdx,
+                                             int excludePhysObjIdx);
+
+typedef bool (*PhysicsSweepCapsuleClosestFn)(void *this_,
+                                              float radius, float halfHeight,
+                                              float sx, float sy, float sz,
+                                              float dx, float dy, float dz,
+                                              LevelPhysicsHit *hit,
+                                              uint32_t physType,
+                                              uint32_t includeGroup,
+                                              uint32_t excludeGroup,
+                                              int context,
+                                              int physObjIdx,
+                                              int excludePhysObjIdx);
+
+typedef bool (*PhysicsSweepBoxClosestFn)(void *this_,
+                                          float ex, float ey, float ez,   /* extents */
+                                          float sx, float sy, float sz,
+                                          float dx, float dy, float dz,
+                                          LevelPhysicsHit *hit,
+                                          uint32_t physType,
+                                          uint32_t includeGroup,
+                                          uint32_t excludeGroup,
+                                          int context,
+                                          int physObjIdx,
+                                          int excludePhysObjIdx);
+
+/**
+ * SweepSphereAll — VMT[14]
+ * Windows: bool SweepSphereAll(float radius, vec3 src, vec3 dst,
+ *                              PhysicsHitAll& hits, physType, include, exclude,
+ *                              context, physObjIdx, excludePhysObjIdx)
+ */
+typedef bool (*PhysicsSweepSphereAllFn)(void *this_,
+                                         float radius,
+                                         float sx, float sy, float sz,
+                                         float dx, float dy, float dz,
+                                         LevelPhysicsHitAll *hits,
+                                         uint32_t physType,
+                                         uint32_t includeGroup,
+                                         uint32_t excludeGroup,
+                                         int context,
+                                         int physObjIdx,
+                                         int excludePhysObjIdx);
+
+typedef bool (*PhysicsSweepCapsuleAllFn)(void *this_,
+                                          float radius, float halfHeight,
+                                          float sx, float sy, float sz,
+                                          float dx, float dy, float dz,
+                                          LevelPhysicsHitAll *hits,
+                                          uint32_t physType,
+                                          uint32_t includeGroup,
+                                          uint32_t excludeGroup,
+                                          int context,
+                                          int physObjIdx,
+                                          int excludePhysObjIdx);
+
+typedef bool (*PhysicsSweepBoxAllFn)(void *this_,
+                                      float ex, float ey, float ez,   /* extents */
+                                      float sx, float sy, float sz,
+                                      float dx, float dy, float dz,
+                                      LevelPhysicsHitAll *hits,
+                                      uint32_t physType,
+                                      uint32_t includeGroup,
+                                      uint32_t excludeGroup,
+                                      int context,
+                                      int physObjIdx,
+                                      int excludePhysObjIdx);
+
+// ============================================================================
+// Sweep Implementations — Closest (single hit)
+// ============================================================================
+
+bool level_sweep_sphere_closest(const float src[3], const float dst[3],
+                                 float radius,
+                                 LevelPhysicsHit *hit,
+                                 uint32_t physics_type,
+                                 uint32_t include_group,
+                                 uint32_t exclude_group,
+                                 int context) {
+    if (!hit) return false;
+    memset(hit, 0, sizeof(*hit));
+
+    void *physics = level_get_physics_scene();
+    if (!physics) return false;
+
+    void *func = read_vmt_entry(physics, PHYSICS_VMT_SWEEP_SPHERE_CLOSEST);
+    if (!func) {
+        log_message("[Level] SweepSphereClosest VMT entry not found at index %d",
+                    PHYSICS_VMT_SWEEP_SPHERE_CLOSEST);
+        return false;
+    }
+
+    PhysicsSweepSphereClosestFn sweep = (PhysicsSweepSphereClosestFn)func;
+    return sweep(physics,
+                 radius,
+                 src[0], src[1], src[2],
+                 dst[0], dst[1], dst[2],
+                 hit,
+                 physics_type, include_group, exclude_group,
+                 context, -1, -1);
+}
+
+bool level_sweep_capsule_closest(const float src[3], const float dst[3],
+                                  float radius, float half_height,
+                                  LevelPhysicsHit *hit,
+                                  uint32_t physics_type,
+                                  uint32_t include_group,
+                                  uint32_t exclude_group,
+                                  int context) {
+    if (!hit) return false;
+    memset(hit, 0, sizeof(*hit));
+
+    void *physics = level_get_physics_scene();
+    if (!physics) return false;
+
+    void *func = read_vmt_entry(physics, PHYSICS_VMT_SWEEP_CAPSULE_CLOSEST);
+    if (!func) {
+        log_message("[Level] SweepCapsuleClosest VMT entry not found at index %d",
+                    PHYSICS_VMT_SWEEP_CAPSULE_CLOSEST);
+        return false;
+    }
+
+    PhysicsSweepCapsuleClosestFn sweep = (PhysicsSweepCapsuleClosestFn)func;
+    return sweep(physics,
+                 radius, half_height,
+                 src[0], src[1], src[2],
+                 dst[0], dst[1], dst[2],
+                 hit,
+                 physics_type, include_group, exclude_group,
+                 context, -1, -1);
+}
+
+bool level_sweep_box_closest(const float src[3], const float dst[3],
+                              const float extents[3],
+                              LevelPhysicsHit *hit,
+                              uint32_t physics_type,
+                              uint32_t include_group,
+                              uint32_t exclude_group,
+                              int context) {
+    if (!hit) return false;
+    memset(hit, 0, sizeof(*hit));
+
+    void *physics = level_get_physics_scene();
+    if (!physics) return false;
+
+    void *func = read_vmt_entry(physics, PHYSICS_VMT_SWEEP_BOX_CLOSEST);
+    if (!func) {
+        log_message("[Level] SweepBoxClosest VMT entry not found at index %d",
+                    PHYSICS_VMT_SWEEP_BOX_CLOSEST);
+        return false;
+    }
+
+    PhysicsSweepBoxClosestFn sweep = (PhysicsSweepBoxClosestFn)func;
+    return sweep(physics,
+                 extents[0], extents[1], extents[2],
+                 src[0], src[1], src[2],
+                 dst[0], dst[1], dst[2],
+                 hit,
+                 physics_type, include_group, exclude_group,
+                 context, -1, -1);
+}
+
+// ============================================================================
+// Sweep Implementations — All (multiple hits)
+// ============================================================================
+
+bool level_sweep_sphere_all(const float src[3], const float dst[3],
+                             float radius,
+                             LevelPhysicsHitAll *out,
+                             uint32_t physics_type,
+                             uint32_t include_group,
+                             uint32_t exclude_group,
+                             int context) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+
+    void *physics = level_get_physics_scene();
+    if (!physics) return false;
+
+    void *func = read_vmt_entry(physics, PHYSICS_VMT_SWEEP_SPHERE_ALL);
+    if (!func) {
+        log_message("[Level] SweepSphereAll VMT entry not found at index %d",
+                    PHYSICS_VMT_SWEEP_SPHERE_ALL);
+        return false;
+    }
+
+    PhysicsSweepSphereAllFn sweep = (PhysicsSweepSphereAllFn)func;
+    return sweep(physics,
+                 radius,
+                 src[0], src[1], src[2],
+                 dst[0], dst[1], dst[2],
+                 out,
+                 physics_type, include_group, exclude_group,
+                 context, -1, -1);
+}
+
+bool level_sweep_capsule_all(const float src[3], const float dst[3],
+                              float radius, float half_height,
+                              LevelPhysicsHitAll *out,
+                              uint32_t physics_type,
+                              uint32_t include_group,
+                              uint32_t exclude_group,
+                              int context) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+
+    void *physics = level_get_physics_scene();
+    if (!physics) return false;
+
+    void *func = read_vmt_entry(physics, PHYSICS_VMT_SWEEP_CAPSULE_ALL);
+    if (!func) {
+        log_message("[Level] SweepCapsuleAll VMT entry not found at index %d",
+                    PHYSICS_VMT_SWEEP_CAPSULE_ALL);
+        return false;
+    }
+
+    PhysicsSweepCapsuleAllFn sweep = (PhysicsSweepCapsuleAllFn)func;
+    return sweep(physics,
+                 radius, half_height,
+                 src[0], src[1], src[2],
+                 dst[0], dst[1], dst[2],
+                 out,
+                 physics_type, include_group, exclude_group,
+                 context, -1, -1);
+}
+
+bool level_sweep_box_all(const float src[3], const float dst[3],
+                          const float extents[3],
+                          LevelPhysicsHitAll *out,
+                          uint32_t physics_type,
+                          uint32_t include_group,
+                          uint32_t exclude_group,
+                          int context) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+
+    void *physics = level_get_physics_scene();
+    if (!physics) return false;
+
+    void *func = read_vmt_entry(physics, PHYSICS_VMT_SWEEP_BOX_ALL);
+    if (!func) {
+        log_message("[Level] SweepBoxAll VMT entry not found at index %d",
+                    PHYSICS_VMT_SWEEP_BOX_ALL);
+        return false;
+    }
+
+    PhysicsSweepBoxAllFn sweep = (PhysicsSweepBoxAllFn)func;
+    return sweep(physics,
+                 extents[0], extents[1], extents[2],
+                 src[0], src[1], src[2],
+                 dst[0], dst[1], dst[2],
+                 out,
+                 physics_type, include_group, exclude_group,
+                 context, -1, -1);
+}
+
+bool level_raycast_all(const float src[3], const float dst[3],
+                       LevelPhysicsHitAll *out,
+                       uint32_t physics_type,
+                       uint32_t include_group,
+                       uint32_t exclude_group,
+                       int context) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+
+    void *physics = level_get_physics_scene();
+    if (!physics) {
+        log_message("[Level] PhysicsScene not available for RaycastAll");
+        return false;
+    }
+
+    void *func = read_vmt_entry(physics, PHYSICS_VMT_RAYCAST_ALL);
+    if (!func) {
+        log_message("[Level] RaycastAll VMT entry not found at index %d", PHYSICS_VMT_RAYCAST_ALL);
+        return false;
+    }
+
+    PhysicsRaycastAllFn raycast = (PhysicsRaycastAllFn)func;
+    bool hit = raycast(physics,
+                       src[0], src[1], src[2],
+                       dst[0], dst[1], dst[2],
+                       out,
+                       physics_type, include_group, exclude_group,
+                       context,
+                       -1, -1,
+                       NULL);
+
+    return hit;
+}
 
 bool level_raycast_closest(const float src[3], const float dst[3],
                            LevelPhysicsHit *hit,
