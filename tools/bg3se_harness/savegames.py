@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
 from pathlib import Path
 
 from .config import SAVES_DIR, SAVE_FIXTURES_DIR
+from .mod_manager.pak_inspector import PakInspectorError, PakReader
 
 
 def _ensure_fixtures_dir():
@@ -67,6 +69,155 @@ def _save_info(save_dir):
         "size_bytes": total_size,
         "size_mb": round(total_size / (1024 * 1024), 1),
     }
+
+
+def _find_save_dir(name=None, *, continue_latest=False):
+    """Resolve a save by directory name/display substring, or latest save."""
+    dirs = _save_dirs()
+    if continue_latest or not name:
+        return dirs[0] if dirs else None
+
+    if _safe_name(name):
+        exact = SAVES_DIR / name
+        if exact.exists() and exact.is_dir():
+            return exact
+
+    needle = name.lower()
+    matches = [
+        save_dir for save_dir in dirs
+        if needle in save_dir.name.lower()
+        or needle in _save_info(save_dir)["display_name"].lower()
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _save_lsv_path(save_dir):
+    lsvs = sorted(save_dir.glob("*.lsv"), key=lambda p: p.name.lower())
+    return lsvs[0] if lsvs else None
+
+
+def _ascii_strings(data, min_len=4):
+    pattern = rb"[\x20-\x7e]{%d,}" % min_len
+    return [
+        match.group(0).decode("utf-8", errors="replace")
+        for match in re.finditer(pattern, data)
+    ]
+
+
+def _load_known_mods():
+    """Return registry mods plus installed scan metadata keyed by UUID."""
+    from .mod_manager.inventory import scan_installed_paks
+    from .mod_manager.registry import load_registry
+
+    known = {}
+    for uuid, entry in load_registry().items():
+        if uuid:
+            known[uuid] = dict(entry)
+    for mod in scan_installed_paks().get("mods", []):
+        uuid = mod.get("uuid")
+        if not uuid:
+            continue
+        merged = dict(known.get(uuid, {}))
+        merged.update({k: v for k, v in mod.items() if v not in (None, "", [])})
+        known[uuid] = merged
+    return known
+
+
+def _scan_archive_for_mod_markers(lsv_path, known_mods):
+    """Search decompressed save entries for known mod UUID/name/folder markers."""
+    markers = {
+        uuid: {
+            "uuid": uuid,
+            "name": mod.get("name"),
+            "folder": mod.get("folder"),
+            "version": mod.get("version"),
+            "markers": [],
+            "sources": [],
+            "first_seen": None,
+        }
+        for uuid, mod in known_mods.items()
+    }
+
+    scanned_files = []
+    unreadable_files = []
+
+    try:
+        with PakReader(str(lsv_path)) as pak:
+            files = pak.list_files()
+            for file_name in files:
+                if file_name.lower().endswith((".webp", ".png", ".jpg", ".jpeg")):
+                    continue
+                try:
+                    data = pak.read_file(file_name)
+                except (KeyError, PakInspectorError, RuntimeError) as exc:
+                    unreadable_files.append({"file": file_name, "error": str(exc)})
+                    continue
+                scanned_files.append(file_name)
+                lower = data.lower()
+                for uuid, mod in known_mods.items():
+                    search_terms = []
+                    for kind in ("uuid", "folder", "name"):
+                        value = mod.get(kind)
+                        if value:
+                            search_terms.append((kind, str(value)))
+                    for kind, term in search_terms:
+                        encoded = term.encode("utf-8", errors="ignore").lower()
+                        if not encoded or encoded not in lower:
+                            continue
+                        offset = lower.find(encoded)
+                        marker = {
+                            "kind": kind,
+                            "value": term,
+                            "file": file_name,
+                            "offset": offset,
+                        }
+                        if marker not in markers[uuid]["markers"]:
+                            markers[uuid]["markers"].append(marker)
+                            markers[uuid]["sources"].append(file_name)
+                        first_seen = markers[uuid]["first_seen"]
+                        order_key = (files.index(file_name), offset)
+                        if first_seen is None or order_key < tuple(first_seen):
+                            markers[uuid]["first_seen"] = list(order_key)
+    except (PakInspectorError, OSError, RuntimeError) as exc:
+        return {
+            "error": str(exc),
+            "scanned_files": scanned_files,
+            "unreadable_files": unreadable_files,
+            "mods": [],
+        }
+
+    found = [
+        {
+            **entry,
+            "sources": sorted(set(entry["sources"])),
+            "confidence": (
+                "high" if any(m["kind"] in ("uuid", "folder") for m in entry["markers"])
+                else "low"
+            ),
+        }
+        for entry in markers.values()
+        if entry["markers"]
+    ]
+    found.sort(key=lambda item: tuple(item["first_seen"] or [999999, 999999]))
+    return {
+        "scanned_files": scanned_files,
+        "unreadable_files": unreadable_files,
+        "mods": found,
+    }
+
+
+def _read_save_info_json(lsv_path):
+    try:
+        with PakReader(str(lsv_path)) as pak:
+            data = pak.read_file("SaveInfo.json")
+    except (KeyError, PakInspectorError, OSError, RuntimeError) as exc:
+        return {"error": str(exc)}
+    try:
+        return json.loads(data.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError as exc:
+        return {"error": f"SaveInfo.json parse error: {exc}"}
 
 
 def _fixture_dirs():
@@ -216,6 +367,83 @@ def clone(src_name, dst_name):
     }
 
 
+def save_mods(save_name=None, *, continue_latest=False):
+    """Infer save-required mods from a .lsv archive and compare active state."""
+    save_dir = _find_save_dir(save_name, continue_latest=continue_latest)
+    if not save_dir:
+        return {
+            "success": False,
+            "error": "Save not found" if save_name else "No saves found",
+            "save": save_name,
+        }
+    lsv_path = _save_lsv_path(save_dir)
+    if not lsv_path:
+        return {
+            "success": False,
+            "error": f"No .lsv file found in {save_dir}",
+            "save_dir": str(save_dir),
+        }
+
+    known_mods = _load_known_mods()
+    marker_scan = _scan_archive_for_mod_markers(lsv_path, known_mods)
+    save_info = _read_save_info_json(lsv_path)
+
+    detected = marker_scan.get("mods", [])
+    required = [mod for mod in detected if mod.get("confidence") == "high"]
+    low_confidence = [mod for mod in detected if mod.get("confidence") != "high"]
+    required_uuids = {mod["uuid"] for mod in required}
+
+    from .mod_manager.modsettings import read_mod_order
+    active_order = read_mod_order()
+    if active_order and "error" in active_order[0]:
+        active_mods = []
+        active_error = active_order[0]
+    else:
+        active_mods = active_order
+        active_error = None
+    active_uuids = {mod.get("uuid") for mod in active_mods if mod.get("uuid")}
+    base_uuids = {
+        mod.get("uuid")
+        for mod in active_mods
+        if mod.get("name") == "GustavX" or mod.get("folder") == "GustavX"
+    }
+
+    installed_uuids = set(known_mods)
+    missing_from_active = sorted(required_uuids - active_uuids)
+    missing_from_installed = sorted(required_uuids - installed_uuids)
+    active_extra = sorted(active_uuids - required_uuids - base_uuids)
+
+    return {
+        "success": "error" not in marker_scan,
+        "save": _save_info(save_dir),
+        "lsv_path": str(lsv_path),
+        "method": "archive_marker_scan",
+        "order_reliable": False,
+        "note": (
+            "BG3 save files expose mod markers in binary LSF entries, but this "
+            "scanner does not prove load order. Use mod verify --modsettings "
+            "to check active state."
+        ),
+        "save_info": save_info,
+        "detected_mods": detected,
+        "required_mods": required,
+        "low_confidence_candidates": low_confidence,
+        "required_count": len(required),
+        "active_mods": active_mods,
+        "active_error": active_error,
+        "comparison": {
+            "missing_from_active": missing_from_active,
+            "missing_from_installed": missing_from_installed,
+            "active_extra": active_extra,
+        },
+        "scan": {
+            "scanned_files": marker_scan.get("scanned_files", []),
+            "unreadable_files": marker_scan.get("unreadable_files", []),
+            "error": marker_scan.get("error"),
+        },
+    }
+
+
 # ============================================================================
 # CLI handler
 # ============================================================================
@@ -246,6 +474,14 @@ def cmd_save(args):
 
     elif subcmd == "clone":
         result = clone(args.src, args.dst)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success") else 1
+
+    elif subcmd == "mods":
+        result = save_mods(
+            getattr(args, "name", None),
+            continue_latest=getattr(args, "continue_latest", False),
+        )
         print(json.dumps(result, indent=2))
         return 0 if result.get("success") else 1
 

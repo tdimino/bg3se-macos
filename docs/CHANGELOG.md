@@ -13,7 +13,7 @@ Each entry includes:
 
 ---
 
-## [v0.37.1+headless] - 2026-05-16 — Headless CLI mode working + console poll timer + focus hack
+## [v0.37.1+headless] - 2026-05-16 — Headless CLI mode working + mod-state preflight
 
 **Category:** Headless automation + console infrastructure | **Parity:** ~94%
 
@@ -21,6 +21,9 @@ Headless CLI mode now works end-to-end: `launch --headless` achieves `socket_con
 in ~3s, window hidden via System Events, game runs in background at 1280x720 windowed.
 Console socket now responds at main menu (not just during gameplay) via GCD dispatch timer.
 Focus hack reintegrated to bypass Noesis input gate for background operation.
+The harness now also diagnoses save-load crashes by scanning installed PAKs, reconciling
+the registry, inferring save-required mods from `.lsv` archives, and classifying macOS
+`.ips` crash reports against BG3SE logs.
 
 ### Added
 - **Console poll timer** — GCD dispatch timer (100ms) in `init_lua()` polls
@@ -33,11 +36,34 @@ Focus hack reintegrated to bypass Noesis input gate for background operation.
   at VA `0x108ac0278`.
 - **Headless mode verified** — `launch --headless` confirmed working: build → patch →
   launch (windowed 1280x720) → socket responds (3.3s) → window hidden → graphics restored.
+- **Installed PAK inventory and registry reconciliation** — `mod scan --installed`
+  parses every installed `.pak`; `mod reconcile --installed [--write]` reports or
+  registers PAKs missing from the harness registry.
+- **Save-load mod preflight** — `launch --continue`, `launch --save`, and `test`
+  run `mod preflight` before real launches unless `--no-mod-preflight` is passed.
+  `--accept-mod-verification` documents runs where BG3's Mod Verification dialog is
+  expected and may need menu automation.
+- **Save-required mod inference** — `save mods [--continue|NAME]` opens `.lsv`
+  save archives, reads `SaveInfo.json`, and scans decompressed entries for UUID,
+  folder, and name markers. The current Ebonlake save reports six high-confidence
+  required content mods and one low-confidence name-only candidate.
+- **Modsettings verification** — `mod verify --modsettings [--continue|--save NAME]`
+  checks active mods against registry, installed PAKs, and save-required markers.
+  `--expected-order` accepts an exact UUID order JSON file for deterministic order checks.
+- **macOS crash attribution** — `crashlog` now parses `.ips` reports, matches the
+  crashing PID to BG3SE logs, extracts the enabled mod list, and classifies the
+  observed save crash as `post_level_loaded_hotbar_update`.
+- **PAK/LSV metadata support** — PAK inspection now reads `Folder` and dependency
+  `ModuleShortDesc` metadata from `meta.lsx`, and can decompress LSV compression type
+  `3` through the local `zstd` binary when present.
 
 ### Known Issues
-- **`-continueGame` crash** — `gui::HotbarSystem::Update` NULL deref at `0x10` on
-  GameThread ~32s after save load. Pre-existing BG3 bug unrelated to BG3SE. Workaround:
-  launch without `--continue`, then load save via socket or menu automation.
+- **`-continueGame` hotbar crash still needs live retest** — The crash is now
+  classified after `LevelLoaded/GainedControl` rather than treated as opaque. Current
+  evidence shows the high-confidence save-required mods are active, four dependency/SE
+  mods are active extras, and `libbg3se` is not on the faulting stack. Next steps are a
+  live headless retest with the reconciled registry and a deterministic `modsettings.lsx`
+  writer if exact load-order reconstruction is still needed.
 
 ---
 

@@ -28,7 +28,9 @@ Format reference (from pak_reader.h / pak_reader.c):
 """
 
 import json
+import shutil
 import struct
+import subprocess
 import zlib
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -44,6 +46,7 @@ LSPK_ENTRY_SIZE = 272
 PAK_COMPRESSION_NONE = 0
 PAK_COMPRESSION_ZLIB = 1
 PAK_COMPRESSION_LZ4 = 2
+PAK_COMPRESSION_ZSTD = 3
 
 # LZ4 support is optional.  We attempt import once and cache the result.
 try:
@@ -68,6 +71,27 @@ def _decompress_lz4(data: bytes, uncompressed_size: int) -> bytes:
     return _lz4_block.decompress(data, uncompressed_size=uncompressed_size)
 
 
+def _decompress_zstd(data: bytes) -> bytes:
+    """Decompress zstd data via the system zstd binary when available."""
+    zstd = shutil.which("zstd")
+    if not zstd:
+        raise RuntimeError(
+            "zstd is not installed — cannot decompress Zstandard-compressed data. "
+            "Install zstd or avoid archives using compression type 3."
+        )
+    proc = subprocess.run(
+        [zstd, "-dcq"],
+        input=data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"zstd decompression failed: {err}")
+    return proc.stdout
+
+
 def _decompress_entry(data: bytes, compression: int, uncompressed_size: int) -> bytes:
     """Decompress entry data according to compression type."""
     if compression == PAK_COMPRESSION_NONE:
@@ -76,6 +100,8 @@ def _decompress_entry(data: bytes, compression: int, uncompressed_size: int) -> 
         return zlib.decompress(data)
     if compression == PAK_COMPRESSION_LZ4:
         return _decompress_lz4(data, uncompressed_size)
+    if compression == PAK_COMPRESSION_ZSTD:
+        return _decompress_zstd(data)
     raise ValueError(f"Unknown compression type: {compression}")
 
 
@@ -183,9 +209,11 @@ def _extract_mod_info_from_lsx(content: bytes) -> dict:
     info: dict = {
         "uuid": None,
         "name": None,
+        "folder": None,
         "author": None,
         "description": None,
         "version": None,
+        "dependencies": [],
     }
 
     try:
@@ -205,11 +233,34 @@ def _extract_mod_info_from_lsx(content: bytes) -> dict:
 
         info["uuid"] = attrs.get("UUID") or attrs.get("ModuleUUID")
         info["name"] = attrs.get("Name")
+        info["folder"] = attrs.get("Folder")
         info["author"] = attrs.get("Author")
         info["description"] = attrs.get("Description")
         # Prefer Version64 (numeric), fall back to Version string
         info["version"] = attrs.get("Version64") or attrs.get("Version")
         break
+
+    dependencies = []
+    for deps_node in root.iter("node"):
+        if deps_node.get("id") != "Dependencies":
+            continue
+        for node in deps_node.iter("node"):
+            if node.get("id") != "ModuleShortDesc":
+                continue
+            attrs = {
+                attr.get("id", ""): attr.get("value", "")
+                for attr in node.findall("attribute")
+            }
+            dep = {
+                "uuid": attrs.get("UUID"),
+                "name": attrs.get("Name"),
+                "folder": attrs.get("Folder"),
+                "version": attrs.get("Version64") or attrs.get("Version"),
+                "md5": attrs.get("MD5"),
+            }
+            if any(dep.values()):
+                dependencies.append(dep)
+    info["dependencies"] = dependencies
 
     return info
 
@@ -371,7 +422,8 @@ class PakReader:
         Searches for any entry whose name ends with 'meta.lsx' (case-insensitive).
 
         Returns:
-            dict with keys: uuid, name, author, description, version, meta_path.
+            dict with keys: uuid, name, folder, author, description, version,
+            dependencies, meta_path.
             Values are None when not found.
         """
         meta_path = None
@@ -382,16 +434,17 @@ class PakReader:
 
         if meta_path is None:
             return {
-                "uuid": None, "name": None, "author": None,
-                "description": None, "version": None, "meta_path": None,
+                "uuid": None, "name": None, "folder": None, "author": None,
+                "description": None, "version": None, "dependencies": [],
+                "meta_path": None,
             }
 
         try:
             content = self.read_file(meta_path)
         except (KeyError, PakInspectorError, RuntimeError):
             return {
-                "uuid": None, "name": None, "author": None,
-                "description": None, "version": None,
+                "uuid": None, "name": None, "folder": None, "author": None,
+                "description": None, "version": None, "dependencies": [],
                 "meta_path": meta_path,
             }
 

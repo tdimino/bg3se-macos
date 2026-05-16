@@ -8,9 +8,11 @@
 | [API Reference](api-reference.md) | Complete Ext.* and Osi.* API documentation |
 | [Architecture](architecture.md) | Technical deep-dive: injection, hooks, ARM64 ABI |
 | [Development Guide](development.md) | Contributing, building features, debugging |
+| [Harness CLI](harness.md) | `bg3se_harness` commands for headless launch, mod/save preflight, and diagnostics |
 | [Troubleshooting](troubleshooting.md) | Common issues and solutions |
 | [Reverse Engineering](reverse-engineering.md) | Ghidra workflows, offset discovery |
 | [Contributor Workflow](contributor-workflow.md) | End-to-end guide: research, Ghidra, subagents, Agent Teams |
+| [Bug Investigations](bugs/INDEX.md) | Active headless automation and crash-diagnosis investigations |
 | [RE Acceleration Audit](re-acceleration-audit.md) | Comparative audit + high-leverage strategies to accelerate parity work |
 
 ## For Different Audiences

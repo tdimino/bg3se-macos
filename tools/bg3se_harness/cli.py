@@ -223,6 +223,35 @@ def _add_launch_flags(parser):
                     default=True, help="Don't set video-skip preferences this run")
     g.add_argument("--flags", metavar="'...'",
                     help="Pass arbitrary game flags verbatim")
+    g.add_argument("--no-mod-preflight", dest="mod_preflight",
+                    action="store_false", default=True,
+                    help="Skip save-load mod state preflight")
+    g.add_argument("--accept-mod-verification", action="store_true",
+                    help="Debug only: allow launch even when preflight expects BG3 Mod Verification")
+
+
+def _run_mod_preflight_if_needed(args, *, continue_game, load_save):
+    """Run the mod-state preflight before save-loading launches."""
+    if not (continue_game or load_save):
+        return None
+    if not getattr(args, "mod_preflight", False):
+        return None
+
+    from .mod_manager.inventory import preflight_mod_state
+
+    result = preflight_mod_state(
+        accept_mod_verification=getattr(args, "accept_mod_verification", False),
+    )
+    if result.get("success"):
+        return None
+    result = {
+        "stage": "mod_preflight",
+        "continue_game": continue_game,
+        **result,
+    }
+    if load_save:
+        result["load_save"] = load_save
+    return result
 
 
 def cmd_build(args):
@@ -268,6 +297,15 @@ def cmd_launch(args):
         extra_flags = _collect_extra_flags(args)
     except FlagError as e:
         print(json.dumps({"error": str(e)}))
+        return 1
+
+    preflight = _run_mod_preflight_if_needed(
+        args,
+        continue_game=continue_game,
+        load_save=load_save,
+    )
+    if preflight:
+        print(json.dumps(preflight, indent=2))
         return 1
 
     # Build + deploy
@@ -381,6 +419,15 @@ def cmd_test(args):
         extra_flags = _collect_extra_flags(args)
     except FlagError as e:
         print(json.dumps({"error": str(e)}))
+        return 1
+
+    preflight = _run_mod_preflight_if_needed(
+        args,
+        continue_game=continue_game,
+        load_save=load_save,
+    )
+    if preflight:
+        print(json.dumps(preflight, indent=2))
         return 1
 
     # Build + deploy
@@ -797,7 +844,35 @@ def main():
     p_mod = sub.add_parser("mod", help="Mod management (install, enable, list, search)")
     mod_sub = p_mod.add_subparsers(dest="mod_command", required=True)
 
-    mod_sub.add_parser("list", help="List installed mods with enabled/SE status")
+    p_ml = mod_sub.add_parser("list", help="List registered mods with enabled/SE status")
+    p_ml.add_argument("--scan-installed", action="store_true",
+                      help="Include installed PAK scan and registry reconciliation report")
+    p_ml.add_argument("--json", action="store_true",
+                      help="Accepted for script compatibility; output is always JSON")
+
+    p_mscan = mod_sub.add_parser("scan", help="Scan installed PAK metadata")
+    p_mscan.add_argument("--installed", action="store_true", required=True,
+                         help="Scan BG3's installed Mods directory")
+
+    p_mrec = mod_sub.add_parser("reconcile", help="Compare installed PAKs with the harness registry")
+    p_mrec.add_argument("--installed", action="store_true", required=True,
+                        help="Reconcile against BG3's installed Mods directory")
+    p_mrec.add_argument("--write", action="store_true",
+                        help="Write missing installed PAK entries into the registry")
+
+    p_mpre = mod_sub.add_parser("preflight", help="Check save-load mod state before launch")
+    p_mpre.add_argument("--accept-mod-verification", action="store_true",
+                        help="Debug only: do not block on detected unsafe Mod Verification state")
+
+    p_mverify = mod_sub.add_parser("verify", help="Verify active modsettings state")
+    p_mverify.add_argument("--modsettings", action="store_true", required=True,
+                           help="Verify active modsettings.lsx entries")
+    p_mverify.add_argument("--save", metavar="NAME",
+                           help="Also compare against save-required mod markers")
+    p_mverify.add_argument("--continue", dest="continue_latest", action="store_true",
+                           help="Compare against the most recent save")
+    p_mverify.add_argument("--expected-order", metavar="JSON",
+                           help="JSON list of expected UUIDs for exact order verification")
 
     p_mi = mod_sub.add_parser("install", help="Install a mod from local file or Nexus")
     p_mi.add_argument("source", help="Local .pak path, directory, or nexus:MOD_ID")
@@ -887,6 +962,11 @@ def main():
     p_sc = save_sub.add_parser("clone", help="Clone a save or fixture under a new name")
     p_sc.add_argument("src", help="Source save/fixture name")
     p_sc.add_argument("dst", help="Destination fixture name")
+
+    p_sm = save_sub.add_parser("mods", help="Infer save-required mods from a save archive")
+    p_sm.add_argument("name", nargs="?", help="Save directory/display-name substring")
+    p_sm.add_argument("--continue", dest="continue_latest", action="store_true",
+                      help="Inspect the most recent save")
 
     # ghidra
     p_ghidra = sub.add_parser("ghidra", help="Ghidra RE bridge commands")

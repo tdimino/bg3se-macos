@@ -62,6 +62,7 @@ tooling.
 | `diff-test base.json curr.json` | Compare two `test` JSON outputs |
 | `doctor` | Verify every prerequisite (SDK, BG3 install, launcher flag, codesign) |
 | `save list` | Available saves with metadata |
+| `save mods [--continue\|NAME]` | Infer save-required mods from `.lsv` archive markers |
 
 ### Mod management
 
@@ -73,6 +74,10 @@ tooling.
 | `mod remove <name>` | Uninstall by mod name |
 | `mod info <source>` | Inspect a PAK file or Nexus mod id |
 | `mod order --move X --before Y` | Reorder the load order |
+| `mod scan --installed` | Scan installed PAK metadata |
+| `mod reconcile --installed [--write]` | Compare/write installed PAK registry entries |
+| `mod preflight` | Check active mod state before save-load launch |
+| `mod verify --modsettings` | Verify active `modsettings.lsx`, optionally against save markers |
 | `mod search <query>` | Nexus Mods search (falls back to updated + client filter) |
 | `mod backup` | Snapshot `modsettings.lsx` |
 
@@ -183,6 +188,7 @@ tools/bg3se_harness/
 └── mod_manager/
     ├── nexus.py        # Nexus Mods API v1 (search, info, files, changelogs, updated)
     ├── installer.py    # Local PAK install/uninstall
+    ├── inventory.py    # Installed PAK scan, registry reconcile, preflight
     ├── modsettings.py  # modsettings.lsx enable/disable/backup
     ├── registry.py     # Installed-mod registry
     └── pak_inspector.py # PAK metadata extraction
@@ -224,6 +230,29 @@ tools/bg3se_harness/
 **Boot retry/cancel diagnostics:** Foreground `launch` and `test` default to one automatic retry in `--headless` mode (`--boot-retries 1`), and zero retries otherwise unless explicitly requested. When an attempt reaches `stage: "timeout"` or `stage: "menu_stalled"`, the harness tails the latest BG3SE log, extracts likely problem lines, records menu geometry/OCR diagnostics, force-quits BG3, restores temporary graphics settings, waits `--retry-delay` seconds, and relaunches. JSON output includes `boot_attempts`, each attempt's `diagnostics`, and `retry_cleanup` with cancel/restore results. If the socket listens but never responds, the per-process menu watchdog still retries Continue delivery with key and coordinate fallbacks before the higher-level boot retry starts.
 
 **Menu click misses:** Use `menu geometry --capture` while BG3 is visible to compare Quartz window bounds, System Events bounds, screenshot pixels, and measured backing scale. Use `menu detect --debug-image .screenshots/menu-debug.png` to write an annotated screenshot with OCR boxes and intended click centers. `menu click` includes the coordinate basis and alternatives in JSON so Retina pixel/point mismatches are visible instead of implicit.
+
+**Save-load mod preflight:** `launch --continue`, `launch --save`, and `test`
+run a mod-state preflight before starting BG3. The preflight scans installed
+PAKs, compares active `modsettings.lsx` entries to the harness registry, and
+blocks unsafe save loads before BG3 reaches the Mod Verification dialog. Use:
+
+```bash
+PYTHONPATH=tools python3 -m bg3se_harness mod scan --installed
+PYTHONPATH=tools python3 -m bg3se_harness mod reconcile --installed
+PYTHONPATH=tools python3 -m bg3se_harness mod reconcile --installed --write
+PYTHONPATH=tools python3 -m bg3se_harness mod preflight
+PYTHONPATH=tools python3 -m bg3se_harness save mods --continue
+PYTHONPATH=tools python3 -m bg3se_harness mod verify --modsettings --continue
+```
+
+`--no-mod-preflight` skips the launch/test gate. `--accept-mod-verification` is
+for debugging only; it allows the current checkbox automation path while still
+reporting the unsafe mod-state issues in JSON. `save mods` scans decompressed
+`.lsv` archive entries for installed mod UUID/folder markers. UUID/folder hits
+are treated as high-confidence save-required mods; name-only hits are reported
+as low-confidence candidates. The marker scan does not prove load order, so use
+`mod verify --modsettings --expected-order order.json` when exact UUID order must
+be checked against a saved expected list.
 
 **Codesign warnings:** Ad-hoc signing may warn about subcomponents (log files in MacOS/). These are harmless—the binary itself is signed correctly.
 

@@ -55,13 +55,9 @@ def _derive_folder(pak_path: Path, info: dict) -> str:
     Folder equal to Name.  If meta.lsx has no useful Folder attribute we
     fall back to the PAK stem (filename without extension).
     """
-    # PakReader doesn't parse the Folder attribute — only Name, UUID,
-    # Author, Description, Version.  The Folder value lives in meta.lsx
-    # under ModuleInfo as well, but _extract_mod_info_from_lsx only captures
-    # the five fields listed above.
-    #
-    # Practical convention: for most well-formed mods Folder == Name.
-    # Use the PAK stem as an always-available fallback.
+    folder = (info.get("folder") or "").strip()
+    if folder:
+        return folder
     name = (info.get("name") or "").strip()
     if name:
         return name

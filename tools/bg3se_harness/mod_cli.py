@@ -55,9 +55,55 @@ def cmd_mod(args):
 
     if subcmd == "list":
         from .mod_manager.registry import list_mods
-        result = list_mods()
+        if getattr(args, "scan_installed", False):
+            from .mod_manager.inventory import reconcile_registry
+            result = reconcile_registry(write=False)
+        else:
+            result = list_mods()
         print(json.dumps(result, indent=2))
         return 0
+
+    elif subcmd == "scan":
+        from .mod_manager.inventory import scan_installed_paks
+        if not getattr(args, "installed", False):
+            result = {"error": "Only --installed scanning is currently supported"}
+            print(json.dumps(result, indent=2))
+            return 1
+        result = scan_installed_paks()
+        print(json.dumps(result, indent=2))
+        return 0 if "error" not in result else 1
+
+    elif subcmd == "reconcile":
+        from .mod_manager.inventory import reconcile_registry
+        if not getattr(args, "installed", False):
+            result = {"error": "Only --installed reconciliation is currently supported"}
+            print(json.dumps(result, indent=2))
+            return 1
+        result = reconcile_registry(write=getattr(args, "write", False))
+        print(json.dumps(result, indent=2))
+        return 0 if not result.get("scan", {}).get("error") else 1
+
+    elif subcmd == "preflight":
+        from .mod_manager.inventory import preflight_mod_state
+        result = preflight_mod_state(
+            accept_mod_verification=getattr(args, "accept_mod_verification", False),
+        )
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success") else 1
+
+    elif subcmd == "verify":
+        from .mod_manager.inventory import verify_modsettings
+        if not getattr(args, "modsettings", False):
+            result = {"error": "Only --modsettings verification is currently supported"}
+            print(json.dumps(result, indent=2))
+            return 1
+        result = verify_modsettings(
+            save_name=getattr(args, "save", None),
+            continue_latest=getattr(args, "continue_latest", False),
+            expected_order_path=getattr(args, "expected_order", None),
+        )
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("success") else 1
 
     elif subcmd == "install":
         source = args.source

@@ -14,6 +14,7 @@ Documentation for BG3SE-macOS users, contributors, and developers.
 |------|-------------|
 | [development.md](development.md) | Build workflow, live console, debugging |
 | [testing.md](testing.md) | Test suite reference (125 tests, 2 tiers) |
+| [harness.md](harness.md) | `bg3se_harness` CLI reference, including headless launch, mod/save preflight, and diagnostics |
 | [contributor-workflow.md](contributor-workflow.md) | How to contribute |
 | [crash-attribution.md](crash-attribution.md) | Mod crash attribution system |
 
@@ -35,6 +36,9 @@ Documentation for BG3SE-macOS users, contributors, and developers.
 |-----------|----------|
 | `archive/` | Historical documentation |
 | `arm64/` | ARM64-specific notes |
+| `bugs/` | Active bug investigations and headless automation debug logs |
 | `compat-reports/` | Automated mod vet reports (JSON, from `compat vet`) |
 | `components/` | Component documentation |
+| `plans/` | Implementation plans and task breakdowns |
+| `re/` | Reverse-engineering notes and offset references |
 | `solutions/` | Solved problems and patterns |
