@@ -1,0 +1,97 @@
+{
+  "_about": [
+    "Recipe for porting BG3SE-macOS address tables to a new game version.",
+    "Every per-version address the code needs is listed here with how to resolve it.",
+    "The macOS BG3 binary keeps its symbol table, so most entries resolve via `nm`.",
+    "Run: PYTHONPATH=tools python3 -m tools.port_offsets resolve   (see docs/PORTING.md)",
+    "",
+    "Resolution methods:",
+    "  symbol      -> nm the demangled `symbol`; the address IS the result.",
+    "  data_shift  -> not exported; result = (baseline_ghidra + data_shift), where",
+    "                 data_shift is derived once from `data_shift_anchor` below.",
+    "  constant    -> a __TEXT/data address that does NOT change between versions",
+    "                 (verify it still resolves to the same symbol; warn if not).",
+    "  struct_offset -> a field offset WITHIN an object. Stable across minor patches.",
+    "                 Carried as-is; only changes if Larian restructures the class",
+    "                 (then it needs Ghidra/runtime re-discovery -- the tool flags it).",
+    "All `baseline` values are full Ghidra addresses for 4.1.1.6995620 (the verified base)."
+  ],
+
+  "baseline_version": "4.1.1.6995620",
+
+  "data_shift_anchor": {
+    "_note": "Derives the uniform __DATA shift = nm(symbol) - baseline. For 7209685 this is +0x8000. Pick an exported global whose 6995620 address is known.",
+    "symbol": "ls::TypeId<eoc::FeatManager, ls::ImmutableDataHeadmaster>::m_TypeIndex",
+    "baseline": "0x1088efd00"
+  },
+
+  "offset_table_functions": [
+    {"field": "fn_feat_getfeats",      "baseline": "0x101b752b4", "symbol": "eoc::FeatManager::GetFeats() const"},
+    {"field": "fn_getallfeats",        "baseline": "0x10120b3e8", "symbol": "eoc::character_creation::GetAllFeats(eoc::character_creation::Environment const&)"},
+    {"field": "fn_get_background",     "baseline": "0x102994834", "symbol": "eoc::BackgroundManager const* ls::ImmutableDataHeadmaster::Get<eoc::BackgroundManager>() const"},
+    {"field": "fn_get_origin",         "baseline": "0x10341c42c", "symbol": "eoc::OriginManager const* ls::ImmutableDataHeadmaster::Get<eoc::OriginManager>() const"},
+    {"field": "fn_get_class",          "baseline": "0x10262f184", "symbol": "eoc::ClassDescriptions const* ls::ImmutableDataHeadmaster::Get<eoc::ClassDescriptions>() const"},
+    {"field": "fn_get_progression",    "baseline": "0x103697f0c", "symbol": "eoc::ProgressionManager const* ls::ImmutableDataHeadmaster::Get<eoc::ProgressionManager>() const"},
+    {"field": "fn_get_actionresource", "baseline": "0x1011a4494", "symbol": "eoc::ActionResourceTypes const* ls::ImmutableDataHeadmaster::Get<eoc::ActionResourceTypes>() const"},
+    {"field": "fn_get_template_raw",   "baseline": "0x105f96304", "symbol": "ls::GlobalTemplateManager::GetTemplateRaw(ls::FixedString const&) const"},
+    {"field": "fn_cache_template",     "baseline": "0x105d31ce4", "symbol": "ls::CacheTemplateManagerBase::CacheTemplate(ls::GameObjectTemplate const*, ls::FixedString const&, ls::FixedString const&)"},
+    {"field": "fn_try_get_uuid_mapping","baseline": "0x1010dc924", "symbol": "ls::Result<ecs::_private::EntityViewFinder<ecs::_private::QueryViewFinder<ecs::query::alive::Spec<ls::TypeList<ls::uuid::ToHandleMappingComponent const>, ls::TypeList<>, ls::TypeList<>, ls::TypeList<>, ls::TypeList<>, ls::TypeList<>, ecs::QueryTypePersistentTag, ecs::QueryTypeAliveTag>>::type>::type, ls::Error> ecs::legacy::Helper::TryGetSingleton<ecs::query::alive::Spec<ls::TypeList<ls::uuid::ToHandleMappingComponent const>, ls::TypeList<>, ls::TypeList<>, ls::TypeList<>, ls::TypeList<>, ls::TypeList<>, ecs::QueryTypePersistentTag, ecs::QueryTypeAliveTag>>(ecs::EntityWorld&)"},
+    {"field": "fn_storage_tryget",     "baseline": "0x10636b27c", "symbol": "ecs::EntityStorageContainer::TryGet(ls::ID<ecs::EntityHandleTraits>)"},
+    {"field": "fn_spell_proto_init",   "baseline": "0x101f72754", "symbol": "eoc::SpellPrototype::Init(ls::FixedString const&)"}
+  ],
+
+  "remap_functions": [
+    {"name": "FixedString::Create",        "baseline": "0x1064b9ebc", "symbol": "ls::FixedString::Create(char const*, int)"},
+    {"name": "ResourceContainer::GetResource","baseline": "0x1060cc608", "symbol": "ls::ResourceContainer::GetResource(ls::EResourceType, ls::FixedString const&) const"},
+    {"name": "ExecuteStatsFunctor",        "baseline": "0x105783a38", "symbol": "ExecuteStatsFunctor(eoc::StatsFunctorBase const*, unsigned long, esv::functor::AttackTargetContextData&)"},
+    {"name": "ExecuteFunctors<AttackTarget>","baseline": "0x105787918", "symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::AttackTargetContextData&)"},
+    {"name": "ExecuteFunctors<AttackPosition>","baseline": "0x105787c6c","symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::AttackPositionContextData&)"},
+    {"name": "ExecuteFunctors<Move>",      "baseline": "0x10578975c", "symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::MoveContextData&)"},
+    {"name": "ExecuteFunctors<Target>",    "baseline": "0x10578a918", "symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::TargetContextData&)"},
+    {"name": "ExecuteFunctors<NearbyAttacked>","baseline": "0x10578e4d8","symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::NearbyAttackedContextData&)"},
+    {"name": "ExecuteFunctors<NearbyAttacking>","baseline": "0x10578fba8","symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::NearbyAttackingContextData&)"},
+    {"name": "ExecuteFunctors<Equip>",     "baseline": "0x105790a28", "symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::EquipContextData&)"},
+    {"name": "ExecuteFunctors<Source>",    "baseline": "0x105792a90", "symbol": "esv::functor::ExecuteStatsFunctors(eoc::StatsFunctorList const*, esv::functor::SourceContextData&)"},
+    {"name": "ExecuteFunctors<Interrupt>", "baseline": "0x1057965e4", "symbol": "esv::functor::ExecuteStatsFunctors(ecs::EntityWorld&, eoc::StatsFunctorList const*, esv::functor::InterruptContextData&)"},
+    {"name": "TranslatedStringRepository::TryGet","baseline": "0x106534d54","symbol": "ls::TranslatedStringRepository::TryGet(ls::RuntimeStringHandle const&, ls::identity::EIdentity, ls::identity::EIdentity) const"},
+    {"name": "TranslatedStringRepository::Get","baseline": "0x106535148","symbol": "ls::TranslatedStringRepository::Get(ls::RuntimeStringHandle const&, ls::identity::EIdentity, ls::identity::EIdentity) const"},
+    {"name": "TranslatedStringRepository::AddTranslatedString","baseline": "0x106532590","symbol": "ls::TranslatedStringRepository::AddTranslatedString(ls::RuntimeStringHandle, ls::_StringView<char>, ls::TranslatedMapRepo<ls::RuntimeStringNoVersionHashOps>*, ls::EnumFlags<ls::EAddFlags>)"},
+    {"name": "MessageFactory::GetFreeMessage","baseline": "0x1063d5998","symbol": "net::MessageFactory::GetFreeMessage(int)"},
+    {"name": "STDString::STDString(char const*)","baseline": "0x10651fb60","symbol": "ls::STDString::STDString(char const*)"}
+  ],
+
+  "constant_functions": [
+    {"name": "BinkManager::LoadVideo", "baseline": "0x10390b6cc", "symbol": "bik::BinkManager::LoadVideo(ls::Path const&)", "_note": "unchanged 6995620 -> 7209685; verify it still maps to this symbol"}
+  ],
+
+  "_data_singletons_note": "baseline = offset from binary base (the value stored in offset_table.c, i.e. Ghidra addr - 0x100000000). result = baseline + data_shift.",
+  "data_singletons": [
+    {"field": "eocserver_ptr",           "baseline": "0x0898e8b8", "method": "data_shift", "note": "esv::EocServer::m_ptr (not exported)"},
+    {"field": "eocclient_ptr",           "baseline": "0x0898c968", "method": "data_shift", "note": "ecl::EocClient::m_ptr (not exported)"},
+    {"field": "spell_proto_mgr_ptr",     "baseline": "0x089bac80", "method": "data_shift", "note": "SpellPrototypeManager::m_ptr (not exported)"},
+    {"field": "rpgstats_ptr",            "baseline": "0x089c5730", "method": "data_shift", "note": "RPGStats::m_ptr (not exported)"},
+    {"field": "resource_mgr_ptr",        "baseline": "0x08a8f070", "method": "data_shift", "note": "ResourceManager::m_ptr (not exported)"},
+    {"field": "level_mgr_ptr",           "baseline": "0x08a3be40", "method": "data_shift", "note": "LevelManager::m_ptr (not exported)"},
+    {"field": "global_template_mgr_ptr", "baseline": "0x08a88508", "method": "data_shift", "note": "ls::GlobalTemplateManager::m_ptr (not exported)"},
+    {"field": "cache_template_mgr_ptr",  "baseline": "0x08a309a8", "method": "data_shift", "note": "CacheTemplateManager::m_ptr (not exported)"},
+    {"field": "level_cache_mgr_ptr",     "baseline": "0x08a735d8", "method": "data_shift", "note": "Level::s_CacheTemplateManager (not exported)"},
+    {"field": "staticdata_mstate_ptr",   "baseline": "0x083c4a68", "method": "data_shift", "note": "PTR to ImmutableDataHeadmaster TypeContext m_State (not exported)"},
+    {"field": "gst_ptr",                 "baseline": "0x08aeccd8", "method": "data_shift", "note": "ls::gGlobalStringTable subtable base ptr (verify via ls::gst::Get disasm)"}
+  ],
+
+  "exported_data": [
+    {"name": "TranslatedStringRepository::m_ptr", "baseline": "0x108aed088", "symbol": "ls::TranslatedStringRepository::m_ptr", "consumer": "localization.c LOCA_REPO_OFFSET", "_note": "exported 'b' symbol; also equals data_shift result -- good cross-check"}
+  ],
+
+  "struct_offsets": [
+    {"name": "EocServer -> EntityWorld",          "value": "0x288",  "where": "entity_system.c OFFSET_ENTITYWORLD_IN_EOCSERVER", "verify_via": "esv::EocServer::StartUp disasm: ldr xN,[this,#0x288]"},
+    {"name": "EntityWorld -> StorageContainer",   "value": "0x2d0",  "where": "component_templates.h ENTITYWORLD_STORAGE_OFFSET"},
+    {"name": "EntityWorld -> ImmediateWorldCache","value": "0x3f0",  "where": "component_templates.h ENTITYWORLD_CACHE_OFFSET"},
+    {"name": "RPGStats -> FixedStrings pool",     "value": "0x348",  "where": "ghidra/offsets/STATS.md"},
+    {"name": "RefMap capacity",                   "value": "0x10",   "where": "prototype_managers.c REFMAP_OFFSET_CAPACITY"},
+    {"name": "RefMap keys array",                 "value": "0x28",   "where": "prototype_managers.c REFMAP_OFFSET_KEYS"},
+    {"name": "RefMap values array",               "value": "0x38",   "where": "prototype_managers.c REFMAP_OFFSET_VALUES"},
+    {"name": "Stat object -> name FixedString",   "value": "0x20",   "where": "stats_manager.c STATS_OBJECT_OFFSET_NAME"},
+    {"name": "GST subtable stride",               "value": "0x1200", "where": "fixed_string.c (ls::gst::Get: umaddl ... #0x1200)"}
+  ]
+}

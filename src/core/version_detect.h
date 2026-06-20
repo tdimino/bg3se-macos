@@ -55,6 +55,12 @@ bool version_detect_matches(void);
 void version_detect_set_binary_base(void *base);
 
 /**
+ * Get the runtime base address of the main BG3 binary.
+ * Returns NULL if version_detect_set_binary_base() hasn't been called.
+ */
+void *version_detect_get_binary_base(void);
+
+/**
  * Check if address-dependent features should be enabled.
  * Returns true if:
  *   - Version matches exactly, OR

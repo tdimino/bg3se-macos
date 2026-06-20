@@ -9,6 +9,7 @@
 #include "stats_manager.h"
 #include "logging.h"
 #include "../core/version_detect.h"
+#include "../core/offset_table.h"
 #include "../strings/fixed_string.h"
 
 #include <stdio.h>
@@ -169,9 +170,16 @@ static SpellPrototypeInit_fn g_SpellPrototypeInit = NULL;
 // Helper: Calculate runtime address from Ghidra offset
 // ============================================================================
 
+// Resolve a __DATA Ghidra address (prototype-manager singleton pointer) to a
+// runtime address, applying the per-version __DATA shift (e.g. +0x8000 for
+// 7209685). All callers of this helper are __DATA globals; the Init *function*
+// (a __TEXT address with a different per-version shift) is resolved separately
+// via the offset table.
 static void* ghidra_to_runtime(uint64_t ghidra_addr) {
     if (!g_MainBinaryBase) return NULL;
-    return (void*)((uintptr_t)g_MainBinaryBase + (ghidra_addr - GHIDRA_BASE_ADDRESS));
+    const VersionOffsets *off = offset_table_get();
+    uintptr_t shift = off ? off->component_data_shift : 0;
+    return (void*)((uintptr_t)g_MainBinaryBase + (ghidra_addr - GHIDRA_BASE_ADDRESS) + shift);
 }
 
 // ============================================================================
@@ -229,11 +237,19 @@ bool prototype_managers_init(void *main_binary_base) {
                     (void*)g_pStatusPrototypeManagerPtr,
                     (unsigned long long)OFFSET_STATUS_PROTOTYPE_MANAGER_PTR);
 
-    // Resolve Init function pointers
-    g_SpellPrototypeInit = (SpellPrototypeInit_fn)ghidra_to_runtime(OFFSET_SPELL_PROTOTYPE_INIT);
-    LOG_STATS_DEBUG("[PrototypeManagers] SpellPrototype::Init at: %p (Ghidra: 0x%llx)",
-                    (void*)g_SpellPrototypeInit,
-                    (unsigned long long)OFFSET_SPELL_PROTOTYPE_INIT);
+    // Resolve Init function pointer from the per-version offset table (it's a
+    // __TEXT address with a version-specific shift different from __DATA, so it
+    // can't go through ghidra_to_runtime). If unavailable, leave NULL so
+    // sync_spell_prototype skips the Init call instead of jumping to a stale
+    // address (the bug that crashed Ext.Stats.Sync on 7209685).
+    {
+        const VersionOffsets *off = offset_table_get();
+        g_SpellPrototypeInit = (off && off->fn_spell_proto_init)
+            ? (SpellPrototypeInit_fn)offset_table_fn(off->fn_spell_proto_init)
+            : NULL;
+        LOG_STATS_DEBUG("[PrototypeManagers] SpellPrototype::Init at: %p",
+                        (void*)g_SpellPrototypeInit);
+    }
 
     g_Initialized = true;
     LOG_STATS_DEBUG("[PrototypeManagers] Initialization complete");

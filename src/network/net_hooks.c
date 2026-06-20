@@ -23,6 +23,7 @@
 #include "network_backend.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/offset_table.h"
 #include "../game/game_state.h"        // game_state_get_current()
 #include "../entity/entity_system.h"   // entity_get_binary_base(), entity_get_eoc_server()
 #include <dobby.h>
@@ -96,7 +97,11 @@ static bool safe_read_u64(const void *base, uintptr_t offset, uint64_t *out) {
 static uintptr_t get_runtime_addr(uintptr_t ghidra_addr) {
     void *base = entity_get_binary_base();
     if (!base) return 0;
-    return ghidra_addr - GHIDRA_BASE_ADDRESS + (uintptr_t)base;
+    // Remap the hardcoded 6995620 address to the running version (0 = no verified
+    // address -> caller skips the hook rather than hooking a stale function).
+    uint64_t remapped = offset_table_remap_fn(ghidra_addr);
+    if (!remapped) return 0;
+    return remapped - GHIDRA_BASE_ADDRESS + (uintptr_t)base;
 }
 
 // ============================================================================

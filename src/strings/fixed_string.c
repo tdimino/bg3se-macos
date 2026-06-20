@@ -13,6 +13,7 @@
 #include "fixed_string.h"
 #include "../core/logging.h"
 #include "../core/version.h"
+#include "../core/offset_table.h"
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <dlfcn.h>
@@ -1121,6 +1122,28 @@ void fixed_string_init(void *main_binary_base) {
     g_MainBinaryBase = main_binary_base;
     LOG_CORE_DEBUG("Initializing with binary base %p", main_binary_base);
 
+    // Highest priority: per-version offset table (authoritative; beats the
+    // stale on-disk cache and the hardcoded Ghidra fallback below). The slot
+    // holds a pointer to the GlobalStringTable.
+    {
+        const VersionOffsets *off = offset_table_get();
+        if (off && off->gst_ptr && main_binary_base) {
+            static void *gst_slot = NULL;
+            gst_slot = (void *)((uintptr_t)main_binary_base + off->gst_ptr);
+            void *gst = NULL;
+            if (safe_read_ptr(gst_slot, &gst) && gst) {
+                g_pGlobalStringTable = (void **)gst_slot;
+                LOG_CORE_DEBUG("GST from offset table: slot=%p GST=%p", gst_slot, gst);
+                if (fixed_string_probe_offsets()) {
+                    g_Initialized = true;
+                    LOG_CORE_DEBUG("Initialization complete via offset table");
+                    return;
+                }
+                g_pGlobalStringTable = NULL;  // probe failed; fall through
+            }
+        }
+    }
+
     // Try dlsym first
     g_pGlobalStringTable = try_dlsym_discovery();
 
@@ -1179,6 +1202,28 @@ static bool try_lazy_discovery(void) {
 
     LOG_CORE_DEBUG("Lazy discovery triggered on first resolution attempt...");
 
+    // Strategy 0: per-version offset table (authoritative). Re-checked here
+    // because fixed_string_init() may run before the offset table is loaded;
+    // by first resolution the table is guaranteed populated. The slot holds a
+    // pointer to the GlobalStringTable.
+    {
+        const VersionOffsets *off = offset_table_get();
+        if (off && off->gst_ptr && g_MainBinaryBase) {
+            static void *gst_slot = NULL;
+            gst_slot = (void *)((uintptr_t)g_MainBinaryBase + off->gst_ptr);
+            void *gst = NULL;
+            if (safe_read_ptr(gst_slot, &gst) && gst) {
+                g_pGlobalStringTable = (void **)gst_slot;
+                LOG_CORE_DEBUG("GST from offset table (lazy): slot=%p GST=%p", gst_slot, gst);
+                if (fixed_string_probe_offsets()) {
+                    LOG_CORE_DEBUG("Lazy discovery via offset table succeeded");
+                    return true;
+                }
+                g_pGlobalStringTable = NULL;  // probe failed; fall through
+            }
+        }
+    }
+
     // Strategy 1: Try to load from cache (instant - no scanning needed)
     if (load_offset_cache() && g_CachedGSTOffset != 0 && g_MainBinaryBase) {
         uintptr_t gst_addr = (uintptr_t)g_MainBinaryBase + g_CachedGSTOffset;
@@ -1226,14 +1271,54 @@ static bool try_lazy_discovery(void) {
 // Resolution
 // ============================================================================
 
+/**
+ * Ensure the GlobalStringTable is resolved, RETRYING via the per-version offset
+ * table on every call until the game has actually created it. fixed_string_init
+ * runs early (GST pointer still null), so a one-shot lazy discovery would cache
+ * that failure forever. The offset-table slot is cheap to re-read, so we poll it
+ * until non-null, then probe the SubTable layout once.
+ */
+static bool g_GstOffsetsProbed = false;
+static bool ensure_gst(void) {
+    // Already have a working GST?
+    if (g_pGlobalStringTable && *g_pGlobalStringTable && g_GstOffsetsProbed) {
+        return true;
+    }
+
+    const VersionOffsets *off = offset_table_get();
+    if (off && off->gst_ptr && g_MainBinaryBase) {
+        static void *gst_slot = NULL;
+        gst_slot = (void *)((uintptr_t)g_MainBinaryBase + off->gst_ptr);
+        void *gst = NULL;
+        if (safe_read_ptr(gst_slot, &gst) && gst) {
+            g_pGlobalStringTable = (void **)gst_slot;
+            if (!g_GstOffsetsProbed) {
+                if (fixed_string_probe_offsets()) {
+                    g_GstOffsetsProbed = true;
+                    LOG_CORE_DEBUG("GST ready via offset table (retry): %p", gst);
+                } else {
+                    g_pGlobalStringTable = NULL;  // layout probe not ready yet; retry next call
+                    return false;
+                }
+            }
+            return true;
+        }
+        // GST slot still null — game hasn't created it yet; caller retries later.
+        return false;
+    }
+
+    // No offset-table entry for this version: fall back to one-shot lazy discovery.
+    return try_lazy_discovery();
+}
+
 const char *fixed_string_resolve(uint32_t index) {
     if (index == FS_NULL_INDEX) {
         return NULL;
     }
 
-    // Try lazy discovery if GST not found yet
-    if (!g_pGlobalStringTable) {
-        if (!try_lazy_discovery()) {
+    // Ensure GST is resolved (retries via offset table until the game creates it)
+    if (!g_pGlobalStringTable || !*g_pGlobalStringTable || !g_GstOffsetsProbed) {
+        if (!ensure_gst()) {
             g_FailedCount++;
             return NULL;
         }
@@ -1414,9 +1499,15 @@ static bool init_intern_function(void) {
         return false;
     }
 
-    // Calculate runtime address from Ghidra offset
+    // Remap the hardcoded 6995620 address to the running version's address.
+    uint64_t create_addr = offset_table_remap_fn(GHIDRA_FIXEDSTRING_CREATE);
+    if (!create_addr) {
+        LOG_CORE_WARN("FixedString::Create has no verified address for this version — interning disabled");
+        g_FixedStringCreate = NULL;
+        return false;
+    }
     uintptr_t runtime_addr = (uintptr_t)g_MainBinaryBase +
-                              (GHIDRA_FIXEDSTRING_CREATE - GHIDRA_BASE_ADDRESS);
+                              (create_addr - GHIDRA_BASE_ADDRESS);
 
     g_FixedStringCreate = (FixedStringCreate_t)runtime_addr;
 
@@ -1471,9 +1562,9 @@ uint32_t fixed_string_get_hash(uint32_t index) {
         return 0;
     }
 
-    // Try lazy discovery if GST not found yet
-    if (!g_pGlobalStringTable) {
-        if (!try_lazy_discovery()) {
+    // Ensure GST is resolved (retries via offset table until the game creates it)
+    if (!g_pGlobalStringTable || !*g_pGlobalStringTable || !g_GstOffsetsProbed) {
+        if (!ensure_gst()) {
             return 0;
         }
     }

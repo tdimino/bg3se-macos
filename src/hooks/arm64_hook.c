@@ -17,6 +17,7 @@
 #include <sys/mman.h>
 #include <mach/mach.h>
 #include <libkern/OSCacheControl.h>
+#include <pthread.h>   // pthread_jit_write_protect_np (Apple Silicon W^X for MAP_JIT)
 
 // =============================================================================
 // Module State
@@ -321,6 +322,13 @@ ARM64HookHandle* arm64_hook_at_offset(void* target, int skip_bytes, void* replac
     uint32_t* tramp = (uint32_t*)handle->trampoline;
     int tramp_idx = 0;
 
+    // The trampoline is a MAP_JIT page. On Apple Silicon, MAP_JIT pages are
+    // execute-protected per-thread by default; we must disable JIT write
+    // protection before writing and re-enable it (then flush icache) after.
+    // Without this, the memcpy below faults with KERN_PROTECTION_FAILURE on
+    // recent macOS (e.g. 26.x). No-op on Intel.
+    pthread_jit_write_protect_np(0);  // make MAP_JIT writable on this thread
+
     // Copy skipped prologue (runs first when calling original)
     if (skip_bytes > 0) {
         memcpy(tramp, target, skip_bytes);
@@ -341,6 +349,8 @@ ARM64HookHandle* arm64_hook_at_offset(void* target, int skip_bytes, void* replac
         arm64_encode_absolute_branch(&tramp[tramp_idx], continue_addr);
         tramp_idx += 4;
     }
+
+    pthread_jit_write_protect_np(1);  // re-protect (execute) before running
 
     // Flush trampoline cache
     sys_icache_invalidate(handle->trampoline, tramp_idx * 4);

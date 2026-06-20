@@ -1,6 +1,7 @@
 #include "global_switches.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/offset_table.h"
 #include <dispatch/dispatch.h>
 #include <mach-o/dyld.h>
 #include <string.h>
@@ -36,7 +37,12 @@ bool global_switches_init(void) {
     }
 
     uintptr_t slide = base - 0x100000000;
-    uintptr_t ptr_addr = GLOBAL_SWITCHES_PTR_VA + slide;
+    // The switches pointer slot is a __DATA global -> apply the per-version data
+    // shift. This read is safe (safe_memory_read_pointer), so a wrong address
+    // just fails gracefully rather than crashing.
+    const VersionOffsets *vo = offset_table_get();
+    uintptr_t data_shift = vo ? vo->component_data_shift : 0;
+    uintptr_t ptr_addr = GLOBAL_SWITCHES_PTR_VA + slide + data_shift;
 
     void *ptr_val = NULL;
     if (!safe_memory_read_pointer((mach_vm_address_t)ptr_addr, &ptr_val)) {
