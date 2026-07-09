@@ -550,6 +550,30 @@ static char *get_mod_table_name(const char *mod_name) {
         }
     }
 
+    // Try 3: Config.json inside the mod's PAK (most mods ship packed, not extracted)
+    char pak_path[MAX_PATH_LEN];
+    if (mod_find_pak(mod_name, pak_path, sizeof(pak_path))) {
+        PakFile *pak = pak_open(pak_path);
+        if (pak) {
+            char cfg[512];
+            snprintf(cfg, sizeof(cfg), "Mods/%s/ScriptExtender/Config.json", mod_name);
+            int idx = pak_find_entry(pak, cfg);
+            if (idx >= 0) {
+                size_t sz = 0;
+                char *content = pak_read_file(pak, idx, &sz);
+                if (content) {
+                    mod_table = extract_mod_table(content);
+                    free(content);
+                }
+            }
+            pak_close(pak);
+        }
+        if (mod_table) {
+            LOG_LUA_INFO("Found ModTable '%s' for mod %s (from PAK)", mod_table, mod_name);
+            return mod_table;
+        }
+    }
+
     // Fallback: Use mod_name as ModTable
     mod_table = strdup(mod_name);
     LOG_LUA_INFO("Using mod name '%s' as ModTable (Config.json not found or no ModTable)", mod_name);
@@ -2015,6 +2039,13 @@ static void load_mod_scripts(lua_State *L) {
             free(mod_table);
         }
 
+        // Set the ModuleUUID global to this mod's UUID before running its
+        // bootstrap. Mods read ModuleUUID at bootstrap time (RegisterModVariable,
+        // Ext.Mod.GetMod(ModuleUUID), etc.); a nil value breaks those calls.
+        const char *mod_uuid = mod_get_se_uuid(i);
+        lua_pushstring(L, (mod_uuid && mod_uuid[0]) ? mod_uuid : "");
+        lua_setglobal(L, "ModuleUUID");
+
         // Load server bootstrap in SERVER context
         if (load_mod_bootstrap(L, mod_name, "Server") > 0) {
             LOG_LUA_INFO("Loaded BootstrapServer.lua for: %s (context=Server)", mod_name);
@@ -2027,6 +2058,11 @@ static void load_mod_scripts(lua_State *L) {
 
     for (int i = 0; i < se_count; i++) {
         const char *mod_name = mod_get_se_name(i);
+
+        // Set ModuleUUID for this mod before its client bootstrap runs.
+        const char *mod_uuid = mod_get_se_uuid(i);
+        lua_pushstring(L, (mod_uuid && mod_uuid[0]) ? mod_uuid : "");
+        lua_setglobal(L, "ModuleUUID");
 
         // Load client bootstrap in CLIENT context
         if (load_mod_bootstrap(L, mod_name, "Client") > 0) {

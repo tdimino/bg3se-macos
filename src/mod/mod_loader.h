@@ -55,6 +55,11 @@ int mod_get_se_count(void);
  */
 const char *mod_get_se_name(int index);
 
+/**
+ * Get the UUID of a detected SE mod by index (empty string if unknown).
+ */
+const char *mod_get_se_uuid(int index);
+
 // ============================================================================
 // PAK File Helpers
 // ============================================================================
