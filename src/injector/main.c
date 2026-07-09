@@ -402,36 +402,57 @@ static lua_State *L = NULL;
 static dispatch_source_t s_console_poll_timer = NULL;
 
 // Module loading state
-#define MAX_LOADED_MODULES 256
-static char loaded_modules[MAX_LOADED_MODULES][MAX_PATH_LEN];
-static int loaded_module_count = 0;
 static char mods_base_path[MAX_PATH_LEN] = "";
 
 // ============================================================================
 // Module Loading Helpers
 // ============================================================================
 
-/**
- * Check if a module has already been loaded
- */
-static int is_module_loaded(const char *full_path) {
-    for (int i = 0; i < loaded_module_count; i++) {
-        if (strcmp(loaded_modules[i], full_path) == 0) {
-            return 1;
-        }
+// Ext.Require caches each module's RETURN VALUE (like Lua's require /
+// package.loaded) so repeated requires of the same file return the same value.
+// A registry table keyed by full module path holds the results.
+#define BG3SE_MODULE_CACHE_KEY "BG3SE_ModuleCache"
+
+// Push the module cache table onto the stack (creating it on first use).
+static void push_module_cache(lua_State *L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, BG3SE_MODULE_CACHE_KEY);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, BG3SE_MODULE_CACHE_KEY);
     }
-    return 0;
 }
 
-/**
- * Mark a module as loaded
- */
-static void mark_module_loaded(const char *full_path) {
-    if (loaded_module_count < MAX_LOADED_MODULES) {
-        strncpy(loaded_modules[loaded_module_count], full_path, MAX_PATH_LEN - 1);
-        loaded_modules[loaded_module_count][MAX_PATH_LEN - 1] = '\0';
-        loaded_module_count++;
+// If `key` is cached, leave its value on top of the stack and return 1;
+// otherwise leave the stack unchanged and return 0.
+static int require_cache_hit(lua_State *L, const char *key) {
+    push_module_cache(L);              // [.., cache]
+    lua_getfield(L, -1, key);          // [.., cache, val]
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 2);                 // [..]
+        return 0;
     }
+    lua_remove(L, -2);                 // [.., val]
+    return 1;
+}
+
+// After a successful load (module return values sit above the single `path`
+// arg at stack index 1), normalize to one value at index 2 — using boolean
+// true when the module returned nothing/nil, matching Lua require — cache it
+// under `key`, and leave exactly that value on top for return. Returns 1.
+static int require_finish(lua_State *L, const char *key) {
+    if (lua_gettop(L) < 2 || lua_isnil(L, 2)) {
+        lua_settop(L, 1);
+        lua_pushboolean(L, 1);         // [path, true]
+    } else {
+        lua_settop(L, 2);              // [path, val]
+    }
+    push_module_cache(L);              // [path, val, cache]
+    lua_pushvalue(L, 2);               // [path, val, cache, val]
+    lua_setfield(L, -2, key);          // cache[key] = val ; [path, val, cache]
+    lua_pop(L, 1);                     // [path, val]
+    return 1;
 }
 
 /**
@@ -650,40 +671,27 @@ static int try_load_lua_file(lua_State *L, const char *full_path) {
 }
 
 /**
- * Ext.Require(path) - Load and execute a Lua module
- * Paths are relative to the current mod's ScriptExtender/Lua/ folder
- * Modules are cached - subsequent calls return cached results
- * Supports loading from both filesystem (extracted mods) and PAK files
+ * Core module resolver. `path` is a mod-relative path ending in .lua (e.g.
+ * "Lib/reactivex/util.lua"). Loads/executes from the current mod's filesystem
+ * base or PAK, caches by path, and leaves the module's value (or nil) on the
+ * stack. Returns 1.
  */
-static int lua_ext_require(lua_State *L) {
-    const char *path = luaL_checkstring(L, 1);
-    LOG_LUA_INFO("Ext.Require('%s')", path);
-
+static int require_resolve(lua_State *L, const char *path) {
     const char *lua_base = mod_get_current_lua_base();
     const char *pak_path = mod_get_current_pak_path();
     const char *mod_name = mod_get_current_name();
 
     // Try filesystem first (for extracted mods)
     if (lua_base && strlen(lua_base) > 0) {
-        // Build full path using the base path from where bootstrap was loaded
         char full_path[MAX_PATH_LEN];
         snprintf(full_path, sizeof(full_path), "%s/%s", lua_base, path);
 
-        // Check if already loaded
-        if (is_module_loaded(full_path)) {
-            LOG_LUA_INFO("Module already loaded: %s", path);
-            lua_pushnil(L);
+        if (require_cache_hit(L, full_path)) {
             return 1;
         }
-
-        // Try to load from the tracked base path
         if (try_load_lua_file(L, full_path)) {
-            mark_module_loaded(full_path);
             LOG_LUA_INFO("Loaded module from: %s", full_path);
-            if (lua_gettop(L) == 0) {
-                lua_pushnil(L);
-            }
-            return 1;
+            return require_finish(L, full_path);
         }
     }
 
@@ -693,38 +701,63 @@ static int lua_ext_require(lua_State *L) {
         snprintf(pak_lua_path, sizeof(pak_lua_path),
                  "Mods/%s/ScriptExtender/Lua/%s", mod_name, path);
 
-        // Check if already loaded (use PAK path as key)
         char cache_key[MAX_PATH_LEN];
         snprintf(cache_key, sizeof(cache_key), "pak:%s:%s", pak_path, pak_lua_path);
 
-        if (is_module_loaded(cache_key)) {
-            LOG_LUA_INFO("Module already loaded from PAK: %s", path);
-            lua_pushnil(L);
+        if (require_cache_hit(L, cache_key)) {
             return 1;
         }
-
         if (mod_load_lua_from_pak(L, pak_path, pak_lua_path)) {
-            mark_module_loaded(cache_key);
             LOG_LUA_INFO("Loaded module from PAK: %s", pak_lua_path);
-            if (lua_gettop(L) == 0) {
-                lua_pushnil(L);
-            }
-            return 1;
+            return require_finish(L, cache_key);
         }
     }
 
-    // Module not found
     LOG_LUA_WARN(" Module not found: %s", path);
-    if (lua_base && strlen(lua_base) > 0) {
-        LOG_LUA_INFO("  Tried filesystem: %s/%s", lua_base, path);
-    }
-    if (pak_path && strlen(pak_path) > 0) {
-        LOG_LUA_INFO("  Tried PAK: %s (Mods/%s/ScriptExtender/Lua/%s)",
-                    pak_path, mod_name, path);
-    }
-
     lua_pushnil(L);
     return 1;
+}
+
+/**
+ * Ext.Require(path) - Load and execute a Lua module.
+ * Paths are relative to the current mod's ScriptExtender/Lua/ folder and
+ * already include the .lua suffix. Results are cached per module path.
+ */
+static int lua_ext_require(lua_State *L) {
+    const char *path = luaL_checkstring(L, 1);
+    LOG_LUA_INFO("Ext.Require('%s')", path);
+    return require_resolve(L, path);
+}
+
+/**
+ * Global require(name) - many SE mods (MCM, CommunityLibrary) load modules with
+ * bare require() rather than Ext.Require. Accepts Lua module names ("a.b.c") or
+ * slash paths ("a/b/c"), with or without a .lua suffix, resolved like
+ * Ext.Require against the current mod.
+ */
+static int lua_require(lua_State *L) {
+    const char *name = luaL_checkstring(L, 1);
+    char rel[MAX_PATH_LEN];
+    size_t n = strlen(name);
+    int has_lua = (n >= 4 && strcmp(name + n - 4, ".lua") == 0);
+
+    if (has_lua) {
+        snprintf(rel, sizeof(rel), "%s", name);
+    } else if (strchr(name, '/') != NULL) {
+        // Already a slash path (MCM style): just add the extension.
+        snprintf(rel, sizeof(rel), "%s.lua", name);
+    } else {
+        // Lua module name: convert dot separators to slashes, then add .lua.
+        snprintf(rel, sizeof(rel), "%s", name);
+        for (char *p = rel; *p; p++) {
+            if (*p == '.') *p = '/';
+        }
+        size_t rl = strlen(rel);
+        snprintf(rel + rl, sizeof(rel) - rl, ".lua");
+    }
+
+    LOG_LUA_INFO("require('%s') -> %s", name, rel);
+    return require_resolve(L, rel);
 }
 
 // ============================================================================
@@ -1905,7 +1938,13 @@ static void register_global_functions(lua_State *L) {
     lua_pushcfunction(L, lua_global_dump);
     lua_setglobal(L, "_D");
 
-    LOG_LUA_INFO("Global debug functions registered (_P, _D)");
+    // Override the stock Lua require with a mod-aware loader so mods that use
+    // bare require("Some/Module") (MCM, CommunityLibrary) resolve against the
+    // current mod's Script Extender Lua folder.
+    lua_pushcfunction(L, lua_require);
+    lua_setglobal(L, "require");
+
+    LOG_LUA_INFO("Global functions registered (_P, _D, require)");
 }
 
 /**

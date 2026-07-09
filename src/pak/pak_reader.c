@@ -175,12 +175,17 @@ char *pak_read_file(PakFile *pak, int entry_idx, size_t *out_size) {
     char *content = NULL;
 
     if (entry->compression == PAK_COMPRESSION_NONE) {
-        // Uncompressed
-        content = (char *)malloc(entry->uncompressed_size + 1);
+        // Uncompressed: the on-disk bytes ARE the file. For stored entries the
+        // uncompressed_size field is frequently 0 (disk_size is authoritative),
+        // so using uncompressed_size here returned an empty buffer — which made
+        // e.g. Mod Configuration Menu's uncompressed Config.json read as "" and
+        // its whole Script Extender payload fail to load. Use disk_size.
+        size_t n = entry->disk_size;
+        content = (char *)malloc(n + 1);
         if (content) {
-            memcpy(content, disk_data, entry->uncompressed_size);
-            content[entry->uncompressed_size] = '\0';
-            if (out_size) *out_size = entry->uncompressed_size;
+            memcpy(content, disk_data, n);
+            content[n] = '\0';
+            if (out_size) *out_size = n;
         }
     } else if (entry->compression == PAK_COMPRESSION_ZLIB) {
         // zlib
