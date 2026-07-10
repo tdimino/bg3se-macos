@@ -465,6 +465,8 @@ ImguiHandle* imgui_object_get_children(ImguiHandle parent, int* count);
 // must hold this across imgui_get_all_windows() + the whole traversal.
 void imgui_objects_lock(void);
 void imgui_objects_unlock(void);
+// Non-blocking acquire for the render thread; returns 1 if acquired, else 0.
+int imgui_objects_trylock(void);
 
 // Window management
 ImguiHandle* imgui_get_all_windows(int* count);

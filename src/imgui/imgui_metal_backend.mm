@@ -1146,30 +1146,34 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
             // Render all windows from object system
             // ===========================================
 
-            // Render Lua-created windows. Hold the object-tree lock across the
-            // ENTIRE walk so the main/Lua thread can't realloc/free a children
-            // array (via Add*/Destroy) while we're reading it — that race
-            // corrupted the heap and crashed the game's render thread.
-            imgui_objects_lock();
-            int window_count = 0;
-            ImguiHandle *windows = imgui_get_all_windows(&window_count);
+            // Render Lua-created windows. We must hold the object-tree lock across
+            // the walk so the main/Lua thread can't realloc/free a children array
+            // (via Add*/Destroy) while we read it — that race corrupted the heap
+            // and crashed the game's render thread. But the render thread must
+            // NEVER block on the main thread (it drives present; a stall hangs the
+            // game during load), so use a non-blocking acquire and simply skip the
+            // object-tree render this frame if the main thread is mutating.
             static int debug_log_counter = 0;
-            if (windows && window_count > 0) {
-                for (int i = 0; i < window_count; i++) {
-                    ImguiObject *win = imgui_object_get(windows[i]);
-                    if (debug_log_counter % 300 == 0) {  // Log every ~5 seconds
-                        if (win) {
-                            LOG_IMGUI_INFO("Window[%d]: label='%s' visible=%d open=%d type=%d children=%d",
-                                i, win->styled.label, win->styled.visible, win->data.window.open,
-                                win->type, win->child_count);
-                        } else {
-                            LOG_IMGUI_WARN("Window[%d]: NULL (handle=0x%llx)", i, (unsigned long long)windows[i]);
+            int window_count = 0;
+            if (imgui_objects_trylock()) {
+                ImguiHandle *windows = imgui_get_all_windows(&window_count);
+                if (windows && window_count > 0) {
+                    for (int i = 0; i < window_count; i++) {
+                        ImguiObject *win = imgui_object_get(windows[i]);
+                        if (debug_log_counter % 300 == 0) {  // Log every ~5 seconds
+                            if (win) {
+                                LOG_IMGUI_INFO("Window[%d]: label='%s' visible=%d open=%d type=%d children=%d",
+                                    i, win->styled.label, win->styled.visible, win->data.window.open,
+                                    win->type, win->child_count);
+                            } else {
+                                LOG_IMGUI_WARN("Window[%d]: NULL (handle=0x%llx)", i, (unsigned long long)windows[i]);
+                            }
                         }
+                        render_window(win);
                     }
-                    render_window(win);
                 }
+                imgui_objects_unlock();
             }
-            imgui_objects_unlock();
             debug_log_counter++;
 
             // Built-in debug/test window: only shown with the F11 debug overlay,

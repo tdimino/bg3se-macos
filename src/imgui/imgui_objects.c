@@ -35,6 +35,16 @@ static void init_pool_mutex(void) {
 void imgui_objects_lock(void)   { pthread_once(&g_pool_mutex_once, init_pool_mutex); pthread_mutex_lock(&g_pool_mutex); }
 void imgui_objects_unlock(void) { pthread_mutex_unlock(&g_pool_mutex); }
 
+// Non-blocking acquire for the render thread: returns 1 if the lock was taken,
+// 0 if the main/Lua thread is currently mutating the tree. The render thread
+// must NEVER block on the main thread (it drives the game's present path — a
+// stall hangs the whole game during load), so on failure it simply skips
+// rendering the object tree for this frame.
+int imgui_objects_trylock(void) {
+    pthread_once(&g_pool_mutex_once, init_pool_mutex);
+    return pthread_mutex_trylock(&g_pool_mutex) == 0;
+}
+
 // Type name lookup
 static const char* g_type_names[] = {
     [IMGUI_OBJ_NONE] = "None",
