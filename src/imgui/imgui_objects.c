@@ -15,7 +15,25 @@
 // Global object pool
 static ImguiObjectPool g_pool = {0};
 static bool g_initialized = false;
-static pthread_mutex_t g_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
+// Recursive so nested tree ops are safe (create_child -> create -> add_child;
+// destroy -> destroy_object_recursive -> remove_child). This one mutex serializes
+// ALL object-tree access — allocation, child-array mutation, AND the render-thread
+// walk — so the game's render thread never reads a children array while the main
+// thread realloc()s/free()s it (that heap corruption surfaced as a game render-
+// thread crash in ls::ShadowCullStage).
+static pthread_mutex_t g_pool_mutex;
+static pthread_once_t g_pool_mutex_once = PTHREAD_ONCE_INIT;
+
+static void init_pool_mutex(void) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&g_pool_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+
+void imgui_objects_lock(void)   { pthread_once(&g_pool_mutex_once, init_pool_mutex); pthread_mutex_lock(&g_pool_mutex); }
+void imgui_objects_unlock(void) { pthread_mutex_unlock(&g_pool_mutex); }
 
 // Type name lookup
 static const char* g_type_names[] = {
@@ -69,6 +87,8 @@ static void imgui_register_window_internal(ImguiHandle handle);
 
 void imgui_objects_init(void) {
     if (g_initialized) return;
+
+    pthread_once(&g_pool_mutex_once, init_pool_mutex);
 
     memset(&g_pool, 0, sizeof(g_pool));
 
@@ -407,14 +427,17 @@ ImguiHandle imgui_object_create(ImguiObjectType type, const char* label) {
 }
 
 ImguiHandle imgui_object_create_child(ImguiHandle parent, ImguiObjectType type, const char* label) {
+    pthread_mutex_lock(&g_pool_mutex);
     ImguiObject* parent_obj = imgui_object_get(parent);
     if (!parent_obj) {
+        pthread_mutex_unlock(&g_pool_mutex);
         LOG_IMGUI_ERROR("Cannot create child: invalid parent handle 0x%llx", parent);
         return IMGUI_INVALID_HANDLE;
     }
 
     ImguiHandle child = imgui_object_create(type, label);
     if (child == IMGUI_INVALID_HANDLE) {
+        pthread_mutex_unlock(&g_pool_mutex);
         return IMGUI_INVALID_HANDLE;
     }
 
@@ -423,13 +446,7 @@ ImguiHandle imgui_object_create_child(ImguiHandle parent, ImguiObjectType type, 
         child_obj->parent = parent;
         imgui_object_add_child(parent, child);
     }
-
-    // TREE DIAG: trace MCM's DualPane construction to see what actually builds.
-    LOG_IMGUI_INFO("TREE: %s '%s' <- child %s '%s' (parent now %d children)",
-                   imgui_object_type_name(parent_obj->type),
-                   parent_obj->styled.label[0] ? parent_obj->styled.label : "",
-                   imgui_object_type_name(type), label ? label : "",
-                   parent_obj->child_count);
+    pthread_mutex_unlock(&g_pool_mutex);
 
     return child;
 }
@@ -477,22 +494,27 @@ static void destroy_object_recursive(ImguiHandle handle) {
 
 void imgui_object_destroy(ImguiHandle handle) {
     if (handle == IMGUI_INVALID_HANDLE) return;
+    pthread_mutex_lock(&g_pool_mutex);
     destroy_object_recursive(handle);
+    pthread_mutex_unlock(&g_pool_mutex);
 }
 
 void imgui_object_destroy_children(ImguiHandle handle) {
+    pthread_mutex_lock(&g_pool_mutex);
     ImguiObject* obj = imgui_object_get(handle);
-    if (!obj || !obj->children) return;
+    if (!obj || !obj->children || obj->child_count <= 0) { pthread_mutex_unlock(&g_pool_mutex); return; }
 
     // Copy children array since destroy modifies it
     int count = obj->child_count;
     ImguiHandle* children = (ImguiHandle*)malloc(sizeof(ImguiHandle) * count);
+    if (!children) { pthread_mutex_unlock(&g_pool_mutex); return; }
     memcpy(children, obj->children, sizeof(ImguiHandle) * count);
 
     for (int i = 0; i < count; i++) {
         imgui_object_destroy(children[i]);
     }
     free(children);
+    pthread_mutex_unlock(&g_pool_mutex);
 }
 
 ImguiObject* imgui_object_get(ImguiHandle handle) {
@@ -523,8 +545,9 @@ const char* imgui_object_type_name(ImguiObjectType type) {
 }
 
 bool imgui_object_add_child(ImguiHandle parent, ImguiHandle child) {
+    pthread_mutex_lock(&g_pool_mutex);
     ImguiObject* parent_obj = imgui_object_get(parent);
-    if (!parent_obj) return false;
+    if (!parent_obj) { pthread_mutex_unlock(&g_pool_mutex); return false; }
 
     // Grow children array if needed
     if (parent_obj->child_count >= parent_obj->child_capacity) {
@@ -533,19 +556,21 @@ bool imgui_object_add_child(ImguiHandle parent, ImguiHandle child) {
 
         ImguiHandle* new_children = (ImguiHandle*)realloc(
             parent_obj->children, sizeof(ImguiHandle) * new_cap);
-        if (!new_children) return false;
+        if (!new_children) { pthread_mutex_unlock(&g_pool_mutex); return false; }
 
         parent_obj->children = new_children;
         parent_obj->child_capacity = new_cap;
     }
 
     parent_obj->children[parent_obj->child_count++] = child;
+    pthread_mutex_unlock(&g_pool_mutex);
     return true;
 }
 
 bool imgui_object_remove_child(ImguiHandle parent, ImguiHandle child) {
+    pthread_mutex_lock(&g_pool_mutex);
     ImguiObject* parent_obj = imgui_object_get(parent);
-    if (!parent_obj || !parent_obj->children) return false;
+    if (!parent_obj || !parent_obj->children) { pthread_mutex_unlock(&g_pool_mutex); return false; }
 
     for (int i = 0; i < parent_obj->child_count; i++) {
         if (parent_obj->children[i] == child) {
@@ -554,9 +579,11 @@ bool imgui_object_remove_child(ImguiHandle parent, ImguiHandle child) {
                 parent_obj->children[j] = parent_obj->children[j + 1];
             }
             parent_obj->child_count--;
+            pthread_mutex_unlock(&g_pool_mutex);
             return true;
         }
     }
+    pthread_mutex_unlock(&g_pool_mutex);
     return false;
 }
 

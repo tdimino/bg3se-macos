@@ -2218,6 +2218,36 @@ static void load_mod_scripts(lua_State *L) {
 
     // Stay in CLIENT context after loading (we're on a client machine)
     LOG_MOD_INFO("=== Mod Script Loading Complete (final context=Client) ===");
+
+    // Diagnostic: verify the per-mod _ENV + MCM injection took effect.
+    // Checks (a) does Mods.BG3MCM have our { __index=_G } metatable, and
+    // (b) did MCM's TableInjector populate Mods.BG3MCM.MCM (rawget)?
+    {
+        lua_getglobal(L, "Mods");                       // [Mods]
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "BG3MCM");              // [Mods, BG3MCM]
+            if (lua_istable(L, -1)) {
+                int has_mt = lua_getmetatable(L, -1);   // [Mods, BG3MCM, mt?]
+                int mt_is_g = 0;
+                if (has_mt) {
+                    lua_getfield(L, -1, "__index");     // [.., mt, __index]
+                    lua_pushglobaltable(L);             // [.., mt, __index, _G]
+                    mt_is_g = lua_rawequal(L, -1, -2);
+                    lua_pop(L, 3);                      // pop _G, __index, mt
+                }
+                lua_pushstring(L, "MCM");
+                lua_rawget(L, -2);                      // [Mods, BG3MCM, MCM]
+                const char *mcm_type = lua_typename(L, lua_type(L, -1));
+                lua_pop(L, 1);
+                LOG_LUA_INFO("MCM DIAG: Mods.BG3MCM has_mt=%d mt.__index==_G=%d rawget(MCM)=%s",
+                             has_mt, mt_is_g, mcm_type);
+            } else {
+                LOG_LUA_INFO("MCM DIAG: Mods.BG3MCM is %s (not a table)", lua_typename(L, lua_type(L, -1)));
+            }
+            lua_pop(L, 1);  // pop BG3MCM
+        }
+        lua_pop(L, 1);  // pop Mods
+    }
 }
 
 // ============================================================================

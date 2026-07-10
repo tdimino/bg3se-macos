@@ -1146,7 +1146,11 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
             // Render all windows from object system
             // ===========================================
 
-            // Render Lua-created windows
+            // Render Lua-created windows. Hold the object-tree lock across the
+            // ENTIRE walk so the main/Lua thread can't realloc/free a children
+            // array (via Add*/Destroy) while we're reading it — that race
+            // corrupted the heap and crashed the game's render thread.
+            imgui_objects_lock();
             int window_count = 0;
             ImguiHandle *windows = imgui_get_all_windows(&window_count);
             static int debug_log_counter = 0;
@@ -1165,6 +1169,7 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
                     render_window(win);
                 }
             }
+            imgui_objects_unlock();
             debug_log_counter++;
 
             // Built-in debug/test window: only shown with the F11 debug overlay,

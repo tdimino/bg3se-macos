@@ -501,12 +501,9 @@ static const luaL_Reg window_methods[] = {
  * __index metamethod for window objects.
  * First checks for methods, then checks for properties.
  */
-static int g_win_trace = 0;
 static int imgui_window_index(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
     const char *key = luaL_checkstring(L, 2);
-
-    if (g_win_trace < 400) { LOG_IMGUI_INFO("WINTRACE get '%s'", key); g_win_trace++; }
 
     // First check method table
     for (const luaL_Reg *method = window_methods; method->name != NULL; method++) {
@@ -580,8 +577,6 @@ static int imgui_window_index(lua_State *L) {
 static int imgui_window_newindex(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
     const char *key = luaL_checkstring(L, 2);
-
-    if (g_win_trace < 400) { LOG_IMGUI_INFO("WINTRACE set '%s' (type=%s)", key, lua_typename(L, lua_type(L, 3))); g_win_trace++; }
 
     ImguiObject *obj = imgui_object_get(ud->handle);
     if (obj == NULL) {
