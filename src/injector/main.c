@@ -604,9 +604,14 @@ static char *get_mod_table_name(const char *mod_name) {
 /**
  * Set up Mods.<ModTable> namespace in Lua
  * Creates the global 'Mods' table if it doesn't exist
- * Creates the Mods.<mod_table> subtable
+ * Creates the Mods.<mod_table> subtable, pre-seeded with ModuleUUID.
+ *
+ * The ModuleUUID field is required: MCM installs a __newindex metamethod on the
+ * global Mods table and, when a mod's table is inserted, reads value.ModuleUUID
+ * to inject its per-mod API (Mods[x].MCM etc.). It must be present *before* the
+ * table is assigned into Mods, so set it on the new table first.
  */
-static void setup_mod_namespace(lua_State *L, const char *mod_table) {
+static void setup_mod_namespace(lua_State *L, const char *mod_table, const char *uuid) {
     // Get or create global 'Mods' table
     lua_getglobal(L, "Mods");
     if (lua_isnil(L, -1)) {
@@ -617,11 +622,14 @@ static void setup_mod_namespace(lua_State *L, const char *mod_table) {
         LOG_LUA_INFO("Created global 'Mods' table");
     }
 
-    // Now Mods table is on stack
-    // Create Mods.<mod_table> = {}
-    lua_newtable(L);
-    lua_setfield(L, -2, mod_table);
-    lua_pop(L, 1);  // Pop Mods table
+    // Now Mods table is on stack. Build Mods.<mod_table> = { ModuleUUID = uuid }
+    lua_newtable(L);                       // [Mods, modtbl]
+    if (uuid && uuid[0]) {
+        lua_pushstring(L, uuid);           // [Mods, modtbl, uuid]
+        lua_setfield(L, -2, "ModuleUUID"); // modtbl.ModuleUUID = uuid ; [Mods, modtbl]
+    }
+    lua_setfield(L, -2, mod_table);        // Mods[mod_table] = modtbl (MCM sees ModuleUUID)
+    lua_pop(L, 1);                         // Pop Mods table
 
     LOG_LUA_INFO("Created namespace Mods.%s", mod_table);
 }
@@ -2069,19 +2077,19 @@ static void load_mod_scripts(lua_State *L) {
 
     for (int i = 0; i < se_count; i++) {
         const char *mod_name = mod_get_se_name(i);
+        const char *mod_uuid = mod_get_se_uuid(i);
 
         // Get ModTable name from Config.json (or fallback to mod_name)
         char *mod_table = get_mod_table_name(mod_name);
         if (mod_table) {
-            // Set up Mods.<ModTable> namespace before loading scripts
-            setup_mod_namespace(L, mod_table);
+            // Set up Mods.<ModTable> namespace (seeded with ModuleUUID) before scripts
+            setup_mod_namespace(L, mod_table, mod_uuid);
             free(mod_table);
         }
 
         // Set the ModuleUUID global to this mod's UUID before running its
         // bootstrap. Mods read ModuleUUID at bootstrap time (RegisterModVariable,
         // Ext.Mod.GetMod(ModuleUUID), etc.); a nil value breaks those calls.
-        const char *mod_uuid = mod_get_se_uuid(i);
         lua_pushstring(L, (mod_uuid && mod_uuid[0]) ? mod_uuid : "");
         lua_setglobal(L, "ModuleUUID");
 

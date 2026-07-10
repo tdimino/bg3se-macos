@@ -311,6 +311,9 @@ static const char *LUA_SCRIPT_NET_INIT =
 "    end\n"
 "})\n"
 "\n"
+"-- MCM and other mods use the Ext.Net.CreateChannel form; expose it there too.\n"
+"Ext.Net.CreateChannel = Net.CreateChannel\n"
+"\n"
 "Ext.Print('[Net] Network library initialized')\n";
 
 #ifdef __clang__

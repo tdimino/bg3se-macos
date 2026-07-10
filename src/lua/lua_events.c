@@ -127,6 +127,9 @@ static const char *g_event_names[EVENT_MAX] = {
     "SpellCastPrepareStart",
     "SpellCastPrepareEnd",
     "SpellCastPreviewEnd",
+    // Client input events (needed by MCM's SubscribedEvents)
+    "ControllerButtonInput",
+    "MouseButtonInput",
 };
 
 // ============================================================================
