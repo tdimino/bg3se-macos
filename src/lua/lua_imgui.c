@@ -568,7 +568,12 @@ static int imgui_window_newindex(lua_State *L) {
 
     // Common styled properties
     if (strcmp(key, "Visible") == 0) {
-        obj->styled.visible = lua_toboolean(L, 3);
+        bool vis = lua_toboolean(L, 3);
+        obj->styled.visible = vis;
+        // Re-open a window closed via its X button: the close sets
+        // data.window.open = false, which would otherwise keep it hidden even
+        // after .Visible is set true again (e.g. MCM's Open button).
+        if (vis) obj->data.window.open = true;
         return 0;
     }
     if (strcmp(key, "SameLine") == 0) {

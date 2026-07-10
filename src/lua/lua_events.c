@@ -534,7 +534,7 @@ static const char *server_state_to_ecl_label(int s) {
 // and Lua only invokes __eq between two userdata of the same type — an integer
 // never equals the EnumValue. So we must hand back the same userdata. Falls back
 // to the ecl integer if the enum isn't available.
-static void push_ecl_gamestate(lua_State *L, int internal_state) {
+void events_push_client_gamestate(lua_State *L, int internal_state) {
     const char *label = server_state_to_ecl_label(internal_state);
     if (label) {
         lua_getglobal(L, "Ext");                 // Ext
@@ -589,9 +589,9 @@ void events_fire_game_state_changed(lua_State *L, int fromState, int toState) {
         // Create event data table with FromState and ToState as ClientGameState
         // EnumValue userdata (so `e.ToState == Ext.Enums.ClientGameState.X` works).
         lua_newtable(L);
-        push_ecl_gamestate(L, fromState);
+        events_push_client_gamestate(L,fromState);
         lua_setfield(L, -2, "FromState");
-        push_ecl_gamestate(L, toState);
+        events_push_client_gamestate(L,toState);
         lua_setfield(L, -2, "ToState");
 
         // Protected call

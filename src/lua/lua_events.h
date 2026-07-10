@@ -118,6 +118,10 @@ void events_fire_tick(lua_State *L, float delta_time);
  */
 void events_fire_game_state_changed(lua_State *L, int fromState, int toState);
 
+// Push the Ext.Enums.ClientGameState EnumValue userdata for an internal
+// ServerGameState (used by Ext.Utils.GetGameState so mods can compare it with ==).
+void events_push_client_gamestate(lua_State *L, int internal_state);
+
 /**
  * Fire the KeyInput event with key data.
  * Handlers receive {Key = int, Pressed = bool, Modifiers = int, Character = string} table.

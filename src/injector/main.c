@@ -799,9 +799,11 @@ static int lua_ext_register_net_listener(lua_State *L) {
 // ============================================================================
 
 static int lua_ext_utils_get_game_state(lua_State *L) {
-    int state = events_get_current_game_state();
-    const char *name = game_state_get_name((ServerGameState)state);
-    lua_pushstring(L, name);
+    // Return the Ext.Enums.ClientGameState EnumValue userdata (matching
+    // GameStateChanged's ToState) so mods can compare GetGameState() against
+    // Ext.Enums.ClientGameState.X with ==. MCM's IsMainMenu / open-on-start
+    // checks rely on this; a bare string never equals the EnumValue.
+    events_push_client_gamestate(L, events_get_current_game_state());
     return 1;
 }
 

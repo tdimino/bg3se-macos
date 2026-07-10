@@ -1034,11 +1034,6 @@ static void render_window(ImguiObject *win) {
     }
 
     if (window_open) {
-        // DEBUG: Add a test text to verify the window can render ANYTHING
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 1.0f, 1.0f), "=== LUA WINDOW RENDER TEST ===");
-        ImGui::Text("This is a Lua-created window");
-        ImGui::Separator();
-
         // Render all children
         if (win->children && win->child_count > 0) {
             for (int i = 0; i < win->child_count; i++) {
@@ -1050,8 +1045,11 @@ static void render_window(ImguiObject *win) {
 
     ImGui::End();
 
-    // Handle window close event
+    // Handle window close event (X button set data.window.open = false).
+    // Keep .Visible in sync so the window actually disappears and MCM's OnClose
+    // handler sees a consistent state; re-opening happens via the .Visible setter.
     if (p_open && !win->data.window.open) {
+        win->styled.visible = false;
         LOG_IMGUI_DEBUG("Window '%s' closed", win->styled.label);
         lua_imgui_fire_event(win->handle, IMGUI_EVENT_ON_CLOSE);
     }
