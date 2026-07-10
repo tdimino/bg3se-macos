@@ -947,6 +947,34 @@ static int deferred_backoff_ms(int retry_count) {
     return DEFERRED_BASE_DELAY_MS * (1 << shift);
 }
 
+/**
+ * Net transport selection.
+ *
+ * DEFAULT = LOCAL (in-process message bus). Ext.Net.* / NetChannel traffic is
+ * delivered entirely in-process via message_bus.c (see lua_net.c → message_bus_queue
+ * → message_bus_process → NetModMessage event). It NEVER touches the game's
+ * net::MessageFactory / ProtocolList / SendToPeer. This is single-player-correct
+ * (client and server share one process + one Lua state) and structurally immune to
+ * the factory-corruption crash: net::MessageFactory::GetFreeMessage(int)/
+ * ReleaseMessage(int,*) index `MessagePools.data[id]` with NO bounds check, and the
+ * extender message id (400 = NETMSG_SCRIPT_EXTENDER) is far past the live pool array
+ * (~326 slots on build 7209685). Routing through the bus means the game never sees
+ * id 400, so it never indexes out of bounds.
+ *
+ * RAKNET transport (real game net) is OPT-IN via BG3SE_NET_RAKNET=1 and is known
+ * UNSAFE on this port: it inserts our ExtenderProtocol into the live ProtocolList
+ * and sends an id-400 message via SendToPeer, which drives id-400 traffic through
+ * the factory and crashes in GetFreeMessage. A safe RakNet path requires calling
+ * net::MessageFactory::RegisterMessage(400, template, ...) (0x1063c4140 on 7209685)
+ * to grow the pool array so slot 400 exists — which Windows BG3SE does and this port
+ * does not yet. Until then the flag exists only for future RE, defaulting off.
+ */
+static bool net_use_raknet_transport(void) {
+    static int v = -1;
+    if (v < 0) v = (getenv("BG3SE_NET_RAKNET") != NULL);
+    return v != 0;
+}
+
 void net_hooks_request_deferred_init(void) {
     // Already complete — nothing to do
     if (s_deferred_state == DEFERRED_COMPLETE) {
@@ -1036,6 +1064,32 @@ bool net_hooks_deferred_tick(void) {
 
     // CAPTURING: perform the actual initialization
     if (s_deferred_state == DEFERRED_CAPTURING) {
+        // -------------------------------------------------------------------
+        // LOCAL transport (default): no game-net interaction whatsoever.
+        // NetChannel/Ext.Net traffic flows through the in-process message bus.
+        // We only prime the local PeerManager so Ext.Net.IsReady()/PeerVersion()
+        // report ready for the host. This path CANNOT corrupt the game's message
+        // factory because it never inserts a protocol, switches the backend, or
+        // sends an id-400 message (see net_use_raknet_transport() rationale).
+        // -------------------------------------------------------------------
+        if (!net_use_raknet_transport()) {
+            peer_manager_init();  // idempotent; registers local host peer (user_id 1)
+            peer_manager_set_proto_version(1, PROTO_VERSION_CURRENT);
+            LOG_NET_INFO("Deferred net init: COMPLETE (local in-process transport; "
+                         "NetChannel via message bus, game net untouched)");
+            s_deferred_state = DEFERRED_COMPLETE;
+            return true;
+        }
+
+        // -------------------------------------------------------------------
+        // RAKNET transport (opt-in, BG3SE_NET_RAKNET=1): UNSAFE — see rationale.
+        // Kept for future RE; will crash until MessageFactory::RegisterMessage
+        // grows the pool for id 400.
+        // -------------------------------------------------------------------
+        LOG_NET_WARN("Deferred net init: BG3SE_NET_RAKNET=1 — using game RakNet "
+                     "transport (UNSAFE: id 400 is out of MessagePool range, may "
+                     "crash net::MessageFactory::GetFreeMessage)");
+
         void *eoc_server = entity_get_eoc_server();
         if (!eoc_server) {
             LOG_NET_WARN("Deferred net init: EocServer not available");
