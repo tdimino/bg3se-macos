@@ -385,6 +385,7 @@ static int imgui_window_add_button(lua_State *L);
 static int imgui_window_add_checkbox(lua_State *L);
 static int imgui_window_add_separator(lua_State *L);
 static int imgui_window_add_spacing(lua_State *L);
+static int imgui_window_add_dummy(lua_State *L);
 static int imgui_window_add_group(lua_State *L);
 static int imgui_window_add_inputtext(lua_State *L);
 static int imgui_window_add_combo(lua_State *L);
@@ -441,6 +442,7 @@ static const luaL_Reg window_methods[] = {
     {"AddCollapsingHeader", imgui_window_add_collapsingheader},
     {"AddSeparator", imgui_window_add_separator},
     {"AddSpacing", imgui_window_add_spacing},
+    {"AddDummy", imgui_window_add_dummy},
     {"AddGroup", imgui_window_add_group},
     {"AddTree", imgui_window_add_tree},
     {"AddSelectable", imgui_window_add_selectable},
@@ -592,7 +594,12 @@ static int imgui_window_newindex(lua_State *L) {
         return 0;
     }
 
-    return luaL_error(L, "unknown property: %s", key);
+    // Silently ignore unknown properties. Mods (MCM) set many cosmetic window/
+    // widget properties the port doesn't model (Scaling, IDContext,
+    // NoFocusOnAppearing, AlwaysAutoResize, ...); erroring here aborts their whole
+    // UI construction. Accepting-and-ignoring lets the rest of the UI build.
+    (void)key;
+    return 0;
 }
 
 /**
@@ -689,6 +696,24 @@ static int func_name(lua_State *L) { \
 
 IMGUI_HIDDEN_LABEL_WIDGET(imgui_window_add_separator, IMGUI_OBJ_SEPARATOR, "", "separator")
 IMGUI_HIDDEN_LABEL_WIDGET(imgui_window_add_spacing, IMGUI_OBJ_SPACING, "", "spacing")
+
+// AddDummy(width, height) — invisible spacer of the given size (MCM uses it for layout).
+static int imgui_window_add_dummy(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    float w = (float)luaL_optnumber(L, 2, 0.0);
+    float h = (float)luaL_optnumber(L, 3, 0.0);
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_DUMMY, "");
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create dummy widget");
+    }
+    ImguiObject *obj = imgui_object_get(child);
+    if (obj) {
+        obj->data.dummy.width = w;
+        obj->data.dummy.height = h;
+    }
+    imgui_push_handle(L, child, IMGUI_OBJ_DUMMY);
+    return 1;
+}
 IMGUI_HIDDEN_LABEL_WIDGET(imgui_window_add_tooltip, IMGUI_OBJ_TOOLTIP, "##tooltip", "tooltip")
 IMGUI_HIDDEN_LABEL_WIDGET(imgui_window_add_menubar, IMGUI_OBJ_MENU_BAR, "##menubar", "menu bar")
 IMGUI_HIDDEN_LABEL_WIDGET(imgui_window_add_tablecell, IMGUI_OBJ_TABLE_CELL, "##cell", "table cell")
@@ -1318,10 +1343,39 @@ static int imgui_widget_set_visible(lua_State *L) {
  * styleVar: GuiStyleVar enum value
  * value1, value2: float values (value2 only for ImVec2 styles like padding)
  */
+// Map an ImGuiStyleVar name (as passed by MCM etc.) to its enum value; -1 if
+// unknown. Values match Dear ImGui's ImGuiStyleVar_ enum.
+static int imgui_style_var_from_name(const char *name) {
+    if (!name) return -1;
+    struct { const char *n; int v; } m[] = {
+        {"Alpha",0}, {"DisabledAlpha",1}, {"WindowPadding",2}, {"WindowRounding",3},
+        {"WindowBorderSize",4}, {"WindowMinSize",5}, {"WindowTitleAlign",6},
+        {"ChildRounding",7}, {"ChildBorderSize",8}, {"PopupRounding",9},
+        {"PopupBorderSize",10}, {"FramePadding",11}, {"FrameRounding",12},
+        {"FrameBorderSize",13}, {"ItemSpacing",14}, {"ItemInnerSpacing",15},
+        {"IndentSpacing",16}, {"CellPadding",17}, {"ScrollbarSize",18},
+        {"ScrollbarRounding",19}, {"GrabMinSize",20}, {"GrabRounding",21},
+        {"TabRounding",22}, {"TabBorderSize",23}, {"ButtonTextAlign",24},
+        {"SelectableTextAlign",25}, {"SeparatorTextBorderSize",26},
+        {"SeparatorTextAlign",27}, {"SeparatorTextPadding",28},
+    };
+    for (size_t i = 0; i < sizeof(m)/sizeof(m[0]); i++) {
+        if (strcmp(name, m[i].n) == 0) return m[i].v;
+    }
+    return -1;
+}
+
 static int imgui_widget_set_style(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    int style_var = (int)luaL_checkinteger(L, 2);
-    float value1 = (float)luaL_checknumber(L, 3);
+    // Accept either an integer ImGuiStyleVar or a string name (MCM passes names).
+    int style_var;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        style_var = imgui_style_var_from_name(lua_tostring(L, 2));
+        if (style_var < 0) return 0;  // unknown style name — ignore rather than error
+    } else {
+        style_var = (int)luaL_checkinteger(L, 2);
+    }
+    float value1 = (float)luaL_optnumber(L, 3, 0.0);
     float value2 = (float)luaL_optnumber(L, 4, 0.0);
 
     imgui_object_set_style_var(ud->handle, style_var, value1, value2);
@@ -1863,7 +1917,12 @@ static int imgui_widget_newindex(lua_State *L) {
             break;
     }
 
-    return luaL_error(L, "unknown property: %s", key);
+    // Silently ignore unknown properties. Mods (MCM) set many cosmetic window/
+    // widget properties the port doesn't model (Scaling, IDContext,
+    // NoFocusOnAppearing, AlwaysAutoResize, ...); erroring here aborts their whole
+    // UI construction. Accepting-and-ignoring lets the rest of the UI build.
+    (void)key;
+    return 0;
 }
 
 // ============================================================================
