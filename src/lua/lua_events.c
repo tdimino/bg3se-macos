@@ -482,9 +482,39 @@ void events_fire_tick(lua_State *L, float delta_time) {
 // Public API: Fire GameStateChanged Event (with FromState and ToState)
 // ============================================================================
 
+// The port infers a generic ServerGameState (game_state.c), but mods subscribe
+// in client context and compare e.ToState against Ext.Enums.ClientGameState
+// (ecl::GameState). Those enums use DIFFERENT numeric values (e.g. Running is
+// 13 internally but 18 in ecl, and the main menu is Idle=3 internally but
+// Menu=7 in ecl). Map to ecl values so MCM's `e.ToState == ClientGameState.X`
+// checks match — otherwise its client init (which builds the settings window)
+// never fires. Unmapped states pass through unchanged.
+static int server_state_to_ecl(int s) {
+    switch (s) {
+        case 2:  return 1;   // Init          -> Init
+        case 3:  return 7;   // Idle          -> Menu (main menu)
+        case 4:  return 8;   // Exit          -> Exit
+        case 5:  return 10;  // LoadLevel     -> LoadLevel
+        case 6:  return 11;  // LoadModule    -> LoadModule
+        case 7:  return 12;  // LoadSession   -> LoadSession
+        case 8:  return 13;  // UnloadLevel   -> UnloadLevel
+        case 9:  return 14;  // UnloadModule  -> UnloadModule
+        case 10: return 15;  // UnloadSession -> UnloadSession
+        case 12: return 16;  // Paused        -> Paused
+        case 13: return 18;  // Running       -> Running
+        case 14: return 21;  // Save          -> Save
+        case 15: return 19;  // Disconnect    -> Disconnect
+        default: return s;   // Unknown(0) and any others pass through
+    }
+}
+
 void events_fire_game_state_changed(lua_State *L, int fromState, int toState) {
     // Cache the current game state for Ext.Utils.GetGameState()
     g_current_game_state = toState;
+
+    // Translate to ecl::GameState values for the Lua event (see note above).
+    fromState = server_state_to_ecl(fromState);
+    toState = server_state_to_ecl(toState);
 
     if (!L) return;
 

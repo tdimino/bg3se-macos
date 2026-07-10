@@ -991,6 +991,18 @@ static void register_ext_api(lua_State *L) {
         "end\n"
     );
 
+    // Ext.RegisterModEvent(mod, event) — Windows BG3SE API used by MCM and others
+    // to declare a cross-mod event before Subscribe/Throw. The port's ModEvents
+    // metatable creates events lazily on access, so registration just needs to
+    // touch the entry (and must exist as a function so callers don't hit nil).
+    luaL_dostring(L,
+        "Ext.RegisterModEvent = function(mod, event)\n"
+        "  if mod == nil or event == nil then return end\n"
+        "  local bucket = Ext.ModEvents[mod]\n"
+        "  if bucket then local _ = bucket[event] end\n"
+        "end\n"
+    );
+
     // Register Ext.Types.Serialize/Unserialize stubs (Issue #69)
     // Note: Windows BG3SE operates on C++ proxy userdata; we provide JSON fallback
     // with a warning so mods know the semantics differ
