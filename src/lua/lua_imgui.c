@@ -406,6 +406,9 @@ static int imgui_window_add_selectable(lua_State *L);
 static int imgui_window_add_table(lua_State *L);
 static int imgui_window_add_tablerow(lua_State *L);
 static int imgui_window_add_tablecell(lua_State *L);
+static int imgui_window_add_column(lua_State *L);
+static int imgui_window_add_imagebutton(lua_State *L);
+static int imgui_window_add_icon(lua_State *L);
 static int imgui_window_add_tabbar(lua_State *L);
 static int imgui_window_add_tabitem(lua_State *L);
 static int imgui_window_add_menubar(lua_State *L);
@@ -449,6 +452,13 @@ static const luaL_Reg window_methods[] = {
     {"AddTable", imgui_window_add_table},
     {"AddTableRow", imgui_window_add_tablerow},
     {"AddTableCell", imgui_window_add_tablecell},
+    // MCM (and BG3SE API) names: table:AddRow / row:AddCell / table:AddColumn.
+    {"AddRow", imgui_window_add_tablerow},
+    {"AddCell", imgui_window_add_tablecell},
+    {"AddColumn", imgui_window_add_column},
+    {"AddImageButton", imgui_window_add_imagebutton},
+    {"AddMainMenu", imgui_window_add_menubar},
+    {"AddIcon", imgui_window_add_icon},
     {"AddTabBar", imgui_window_add_tabbar},
     {"AddTabItem", imgui_window_add_tabitem},
     {"AddMenuBar", imgui_window_add_menubar},
@@ -1156,6 +1166,39 @@ static int imgui_window_add_tablerow(lua_State *L) {
     }
 
     imgui_push_handle(L, child, IMGUI_OBJ_TABLE_ROW);
+    return 1;
+}
+
+// table:AddColumn(name, widthFlag, width) — the table already reserves its column
+// count from AddTable; full TableSetupColumn (fixed/stretch widths) isn't modeled,
+// so accept the call and return nil rather than erroring, letting the DualPane build.
+static int imgui_window_add_column(lua_State *L) {
+    lua_pushnil(L);
+    return 1;
+}
+
+// group/window:AddImageButton(label, icon, size) — no image button widget; render a
+// labeled button so callbacks (OnClick) still attach and the layout builds.
+static int imgui_window_add_imagebutton(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    const char *label = luaL_optstring(L, 2, "##imgbtn");
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_BUTTON, label);
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create image button widget");
+    }
+    imgui_push_handle(L, child, IMGUI_OBJ_BUTTON);
+    return 1;
+}
+
+// window:AddIcon(name, [w, h]) — no icon widget; add an empty text placeholder so code
+// that expects a returned widget keeps working.
+static int imgui_window_add_icon(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_TEXT, "");
+    if (child == IMGUI_INVALID_HANDLE) {
+        return luaL_error(L, "failed to create icon widget");
+    }
+    imgui_push_handle(L, child, IMGUI_OBJ_TEXT);
     return 1;
 }
 
