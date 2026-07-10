@@ -456,6 +456,14 @@ static void render_widget(ImguiObject *obj) {
     // Push style overrides before rendering
     imgui_object_push_style(obj);
 
+    // Seed a unique ImGui ID per object (its handle). Widgets often have empty
+    // labels (e.g. MCM buttons whose text comes from a missing localization
+    // string, which we tolerate as ""); an empty label at a window root makes
+    // ImGui compute an item ID equal to the window's own ID and fire the
+    // "Cannot have an empty ID at the root of a window" assertion -> abort. A
+    // per-handle PushID makes every item's ID unique regardless of its label.
+    ImGui::PushID((void *)(uintptr_t)obj->handle);
+
     // Handle SameLine
     if (obj->styled.same_line) {
         ImGui::SameLine();
@@ -1008,6 +1016,8 @@ static void render_widget(ImguiObject *obj) {
     if (ImGui::IsItemDeactivated()) {
         lua_imgui_fire_event(obj->handle, IMGUI_EVENT_ON_DEACTIVATE);
     }
+
+    ImGui::PopID();
 
     // Pop style overrides after rendering
     imgui_object_pop_style(obj);
