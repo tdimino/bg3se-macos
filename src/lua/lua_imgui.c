@@ -409,6 +409,7 @@ static int imgui_window_add_tablecell(lua_State *L);
 static int imgui_window_add_column(lua_State *L);
 static int imgui_window_add_imagebutton(lua_State *L);
 static int imgui_window_add_icon(lua_State *L);
+static int imgui_widget_noop(lua_State *L);
 static int imgui_window_add_tabbar(lua_State *L);
 static int imgui_window_add_tabitem(lua_State *L);
 static int imgui_window_add_menubar(lua_State *L);
@@ -459,6 +460,20 @@ static const luaL_Reg window_methods[] = {
     {"AddImageButton", imgui_window_add_imagebutton},
     {"AddMainMenu", imgui_window_add_menubar},
     {"AddIcon", imgui_window_add_icon},
+    // Cosmetic window/widget setters the port doesn't model — accept and no-op so
+    // MCM's window setup (SetPos/SetFocus/SetSize/SetScroll/SetStyleColor, ...)
+    // doesn't throw and abort the UI build. Appearance uses port defaults.
+    {"SetPos", imgui_widget_noop},
+    {"SetPosition", imgui_widget_noop},
+    {"SetSize", imgui_widget_noop},
+    {"SetFocus", imgui_widget_noop},
+    {"SetScroll", imgui_widget_noop},
+    {"SetScrollX", imgui_widget_noop},
+    {"SetScrollY", imgui_widget_noop},
+    {"SetStyleColor", imgui_widget_noop},
+    {"SetContentSize", imgui_widget_noop},
+    {"SetNextItemWidth", imgui_widget_noop},
+    {"SetCollapsed", imgui_widget_noop},
     {"AddTabBar", imgui_window_add_tabbar},
     {"AddTabItem", imgui_window_add_tabitem},
     {"AddMenuBar", imgui_window_add_menubar},
@@ -1166,6 +1181,14 @@ static int imgui_window_add_tablerow(lua_State *L) {
     }
 
     imgui_push_handle(L, child, IMGUI_OBJ_TABLE_ROW);
+    return 1;
+}
+
+// Tolerant no-op for cosmetic setters the port doesn't model. Returns self so
+// method chaining (w:SetX():SetY()) keeps working; callers using it as a
+// statement are unaffected.
+static int imgui_widget_noop(lua_State *L) {
+    lua_settop(L, 1);
     return 1;
 }
 
