@@ -11,6 +11,8 @@
 #include "logging.h"
 #include "../console/console.h"
 #include "../io/path_override.h"
+#include "../mod/mod_loader.h"
+#include "../pak/pak_reader.h"
 #include "../entity/component_registry.h"
 #include "../entity/component_property.h"
 #include "../enum/enum_registry.h"
@@ -80,12 +82,60 @@ int lua_ext_getcontext(lua_State *L) {
 // Ext.IO Functions
 // ============================================================================
 
+// Read a mod-relative VFS path (e.g. "Mods/BG3MCM/ScriptExtender/Config.json")
+// out of the owning mod's PAK. Windows BG3SE's Ext.IO.LoadFile(path, "data")
+// resolves such paths against the game's virtual filesystem, which includes
+// mounted PAKs; the port must do the same so mods like MCM can read their
+// Config.json / JSON blueprints. Returns malloc'd, NUL-terminated content (caller
+// frees) or NULL if not found. *out_size excludes the terminator.
+static char *io_load_from_pak(const char *path, size_t *out_size) {
+    // Only VFS-style "Mods/<Folder>/..." paths live inside PAKs.
+    if (strncmp(path, "Mods/", 5) != 0) return NULL;
+
+    // Extract the mod folder name (between "Mods/" and the next '/').
+    const char *folder_start = path + 5;
+    const char *slash = strchr(folder_start, '/');
+    if (!slash || slash == folder_start) return NULL;
+
+    char folder[256];
+    size_t flen = (size_t)(slash - folder_start);
+    if (flen >= sizeof(folder)) return NULL;
+    memcpy(folder, folder_start, flen);
+    folder[flen] = '\0';
+
+    char pak_path[MAX_PATH_LEN];
+    if (!mod_find_pak(folder, pak_path, sizeof(pak_path))) return NULL;
+
+    PakFile *pak = pak_open(pak_path);
+    if (!pak) return NULL;
+
+    int idx = pak_find_entry(pak, path);
+    if (idx < 0) {
+        pak_close(pak);
+        return NULL;
+    }
+
+    char *content = pak_read_file(pak, idx, out_size);
+    pak_close(pak);
+    return content;  // already NUL-terminated by pak_read_file
+}
+
 int lua_ext_io_loadfile(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     LOG_LUA_INFO("Ext.IO.LoadFile('%s')", path);
 
     FILE *f = fopen(path, "r");
     if (!f) {
+        // Filesystem miss: fall back to reading from the owning mod's PAK
+        // (VFS "data" semantics). Required for MCM's reverse-lookup of every
+        // mod's ScriptExtender/Config.json.
+        size_t pak_size = 0;
+        char *pak_content = io_load_from_pak(path, &pak_size);
+        if (pak_content) {
+            lua_pushlstring(L, pak_content, pak_size);
+            free(pak_content);
+            return 1;
+        }
         lua_pushnil(L);
         lua_pushstring(L, "File not found");
         return 2;

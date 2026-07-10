@@ -404,15 +404,26 @@ static void render_widget(ImguiObject *obj);
 void imgui_object_push_style(ImguiObject* obj) {
     if (!obj) return;
 
-    // Push style vars
+    // Push style vars. ImGui asserts if you push the wrong arity (ImVec2 for a
+    // float var or vice versa), so dispatch by the var's type for THIS imgui.h
+    // build. The ImVec2 vars (indices) are: WindowPadding(2), WindowMinSize(5),
+    // WindowTitleAlign(6), FramePadding(11), ItemSpacing(14), ItemInnerSpacing(15),
+    // CellPadding(17), TableAngledHeadersTextAlign(31), ButtonTextAlign(34),
+    // SelectableTextAlign(35), SeparatorTextAlign(37), SeparatorTextPadding(38).
     for (int i = 0; i < obj->style_overrides.style_count; i++) {
         int var = obj->style_overrides.style_vars[i];
         float val1 = obj->style_overrides.style_values[i * 2];
         float val2 = obj->style_overrides.style_values[i * 2 + 1];
 
-        // Some style vars are float, some are ImVec2
-        // For simplicity, use ImVec2 for all (ImGui handles it)
-        ImGui::PushStyleVar((ImGuiStyleVar)var, ImVec2(val1, val2));
+        switch (var) {
+            case 2: case 5: case 6: case 11: case 14: case 15:
+            case 17: case 31: case 34: case 35: case 37: case 38:
+                ImGui::PushStyleVar((ImGuiStyleVar)var, ImVec2(val1, val2));
+                break;
+            default:
+                ImGui::PushStyleVar((ImGuiStyleVar)var, val1);
+                break;
+        }
     }
 
     // Push style colors

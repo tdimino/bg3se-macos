@@ -483,6 +483,8 @@ static const luaL_Reg window_methods[] = {
     {"AddMenuBar", imgui_window_add_menubar},
     {"AddMenu", imgui_window_add_menu},
     {"AddMenuItem", imgui_window_add_menuitem},
+    // MCM (ExtUI API) adds menu entries with menu:AddItem(label).
+    {"AddItem", imgui_window_add_menuitem},
     {"AddPopup", imgui_window_add_popup},
     {"AddTooltip", imgui_window_add_tooltip},
     {"AddChildWindow", imgui_window_add_childwindow},
@@ -499,9 +501,12 @@ static const luaL_Reg window_methods[] = {
  * __index metamethod for window objects.
  * First checks for methods, then checks for properties.
  */
+static int g_win_trace = 0;
 static int imgui_window_index(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
     const char *key = luaL_checkstring(L, 2);
+
+    if (g_win_trace < 400) { LOG_IMGUI_INFO("WINTRACE get '%s'", key); g_win_trace++; }
 
     // First check method table
     for (const luaL_Reg *method = window_methods; method->name != NULL; method++) {
@@ -575,6 +580,8 @@ static int imgui_window_index(lua_State *L) {
 static int imgui_window_newindex(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
     const char *key = luaL_checkstring(L, 2);
+
+    if (g_win_trace < 400) { LOG_IMGUI_INFO("WINTRACE set '%s' (type=%s)", key, lua_typename(L, lua_type(L, 3))); g_win_trace++; }
 
     ImguiObject *obj = imgui_object_get(ud->handle);
     if (obj == NULL) {
@@ -1437,6 +1444,10 @@ static int imgui_widget_set_visible(lua_State *L) {
  */
 // Map an ImGuiStyleVar name (as passed by MCM etc.) to its enum value; -1 if
 // unknown. Values match Dear ImGui's ImGuiStyleVar_ enum.
+// Values track lib/imgui/imgui.h's ImGuiStyleVar_ order for THIS build, which
+// inserted ScrollbarPadding/ImageBorderSize/TabMinWidth* etc. after index 19 —
+// so the classic contiguous mapping is wrong past ScrollbarRounding. Returns -1
+// for unknown names (SetStyle then ignores rather than throwing).
 static int imgui_style_var_from_name(const char *name) {
     if (!name) return -1;
     struct { const char *n; int v; } m[] = {
@@ -1446,10 +1457,11 @@ static int imgui_style_var_from_name(const char *name) {
         {"PopupBorderSize",10}, {"FramePadding",11}, {"FrameRounding",12},
         {"FrameBorderSize",13}, {"ItemSpacing",14}, {"ItemInnerSpacing",15},
         {"IndentSpacing",16}, {"CellPadding",17}, {"ScrollbarSize",18},
-        {"ScrollbarRounding",19}, {"GrabMinSize",20}, {"GrabRounding",21},
-        {"TabRounding",22}, {"TabBorderSize",23}, {"ButtonTextAlign",24},
-        {"SelectableTextAlign",25}, {"SeparatorTextBorderSize",26},
-        {"SeparatorTextAlign",27}, {"SeparatorTextPadding",28},
+        {"ScrollbarRounding",19}, {"GrabMinSize",21}, {"GrabRounding",22},
+        {"TabRounding",24}, {"TabBorderSize",25}, {"TabBarBorderSize",28},
+        {"ButtonTextAlign",34}, {"SelectableTextAlign",35},
+        {"SeparatorTextBorderSize",36}, {"SeparatorTextAlign",37},
+        {"SeparatorTextPadding",38},
     };
     for (size_t i = 0; i < sizeof(m)/sizeof(m[0]); i++) {
         if (strcmp(name, m[i].n) == 0) return m[i].v;
@@ -1467,28 +1479,95 @@ static int imgui_widget_set_style(lua_State *L) {
     } else {
         style_var = (int)luaL_checkinteger(L, 2);
     }
-    float value1 = (float)luaL_optnumber(L, 3, 0.0);
-    float value2 = (float)luaL_optnumber(L, 4, 0.0);
+    // Value may be a single number, two numbers, or a vec2 table {x,y} (MCM's
+    // UIStyle.Styles uses {x,y} for padding/spacing style vars). Handle a table
+    // so we don't throw and abort the UI build.
+    float value1 = 0.0f, value2 = 0.0f;
+    if (lua_type(L, 3) == LUA_TTABLE) {
+        lua_rawgeti(L, 3, 1); value1 = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, 3, 2); value2 = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+    } else {
+        value1 = (float)luaL_optnumber(L, 3, 0.0);
+        value2 = (float)luaL_optnumber(L, 4, 0.0);
+    }
 
     imgui_object_set_style_var(ud->handle, style_var, value1, value2);
     return 0;
 }
 
+// Map a Windows BG3SE / ImGuiCol color name to this ImGui build's ImGuiCol_
+// value. Values track lib/imgui/imgui.h's enum order (newer build: Tab colors
+// renamed). Classic names MCM still uses are aliased to their current slots
+// (TabActive->TabSelected, TabUnfocused->TabDimmed, NavHighlight->NavCursor).
+// Returns -1 for unknown names so SetColor can ignore rather than throw.
+static int imgui_col_from_name(const char *name) {
+    if (!name) return -1;
+    struct { const char *n; int v; } m[] = {
+        {"Text",0},{"TextDisabled",1},{"WindowBg",2},{"ChildBg",3},{"PopupBg",4},
+        {"Border",5},{"BorderShadow",6},{"FrameBg",7},{"FrameBgHovered",8},{"FrameBgActive",9},
+        {"TitleBg",10},{"TitleBgActive",11},{"TitleBgCollapsed",12},{"MenuBarBg",13},
+        {"ScrollbarBg",14},{"ScrollbarGrab",15},{"ScrollbarGrabHovered",16},{"ScrollbarGrabActive",17},
+        {"CheckMark",18},{"SliderGrab",19},{"SliderGrabActive",20},
+        {"Button",21},{"ButtonHovered",22},{"ButtonActive",23},
+        {"Header",24},{"HeaderHovered",25},{"HeaderActive",26},
+        {"Separator",27},{"SeparatorHovered",28},{"SeparatorActive",29},
+        {"ResizeGrip",30},{"ResizeGripHovered",31},{"ResizeGripActive",32},
+        {"InputTextCursor",33},
+        {"TabHovered",34},{"Tab",35},
+        {"TabSelected",36},{"TabActive",36},
+        {"TabSelectedOverline",37},
+        {"TabDimmed",38},{"TabUnfocused",38},
+        {"TabDimmedSelected",39},{"TabUnfocusedActive",39},
+        {"TabDimmedSelectedOverline",40},
+        {"PlotLines",41},{"PlotLinesHovered",42},{"PlotHistogram",43},{"PlotHistogramHovered",44},
+        {"TableHeaderBg",45},{"TableBorderStrong",46},{"TableBorderLight",47},
+        {"TableRowBg",48},{"TableRowBgAlt",49},
+        {"TextLink",50},{"TextSelectedBg",51},{"TreeLines",52},
+        {"DragDropTarget",53},{"DragDropTargetBg",54},{"UnsavedMarker",55},
+        {"NavCursor",56},{"NavHighlight",56},
+        {"NavWindowingHighlight",57},{"NavWindowingDimBg",58},{"ModalWindowDimBg",59},
+    };
+    for (size_t i = 0; i < sizeof(m)/sizeof(m[0]); i++) {
+        if (strcmp(name, m[i].n) == 0) return m[i].v;
+    }
+    return -1;
+}
+
+// Read a color out of a Lua arg: either a vec4 table {r,g,b,a} (Windows API) at
+// `idx`, or separate r,g,b[,a] numbers starting at `idx`.
+static ImguiVec4 imgui_read_color_arg(lua_State *L, int idx) {
+    ImguiVec4 c = {0.0f, 0.0f, 0.0f, 1.0f};
+    if (lua_type(L, idx) == LUA_TTABLE) {
+        lua_rawgeti(L, idx, 1); c.x = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, idx, 2); c.y = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, idx, 3); c.z = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, idx, 4); if (!lua_isnil(L, -1)) c.w = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+    } else {
+        c.x = (float)luaL_optnumber(L, idx, 0.0);
+        c.y = (float)luaL_optnumber(L, idx + 1, 0.0);
+        c.z = (float)luaL_optnumber(L, idx + 2, 0.0);
+        c.w = (float)luaL_optnumber(L, idx + 3, 1.0);
+    }
+    return c;
+}
+
 /**
- * widget:SetColor(colorId, r, g, b, [a])
- * Sets a color override for this widget.
- * colorId: GuiCol enum value
- * r, g, b, a: color components (0.0-1.0)
+ * widget:SetColor(colorNameOrId, vec4Table | r, g, b, [a])
+ * Windows BG3SE API: SetColor("Text", {r,g,b,a}). Also accepts the legacy
+ * (int colorId, r, g, b, a) form. Unknown color names are ignored (no throw).
  */
 static int imgui_widget_set_color(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    int color_id = (int)luaL_checkinteger(L, 2);
-    float r = (float)luaL_checknumber(L, 3);
-    float g = (float)luaL_checknumber(L, 4);
-    float b = (float)luaL_checknumber(L, 5);
-    float a = (float)luaL_optnumber(L, 6, 1.0);
 
-    ImguiVec4 color = {r, g, b, a};
+    int color_id;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        color_id = imgui_col_from_name(lua_tostring(L, 2));
+        if (color_id < 0) return 0;  // unknown color name — ignore rather than error
+    } else {
+        color_id = (int)luaL_checkinteger(L, 2);
+    }
+
+    ImguiVec4 color = imgui_read_color_arg(L, 3);
     imgui_object_set_style_color(ud->handle, color_id, color);
     return 0;
 }
@@ -1506,6 +1585,20 @@ static int imgui_widget_clear_style(lua_State *L) {
 // ============================================================================
 // Generic Widget Metamethods
 // ============================================================================
+
+// widget:Open() — open a popup. MCM opens Help/About/confirmation popups from
+// menu-item and button OnClick callbacks. No-throw for other widget types.
+static int imgui_widget_open(lua_State *L) {
+    ImguiUserdata *ud = imgui_to_userdata(L, 1);
+    ImguiObject *obj = imgui_object_get(ud->handle);
+    if (obj) {
+        if (obj->type == IMGUI_OBJ_POPUP) {
+            obj->data.popup.is_open = true;
+        }
+        obj->styled.visible = true;
+    }
+    return 0;
+}
 
 /**
  * Generic __index for non-window widgets
@@ -1538,6 +1631,10 @@ static int imgui_widget_index(lua_State *L) {
     }
     if (strcmp(key, "ClearStyle") == 0) {
         lua_pushcfunction(L, imgui_widget_clear_style);
+        return 1;
+    }
+    if (strcmp(key, "Open") == 0) {
+        lua_pushcfunction(L, imgui_widget_open);
         return 1;
     }
 

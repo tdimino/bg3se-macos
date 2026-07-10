@@ -424,6 +424,13 @@ ImguiHandle imgui_object_create_child(ImguiHandle parent, ImguiObjectType type, 
         imgui_object_add_child(parent, child);
     }
 
+    // TREE DIAG: trace MCM's DualPane construction to see what actually builds.
+    LOG_IMGUI_INFO("TREE: %s '%s' <- child %s '%s' (parent now %d children)",
+                   imgui_object_type_name(parent_obj->type),
+                   parent_obj->styled.label[0] ? parent_obj->styled.label : "",
+                   imgui_object_type_name(type), label ? label : "",
+                   parent_obj->child_count);
+
     return child;
 }
 
