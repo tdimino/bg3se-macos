@@ -508,13 +508,53 @@ static int server_state_to_ecl(int s) {
     }
 }
 
+// ecl::GameState label for an internal ServerGameState (NULL if none).
+static const char *server_state_to_ecl_label(int s) {
+    switch (s) {
+        case 0:  return "Unknown";
+        case 2:  return "Init";
+        case 3:  return "Menu";          // main menu
+        case 4:  return "Exit";
+        case 5:  return "LoadLevel";
+        case 6:  return "LoadModule";
+        case 7:  return "LoadSession";
+        case 8:  return "UnloadLevel";
+        case 9:  return "UnloadModule";
+        case 10: return "UnloadSession";
+        case 12: return "Paused";
+        case 13: return "Running";
+        case 14: return "Save";
+        case 15: return "Disconnect";
+        default: return NULL;
+    }
+}
+
+// Push the matching Ext.Enums.ClientGameState EnumValue *userdata* for an internal
+// state. Mods compare e.ToState with `==` against Ext.Enums.ClientGameState.X,
+// and Lua only invokes __eq between two userdata of the same type — an integer
+// never equals the EnumValue. So we must hand back the same userdata. Falls back
+// to the ecl integer if the enum isn't available.
+static void push_ecl_gamestate(lua_State *L, int internal_state) {
+    const char *label = server_state_to_ecl_label(internal_state);
+    if (label) {
+        lua_getglobal(L, "Ext");                 // Ext
+        lua_getfield(L, -1, "Enums");            // Ext, Enums
+        lua_getfield(L, -1, "ClientGameState");  // Ext, Enums, CGS
+        lua_getfield(L, -1, label);              // Ext, Enums, CGS, val
+        if (!lua_isnil(L, -1)) {
+            lua_remove(L, -2);                   // Ext, Enums, val
+            lua_remove(L, -2);                   // Ext, val
+            lua_remove(L, -2);                   // val
+            return;
+        }
+        lua_pop(L, 4);
+    }
+    lua_pushinteger(L, server_state_to_ecl(internal_state));
+}
+
 void events_fire_game_state_changed(lua_State *L, int fromState, int toState) {
     // Cache the current game state for Ext.Utils.GetGameState()
     g_current_game_state = toState;
-
-    // Translate to ecl::GameState values for the Lua event (see note above).
-    fromState = server_state_to_ecl(fromState);
-    toState = server_state_to_ecl(toState);
 
     if (!L) return;
 
@@ -546,11 +586,12 @@ void events_fire_game_state_changed(lua_State *L, int fromState, int toState) {
             continue;
         }
 
-        // Create event data table with FromState and ToState
+        // Create event data table with FromState and ToState as ClientGameState
+        // EnumValue userdata (so `e.ToState == Ext.Enums.ClientGameState.X` works).
         lua_newtable(L);
-        lua_pushinteger(L, fromState);
+        push_ecl_gamestate(L, fromState);
         lua_setfield(L, -2, "FromState");
-        lua_pushinteger(L, toState);
+        push_ecl_gamestate(L, toState);
         lua_setfield(L, -2, "ToState");
 
         // Protected call
