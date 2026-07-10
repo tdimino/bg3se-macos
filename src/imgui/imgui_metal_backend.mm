@@ -1265,8 +1265,17 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
                 }
             }];
 
-            // Note: game already presents the drawable, so we just commit our commands
+            // Commit, then BLOCK until our GPU work has finished writing the
+            // drawable's texture BEFORE returning to hooked_present (which then
+            // calls the game's original present). Our command buffer runs on a
+            // separate command queue than the game's; without this wait the game
+            // can present/scan-out the drawable while our render pass is still
+            // writing it, which faults the GPU driver and crashes WindowServer
+            // (takes down the whole macOS compositor). waitUntilCompleted makes
+            // the ordering deterministic and safe. It costs a per-frame stall,
+            // but correctness/safety wins over the frame-time hit here.
             [commandBuffer commit];
+            [commandBuffer waitUntilCompleted];
 
             s_state.frame_count++;
         }
@@ -1465,10 +1474,52 @@ static ImGuiKey macos_keycode_to_imgui(uint16_t keycode) {
     }
 }
 
+// Toggle the MCM config window on/off by flipping its visibility directly. The
+// game's Noesis "Mod Configuration Menu" button is only stubbed on the port and
+// MCM's default toggle keybinding (INSERT) isn't present on Mac keyboards, so
+// this gives a reliable way to open/close MCM. Returns true if found.
+bool imgui_metal_toggle_mcm_window(void) {
+    bool found = false;
+    imgui_objects_lock();
+    int n = 0;
+    ImguiHandle *w = imgui_get_all_windows(&n);
+    for (int i = 0; i < n && w; i++) {
+        ImguiObject *o = imgui_object_get(w[i]);
+        if (o && o->type == IMGUI_OBJ_WINDOW &&
+            strncmp(o->styled.label, "Mod Configuration Menu", 22) == 0) {
+            bool show = !o->styled.visible;
+            o->styled.visible = show;
+            o->data.window.open = show;
+            found = true;
+            LOG_IMGUI_INFO("MCM window toggled via hotkey: %s", show ? "shown" : "hidden");
+        }
+    }
+    imgui_objects_unlock();
+    return found;
+}
+
 // Debounce for F11 toggle (prevents double-toggle from fn+F11)
 static uint64_t s_last_f11_toggle = 0;
+static uint64_t s_last_f10_toggle = 0;
 
 bool imgui_metal_process_key(uint16_t keycode, bool down, uint32_t modifiers) {
+    // F10 toggles the MCM window (see imgui_metal_toggle_mcm_window). Consume it
+    // so it doesn't also reach the game.
+    if (keycode == 0x6D && down) {  // F10
+        uint64_t now = mach_absolute_time();
+        static mach_timebase_info_data_t tb = {0, 0};
+        if (tb.denom == 0) mach_timebase_info(&tb);
+        uint64_t elapsed_ms = ((now - s_last_f10_toggle) * tb.numer / tb.denom) / 1000000;
+        if (elapsed_ms >= 200) {
+            s_last_f10_toggle = now;
+            if (s_state.state == IMGUI_METAL_STATE_UNINITIALIZED) {
+                imgui_metal_init();
+            }
+            imgui_metal_toggle_mcm_window();
+        }
+        return true;  // consume
+    }
+
     // F11 toggles overlay (F9/F10 conflict with game hotkeys)
     if (keycode == 0x67 && down) {  // F11
         // Debounce: ignore if toggled within last 200ms
