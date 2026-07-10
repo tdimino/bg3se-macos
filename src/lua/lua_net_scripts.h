@@ -311,8 +311,13 @@ static const char *LUA_SCRIPT_NET_INIT =
 "    end\n"
 "})\n"
 "\n"
-"-- MCM and other mods use the Ext.Net.CreateChannel form; expose it there too.\n"
-"Ext.Net.CreateChannel = Net.CreateChannel\n"
+"-- NOTE: Ext.Net.CreateChannel is intentionally NOT exposed here. Doing so lets\n"
+"-- MCM create/use net channels, which triggers the port's net-message factory\n"
+"-- registration. That path is broken on the current game version (the RakNet\n"
+"-- GetMessage Dobby hook fails to install), and activating it corrupts the game\n"
+"-- message-factory pool, crashing the game in net::MessageFactory::GetFreeMessage\n"
+"-- during ecl::CharacterProtocol::PostUpdate. Re-enable only once the net hook\n"
+"-- works. The global Net.CreateChannel remains available for code that opts in.\n"
 "\n"
 "Ext.Print('[Net] Network library initialized')\n";
 
