@@ -627,6 +627,49 @@ int events_get_current_game_state(void) {
     return g_current_game_state;
 }
 
+// Map a macOS virtual keycode (kVK_*) to the SDL scancode NAME string that
+// Windows BG3SE puts in KeyInputEvent.Key (see GameDefinitions/Enumerations/
+// IMGUI.inl SDLScanCode enum). Mods (MCM keybindings, e.Key == "ESCAPE", etc.)
+// compare against these names, so the port must deliver names, not raw keycodes.
+static const char *macos_keycode_to_sdl_name(int kc) {
+    switch (kc) {
+        // Letters
+        case 0x00: return "A"; case 0x0B: return "B"; case 0x08: return "C";
+        case 0x02: return "D"; case 0x0E: return "E"; case 0x03: return "F";
+        case 0x05: return "G"; case 0x04: return "H"; case 0x22: return "I";
+        case 0x26: return "J"; case 0x28: return "K"; case 0x25: return "L";
+        case 0x2E: return "M"; case 0x2D: return "N"; case 0x1F: return "O";
+        case 0x23: return "P"; case 0x0C: return "Q"; case 0x0F: return "R";
+        case 0x01: return "S"; case 0x11: return "T"; case 0x20: return "U";
+        case 0x09: return "V"; case 0x0D: return "W"; case 0x07: return "X";
+        case 0x10: return "Y"; case 0x06: return "Z";
+        // Number row
+        case 0x12: return "NUM_1"; case 0x13: return "NUM_2"; case 0x14: return "NUM_3";
+        case 0x15: return "NUM_4"; case 0x17: return "NUM_5"; case 0x16: return "NUM_6";
+        case 0x1A: return "NUM_7"; case 0x1C: return "NUM_8"; case 0x19: return "NUM_9";
+        case 0x1D: return "NUM_0";
+        // Punctuation / symbols
+        case 0x32: return "GRAVE"; case 0x1B: return "MINUS"; case 0x18: return "EQUALS";
+        case 0x21: return "LEFTBRACKET"; case 0x1E: return "RIGHTBRACKET";
+        case 0x2A: return "BACKSLASH"; case 0x29: return "SEMICOLON";
+        case 0x27: return "APOSTROPHE"; case 0x2B: return "COMMA";
+        case 0x2F: return "PERIOD"; case 0x2C: return "SLASH";
+        // Editing / whitespace
+        case 0x24: return "RETURN"; case 0x30: return "TAB"; case 0x31: return "SPACE";
+        case 0x33: return "BACKSPACE"; case 0x35: return "ESCAPE"; case 0x39: return "CAPSLOCK";
+        // Navigation cluster
+        case 0x73: return "HOME"; case 0x77: return "END"; case 0x74: return "PAGEUP";
+        case 0x79: return "PAGEDOWN"; case 0x75: return "DEL";
+        case 0x7B: return "LEFT"; case 0x7C: return "RIGHT"; case 0x7D: return "DOWN"; case 0x7E: return "UP";
+        // Function keys
+        case 0x7A: return "F1"; case 0x78: return "F2"; case 0x63: return "F3";
+        case 0x76: return "F4"; case 0x60: return "F5"; case 0x61: return "F6";
+        case 0x62: return "F7"; case 0x64: return "F8"; case 0x65: return "F9";
+        case 0x6D: return "F10"; case 0x67: return "F11"; case 0x6F: return "F12";
+        default: return "UNKNOWN";
+    }
+}
+
 void events_fire_key_input(lua_State *L, int keyCode, bool pressed, int modifiers, const char *character) {
     if (!L) return;
 
@@ -651,14 +694,33 @@ void events_fire_key_input(lua_State *L, int keyCode, bool pressed, int modifier
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, h->callback_ref);
         if (lua_isfunction(L, -1)) {
-            // Create event data table
+            // Create event data table matching Windows BG3SE KeyInputEvent:
+            // { Event="KeyDown"/"KeyUp", Key=<SDL scancode name>, Modifiers,
+            //   Pressed, Repeat }. Mods (MCM keybindings, e.Key=="ESCAPE", the
+            //   e.Event=="KeyDown" guard) rely on this exact shape.
             lua_newtable(L);
-            lua_pushinteger(L, keyCode);
+            lua_pushstring(L, pressed ? "KeyDown" : "KeyUp");
+            lua_setfield(L, -2, "Event");
+            lua_pushstring(L, macos_keycode_to_sdl_name(keyCode));
             lua_setfield(L, -2, "Key");
             lua_pushboolean(L, pressed);
             lua_setfield(L, -2, "Pressed");
-            lua_pushinteger(L, modifiers);
+            lua_pushboolean(L, 0);  // Repeat: not tracked from CGEventTap; treat as non-repeat
+            lua_setfield(L, -2, "Repeat");
+            // Modifiers: an ARRAY of SDL-style modifier NAME strings (MCM's
+            // ExtractActiveModifiers does ipairs over it, so it MUST be a table,
+            // not an integer — an integer errors and breaks keybinding dispatch).
+            // Empty when no modifier is held (the common case, e.g. the toggle key).
+            // Bits are CGEventFlags; we map to the left-hand variants.
+            lua_newtable(L);
+            int mi = 0;
+            if (modifiers & 0x20000)  { lua_pushstring(L, "LSHIFT"); lua_rawseti(L, -2, ++mi); }
+            if (modifiers & 0x40000)  { lua_pushstring(L, "LCTRL");  lua_rawseti(L, -2, ++mi); }
+            if (modifiers & 0x80000)  { lua_pushstring(L, "LALT");   lua_rawseti(L, -2, ++mi); }
             lua_setfield(L, -2, "Modifiers");
+            // Keep the raw keycode + character as extras (harmless; some code reads them).
+            lua_pushinteger(L, keyCode);
+            lua_setfield(L, -2, "KeyCode");
             if (character && character[0]) {
                 lua_pushstring(L, character);
             } else {
