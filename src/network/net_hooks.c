@@ -24,7 +24,6 @@
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
 #include "../core/offset_table.h"
-#include "../hooks/arm64_hook.h"        // arm64_safe_hook (JIT-W^X-aware inline hook)
 #include "../game/game_state.h"        // game_state_get_current()
 #include "../entity/entity_system.h"   // entity_get_binary_base(), entity_get_eoc_server()
 #include <dobby.h>
@@ -49,7 +48,6 @@ static void *s_net_msg_factory = NULL;     // NetMessageFactory* (from GameServe
 typedef void *(*GetMessage_t)(void *factory, uint32_t message_id);
 static GetMessage_t s_orig_GetMessage = NULL;
 static void *s_hook_target_addr = NULL;    // For cleanup
-static ARM64HookHandle *s_getmsg_hook = NULL;  // arm64_safe_hook handle (for unhook)
 
 // Outbound send state (Phase 4G)
 static bool s_send_vmt_probed = false;
@@ -279,17 +277,13 @@ void net_hooks_remove(void) {
     }
 
     // Remove GetMessage hook (Phase 4F)
-    // arm64_safe_hook installs a real, reversible inline hook: arm64_unhook
-    // restores the original prologue bytes and frees the trampoline. After this
-    // the game calls net::MessageFactory::GetFreeMessage directly again.
+    // Note: Dobby doesn't provide DobbyDestroy on all platforms.
+    // Clear our state so the hook becomes a pass-through if it fires during shutdown.
     if (s_status.message_factory_hooked) {
-        if (s_getmsg_hook) {
-            arm64_unhook(s_getmsg_hook);
-            s_getmsg_hook = NULL;
-            LOG_NET_INFO("  Removed GetMessage hook");
-        }
+        LOG_NET_INFO("  Clearing GetMessage hook state");
         s_status.message_factory_hooked = false;
-        s_orig_GetMessage = NULL;
+        // After this, hook_GetMessage will still call s_orig_GetMessage for all IDs
+        // since message_factory_hooked is cleared. This is safe.
     }
 
     // Destroy the ExtenderProtocol singleton
@@ -303,7 +297,6 @@ void net_hooks_remove(void) {
     s_game_server = NULL;
     s_net_msg_factory = NULL;
     s_hook_target_addr = NULL;
-    s_getmsg_hook = NULL;
     s_send_vmt_probed = false;
     s_send_fn = NULL;
 
@@ -493,25 +486,10 @@ bool net_hooks_register_message(void) {
     // Hooking GetMessage avoids needing GameAlloc and Larian container RE.
     // For ID 400 we return our own pooled ExtenderMessage, for all other IDs
     // we pass through to the original.
-    //
-    // NOTE (build 7209685 / macOS 26): the hook target address is resolved via
-    // offset_table_remap_fn(ADDR_GETMESSAGE), which maps the baseline 6995620
-    // address (0x1063d5998) to this build's net::MessageFactory::GetFreeMessage
-    // (0x1063c4550, symbol-verified). We install the hook with arm64_safe_hook()
-    // rather than DobbyHook(): on recent macOS (Darwin 25 / macOS 26), Dobby's
-    // trampoline builder writes to a MAP_JIT page WITHOUT toggling per-thread JIT
-    // write protection, so the build faults (KERN_PROTECTION_FAILURE) and
-    // DobbyHook returns -1 (routing error). arm64_safe_hook() calls
-    // pthread_jit_write_protect_np() around its trampoline writes (see
-    // src/hooks/arm64_hook.c) and manages __TEXT page protection itself, which is
-    // the same mechanism the StaticData/FeatManager "ADRP-safe" path uses.
-    // GetFreeMessage's prologue is a plain frame setup (no ADRP / PC-relative), so
-    // the safe hook installs cleanly at offset 0.
 
     uintptr_t runtime_addr = get_runtime_addr(ADDR_GETMESSAGE);
     if (!runtime_addr) {
-        LOG_NET_WARN("  GetMessage hook: failed to resolve runtime address "
-                     "(version not in offset table / no binary base) — net disabled");
+        LOG_NET_WARN("  GetMessage hook: failed to resolve runtime address (no binary base)");
         return false;
     }
 
@@ -522,17 +500,15 @@ bool net_hooks_register_message(void) {
     // Initialize the message pool before hooking
     extender_message_pool_init();
 
-    void *orig = NULL;
-    s_getmsg_hook = arm64_safe_hook(s_hook_target_addr, (void *)hook_GetMessage, &orig);
-    if (s_getmsg_hook && orig) {
-        s_orig_GetMessage = (GetMessage_t)orig;
-        LOG_NET_INFO("  GetMessage hook installed successfully (orig=%p)", orig);
+    int result = DobbyHook(s_hook_target_addr, (void *)hook_GetMessage,
+                           (void **)&s_orig_GetMessage);
+    if (result == 0) {
+        LOG_NET_INFO("  GetMessage hook installed successfully (orig=%p)",
+                     (void *)s_orig_GetMessage);
         s_status.message_factory_hooked = true;
         return true;
     } else {
-        LOG_NET_ERROR("  GetMessage hook FAILED (arm64_safe_hook returned NULL)");
-        s_getmsg_hook = NULL;
-        s_orig_GetMessage = NULL;
+        LOG_NET_ERROR("  GetMessage hook FAILED (Dobby result=%d)", result);
         s_hook_target_addr = NULL;
         return false;
     }
