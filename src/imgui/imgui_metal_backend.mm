@@ -198,6 +198,16 @@ static void hooked_present(id self, SEL _cmd) {
     if (s_state.state == IMGUI_METAL_STATE_READY &&
         (s_state.visible || imgui_metal_has_visible_window())) {
         id<CAMetalDrawable> drawable = (id<CAMetalDrawable>)self;
+        // Only render into the game's MAIN layer. During cutscenes/movies and
+        // other transitions the game presents drawables from a different
+        // CAMetalLayer; rendering our ImGui pass (sized/formatted for the main
+        // layer) into those causes a GPU fault. Skip foreign drawables.
+        if (s_state.gameLayer != nil && drawable.layer != s_state.gameLayer) {
+            if (s_state.original_present) {
+                ((void(*)(id, SEL))s_state.original_present)(self, _cmd);
+            }
+            return;
+        }
         imgui_metal_render_frame(drawable);
 
         // Log every 60 frames to confirm rendering is happening
@@ -1245,6 +1255,15 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
             ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer, renderEncoder);
 
             [renderEncoder endEncoding];
+
+            // Surface GPU-side errors (drawable/texture faults during scene
+            // transitions don't raise an ObjC exception; they land here).
+            [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+                if (cb.status == MTLCommandBufferStatusError && cb.error) {
+                    LOG_IMGUI_ERROR("ImGui cmd buffer GPU error: %s",
+                                    [[cb.error localizedDescription] UTF8String]);
+                }
+            }];
 
             // Note: game already presents the drawable, so we just commit our commands
             [commandBuffer commit];
