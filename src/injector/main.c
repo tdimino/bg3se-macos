@@ -3016,6 +3016,11 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
         // Note: In full implementation, client_L would be the client Lua state
         lua_net_process_messages(L, L);  // Both server and client in same process for now
 
+        // Drain IMGUI event callbacks (OnClick/OnChange/OnClose) on the main
+        // thread — they are queued from the render thread to avoid racing the
+        // game renderer (running MCM's OnClose on the render thread crashed Cull).
+        lua_imgui_process_events(L);
+
         // Deferred session initialization (Issue #65)
         // Performs entity/stats/staticdata init + fires SessionLoaded here
         // instead of during fake_Load. This prevents ~2,800 kernel calls

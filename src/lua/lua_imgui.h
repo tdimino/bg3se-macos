@@ -43,6 +43,10 @@ lua_State *lua_imgui_get_lua_state(void);
  */
 void lua_imgui_fire_event(ImguiHandle handle, ImguiEventType event, ...);
 
+// Drain queued IMGUI event callbacks on the main thread (they are enqueued from
+// the render thread by lua_imgui_fire_event). Call once per game tick.
+void lua_imgui_process_events(lua_State *L);
+
 /**
  * Clean up Lua references for an IMGUI object before destruction.
  * Must be called before imgui_object_destroy() to prevent memory leaks.

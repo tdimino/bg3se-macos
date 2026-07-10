@@ -26,6 +26,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 // ============================================================================
 // Lua Userdata Types
@@ -2462,73 +2463,89 @@ lua_State *lua_imgui_get_lua_state(void) {
     return s_imgui_lua_state;
 }
 
+// Deferred IMGUI event queue.
+// IMGUI events fire from render_widget/render_window, which run on the game's
+// RENDER thread (via the Metal present hook). Running Lua callbacks there races
+// the game's own rendering and main-thread Lua — MCM's OnClose (which emits a
+// mod event) crashed the game in ls::Scene::Cull. So enqueue events here and run
+// them on the main thread via lua_imgui_process_events().
+typedef struct {
+    ImguiHandle handle;
+    ImguiEventType event;
+    int has_arg;
+    int arg;
+} ImguiQueuedEvent;
+
+#define IMGUI_EVENT_QUEUE_MAX 512
+static ImguiQueuedEvent s_imgui_event_queue[IMGUI_EVENT_QUEUE_MAX];
+static int s_imgui_event_head = 0;
+static int s_imgui_event_tail = 0;
+static pthread_mutex_t s_imgui_event_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void lua_imgui_fire_event(ImguiHandle handle, ImguiEventType event, ...) {
-    if (!s_imgui_lua_state) {
-        LOG_IMGUI_DEBUG("No Lua state set, skipping event fire");
-        return;
+    int has_arg = 0, arg = 0;
+    if (event == IMGUI_EVENT_ON_CHANGE) {
+        va_list args;
+        va_start(args, event);
+        arg = va_arg(args, int);
+        va_end(args);
+        has_arg = 1;
     }
 
-    // Get the callback reference for this event
-    int callback_ref = imgui_object_get_event(handle, event);
+    pthread_mutex_lock(&s_imgui_event_mutex);
+    int next = (s_imgui_event_tail + 1) % IMGUI_EVENT_QUEUE_MAX;
+    if (next != s_imgui_event_head) {  // drop if full rather than block the render thread
+        s_imgui_event_queue[s_imgui_event_tail].handle = handle;
+        s_imgui_event_queue[s_imgui_event_tail].event = event;
+        s_imgui_event_queue[s_imgui_event_tail].has_arg = has_arg;
+        s_imgui_event_queue[s_imgui_event_tail].arg = arg;
+        s_imgui_event_tail = next;
+    }
+    pthread_mutex_unlock(&s_imgui_event_mutex);
+}
+
+// Run a single queued event's Lua callback (main thread only).
+static void imgui_run_event(lua_State *L, const ImguiQueuedEvent *ev) {
+    int callback_ref = imgui_object_get_event(ev->handle, ev->event);
     if (callback_ref == -1 || callback_ref == LUA_NOREF || callback_ref == LUA_REFNIL) {
-        // No callback registered for this event
         return;
     }
-
-    lua_State *L = s_imgui_lua_state;
-
-    // Get the callback function from registry
     lua_rawgeti(L, LUA_REGISTRYINDEX, callback_ref);
     if (!lua_isfunction(L, -1)) {
-        LOG_IMGUI_WARN("Event callback is not a function (ref=%d)", callback_ref);
         lua_pop(L, 1);
         return;
     }
-
-    // Push handle as first argument (userdata)
-    ImguiObject *obj = imgui_object_get(handle);
+    ImguiObject *obj = imgui_object_get(ev->handle);
     if (obj) {
-        imgui_push_handle(L, handle, obj->type);
+        imgui_push_handle(L, ev->handle, obj->type);
     } else {
         lua_pushnil(L);
     }
-
-    // Push event-specific arguments
-    int nargs = 1;  // Handle is always first arg
-    va_list args;
-    va_start(args, event);
-
-    switch (event) {
-        case IMGUI_EVENT_ON_CLICK:
-        case IMGUI_EVENT_ON_CLOSE:
-            // No additional arguments
-            break;
-
-        case IMGUI_EVENT_ON_CHANGE: {
-            // For checkbox: push the new boolean value
-            int new_value = va_arg(args, int);
-            lua_pushboolean(L, new_value);
-            nargs++;
-            break;
-        }
-
-        default:
-            break;
+    int nargs = 1;
+    if (ev->has_arg) {
+        lua_pushboolean(L, ev->arg);
+        nargs++;
     }
-
-    va_end(args);
-
-    // Call the callback with protected call
-    const char *event_name = (event == IMGUI_EVENT_ON_CLICK) ? "OnClick" :
-                             (event == IMGUI_EVENT_ON_CLOSE) ? "OnClose" :
-                             (event == IMGUI_EVENT_ON_CHANGE) ? "OnChange" : "Unknown";
-
     if (lua_pcall(L, nargs, 0, 0) != LUA_OK) {
         const char *err = lua_tostring(L, -1);
-        LOG_IMGUI_ERROR("Error in %s callback: %s", event_name, err ? err : "(unknown error)");
+        LOG_IMGUI_ERROR("Error in IMGUI event callback: %s", err ? err : "(unknown error)");
         lua_pop(L, 1);
-    } else {
-        LOG_IMGUI_DEBUG("Fired %s event for handle 0x%llx", event_name, (unsigned long long)handle);
+    }
+}
+
+// Drain queued IMGUI events on the main thread. Call from the game tick.
+void lua_imgui_process_events(lua_State *L) {
+    if (!L) return;
+    for (;;) {
+        pthread_mutex_lock(&s_imgui_event_mutex);
+        if (s_imgui_event_head == s_imgui_event_tail) {
+            pthread_mutex_unlock(&s_imgui_event_mutex);
+            break;
+        }
+        ImguiQueuedEvent ev = s_imgui_event_queue[s_imgui_event_head];
+        s_imgui_event_head = (s_imgui_event_head + 1) % IMGUI_EVENT_QUEUE_MAX;
+        pthread_mutex_unlock(&s_imgui_event_mutex);
+        imgui_run_event(L, &ev);
     }
 }
 
