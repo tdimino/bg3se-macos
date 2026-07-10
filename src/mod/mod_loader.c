@@ -213,6 +213,12 @@ int mod_find_pak(const char *mod_name, char *pak_path_out, size_t pak_path_size)
     return 0;
 }
 
+static mod_chunk_env_hook_t g_chunk_env_hook = NULL;
+
+void mod_loader_set_chunk_env_hook(mod_chunk_env_hook_t hook) {
+    g_chunk_env_hook = hook;
+}
+
 int mod_load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua_path) {
     PakFile *pak = pak_open(pak_path);
     if (!pak) return 0;
@@ -229,16 +235,28 @@ int mod_load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua_pa
 
     if (!content) return 0;
 
-    // Execute the Lua code
-    if (luaL_dostring(L, content) != LUA_OK) {
+    // Load the chunk (do NOT execute yet): we must install the per-mod _ENV on the
+    // loaded function before running it, so mods like MCM whose API lives on their
+    // ModTable (Mods.<ModTable>) can reference it as a bare global.
+    if (luaL_loadbuffer(L, content, size, lua_path) != LUA_OK) {
         const char *error = lua_tostring(L, -1);
-        LOG_LUA_ERROR("PAK load error (%s): %s", lua_path, error);
+        LOG_LUA_ERROR("PAK compile error (%s): %s", lua_path, error);
         lua_pop(L, 1);
         free(content);
         return 0;
     }
-
     free(content);
+
+    // Install per-mod _ENV on the freshly loaded chunk (no-op if none is active).
+    if (g_chunk_env_hook) g_chunk_env_hook(L);
+
+    if (lua_pcall(L, 0, LUA_MULTRET, 0) != LUA_OK) {
+        const char *error = lua_tostring(L, -1);
+        LOG_LUA_ERROR("PAK load error (%s): %s", lua_path, error);
+        lua_pop(L, 1);
+        return 0;
+    }
+
     LOG_LUA_INFO("Loaded from PAK: %s", lua_path);
     return 1;
 }

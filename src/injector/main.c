@@ -634,6 +634,74 @@ static void setup_mod_namespace(lua_State *L, const char *mod_table, const char 
     LOG_LUA_INFO("Created namespace Mods.%s", mod_table);
 }
 
+// ============================================================================
+// Per-mod Lua environment (_ENV)
+// ----------------------------------------------------------------------------
+// Windows BG3SE runs each mod's Lua chunks with _ENV = Mods.<ModTable>: reads of
+// undefined globals fall back to the real _G (Ext, Osi, string, ...), while
+// writes to new globals stay mod-local (they land in Mods.<ModTable>). Mods like
+// MCM depend on this: they publish their API via `modTable.MCM = ...` and then
+// reference it as a bare global `MCM` from closures. Without a per-mod _ENV those
+// bare references resolve against the shared _G and are nil, which aborts MCM's
+// client init (InitService.lua) and leaves an empty config window.
+//
+// g_mod_env_ref holds a registry ref to the current mod's environment table
+// (== Mods.<ModTable>, given an { __index = _G } metatable). It is installed onto
+// each freshly loaded mod chunk via mod_env_apply() before the chunk runs.
+static int g_mod_env_ref = LUA_NOREF;
+
+// Make Mods.<mod_table> the active per-mod _ENV for subsequently loaded chunks.
+// Ensures the table exists, carries an { __index = _G } metatable, and has its
+// ModuleUUID seeded mod-locally. Pass mod_table == NULL to clear.
+static void mod_env_set(lua_State *L, const char *mod_table, const char *uuid) {
+    if (g_mod_env_ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, g_mod_env_ref);
+        g_mod_env_ref = LUA_NOREF;
+    }
+    if (!mod_table || !mod_table[0]) return;
+
+    lua_getglobal(L, "Mods");                 // [Mods]
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+
+    lua_getfield(L, -1, mod_table);           // [Mods, E]
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);                        // [Mods]
+        lua_newtable(L);                      // [Mods, E]
+        lua_pushvalue(L, -1);                 // [Mods, E, E]
+        lua_setfield(L, -3, mod_table);       // Mods[mod_table] = E ; [Mods, E]
+    }
+
+    // Seed ModuleUUID mod-locally so runtime reads resolve to the right mod.
+    if (uuid && uuid[0]) {
+        lua_pushstring(L, uuid);
+        lua_setfield(L, -2, "ModuleUUID");
+    }
+
+    // Ensure { __index = _G } metatable (reads fall back to real globals).
+    if (lua_getmetatable(L, -1)) {
+        lua_pop(L, 1);                        // already has one; leave it
+    } else {
+        lua_newtable(L);                      // [Mods, E, mt]
+        lua_pushglobaltable(L);               // [Mods, E, mt, _G]
+        lua_setfield(L, -2, "__index");       // mt.__index = _G
+        lua_setmetatable(L, -2);              // setmetatable(E, mt) ; [Mods, E]
+    }
+
+    lua_pushvalue(L, -1);                     // [Mods, E, E]
+    g_mod_env_ref = luaL_ref(L, LUA_REGISTRYINDEX);  // pops E ; [Mods, E]
+    lua_pop(L, 2);                            // [] pop E, Mods
+}
+
+// Install the active per-mod _ENV (if any) on the chunk currently on top of the
+// stack. Lua 5.4: _ENV is upvalue #1 of a main chunk.
+static void mod_env_apply(lua_State *L) {
+    if (g_mod_env_ref == LUA_NOREF) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, g_mod_env_ref);  // [func, E]
+    if (lua_setupvalue(L, -2, 1) == NULL) {
+        lua_pop(L, 1);  // chunk had no _ENV upvalue; discard E
+    }
+}
+
 /**
  * Try to find and load a Lua file from various locations
  * Returns 1 if found and loaded successfully, 0 otherwise
@@ -667,6 +735,9 @@ static int try_load_lua_file(lua_State *L, const char *full_path) {
         lua_pop(L, 1);
         return 0;
     }
+
+    // Install the per-mod _ENV (Mods.<ModTable>) before running the chunk.
+    mod_env_apply(L);
 
     // Execute the loaded chunk
     if (lua_pcall(L, 0, LUA_MULTRET, 0) != LUA_OK) {
@@ -2085,6 +2156,9 @@ static void load_mod_scripts(lua_State *L) {
 
     LOG_LUA_INFO("Loading %d detected SE mod(s)...", se_count);
 
+    // Route mod chunks loaded from PAK through the per-mod _ENV installer too.
+    mod_loader_set_chunk_env_hook(mod_env_apply);
+
     // Phase 1: Load all server bootstraps (in SERVER context)
     LOG_LUA_INFO("=== Loading Server Bootstraps ===");
     lua_context_set(LUA_CONTEXT_SERVER);
@@ -2098,6 +2172,8 @@ static void load_mod_scripts(lua_State *L) {
         if (mod_table) {
             // Set up Mods.<ModTable> namespace (seeded with ModuleUUID) before scripts
             setup_mod_namespace(L, mod_table, mod_uuid);
+            // Make Mods.<ModTable> the active _ENV for this mod's chunks.
+            mod_env_set(L, mod_table, mod_uuid);
             free(mod_table);
         }
 
@@ -2122,6 +2198,15 @@ static void load_mod_scripts(lua_State *L) {
 
         // Set ModuleUUID for this mod before its client bootstrap runs.
         const char *mod_uuid = mod_get_se_uuid(i);
+
+        // Re-activate this mod's per-mod _ENV for the client phase (the server
+        // phase left the ref pointing at the last-loaded mod).
+        char *mod_table = get_mod_table_name(mod_name);
+        if (mod_table) {
+            mod_env_set(L, mod_table, mod_uuid);
+            free(mod_table);
+        }
+
         lua_pushstring(L, (mod_uuid && mod_uuid[0]) ? mod_uuid : "");
         lua_setglobal(L, "ModuleUUID");
 

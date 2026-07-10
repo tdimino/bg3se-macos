@@ -46,6 +46,9 @@ typedef struct {
     ImguiObjectType type;
 } ImguiUserdata;
 
+// Nil-tolerant string argument extraction (defined below, used by newindex).
+static const char *imgui_str_arg(lua_State *L, int idx, const char *fn);
+
 // Helper to get metatable name for an object type
 static const char* imgui_get_metatable_name(ImguiObjectType type) {
     switch (type) {
@@ -558,7 +561,9 @@ static int imgui_window_index(lua_State *L) {
         return 1;
     }
 
-    // Unknown property
+    // Unknown property/method — log it so we can see what mods expect (a mod that
+    // then calls the nil as a method throws; this reveals the missing method).
+    LOG_IMGUI_INFO("IMGUI window: unknown key '%s' (returning nil)", key);
     lua_pushnil(L);
     return 1;
 }
@@ -609,7 +614,7 @@ static int imgui_window_newindex(lua_State *L) {
         return 0;
     }
     if (strcmp(key, "Label") == 0) {
-        const char *label = luaL_checkstring(L, 3);
+        const char *label = imgui_str_arg(L, 3, "Label=");
         strncpy(obj->styled.label, label, IMGUI_LABEL_MAX - 1);
         obj->styled.label[IMGUI_LABEL_MAX - 1] = '\0';
         return 0;
@@ -680,6 +685,26 @@ static int imgui_widget_tostring(lua_State *L) {
  * Helper for simple widget creation (reduces ~50% of widget creation boilerplate).
  * Returns handle on success, IMGUI_INVALID_HANDLE on failure (error already set).
  */
+// Nil-tolerant label/string argument. MCM and other mods frequently source
+// widget labels from localization handles that resolve to nil (missing loca) or
+// pass nil where a string is expected. luaL_checkstring would throw on those,
+// and MCM wraps its whole UI build in xpcall — so a single nil label silently
+// aborts the entire window build, leaving an empty frame. Treat nil/absent as ""
+// instead, and log the first several occurrences (with the calling function) so
+// we can see exactly which widget call sites are affected.
+static const char *imgui_str_arg(lua_State *L, int idx, const char *fn) {
+    if (lua_isnoneornil(L, idx)) {
+        static int warned = 0;
+        if (warned < 60) {
+            LOG_IMGUI_INFO("IMGUI %s: nil/absent string arg #%d -> \"\"", fn, idx);
+            warned++;
+        }
+        return "";
+    }
+    const char *s = lua_tostring(L, idx);  // also converts numbers
+    return s ? s : "";
+}
+
 static ImguiHandle imgui_create_simple_widget(lua_State *L, ImguiObjectType type, const char *type_name) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
     const char *label = lua_isstring(L, 2) ? lua_tostring(L, 2) : "";
@@ -775,7 +800,7 @@ static int imgui_window_add_checkbox(lua_State *L) {
  */
 static int imgui_window_add_inputtext(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     const char *default_value = luaL_optstring(L, 3, "");
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_INPUT_TEXT, label);
@@ -800,7 +825,7 @@ static int imgui_window_add_inputtext(lua_State *L) {
  */
 static int imgui_window_add_combo(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     luaL_checktype(L, 3, LUA_TTABLE);
     int selected = (int)luaL_optinteger(L, 4, 1) - 1;  // Lua 1-indexed to C 0-indexed
 
@@ -840,7 +865,7 @@ static int imgui_window_add_combo(lua_State *L) {
  */
 static int imgui_window_add_slider(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     float value = (float)luaL_optnumber(L, 3, 0.0);
     float min_val = (float)luaL_optnumber(L, 4, 0.0);
     float max_val = (float)luaL_optnumber(L, 5, 1.0);
@@ -867,7 +892,7 @@ static int imgui_window_add_slider(lua_State *L) {
  */
 static int imgui_window_add_sliderint(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     int value = (int)luaL_optinteger(L, 3, 0);
     int min_val = (int)luaL_optinteger(L, 4, 0);
     int max_val = (int)luaL_optinteger(L, 5, 100);
@@ -894,7 +919,7 @@ static int imgui_window_add_sliderint(lua_State *L) {
  */
 static int imgui_window_add_collapsingheader(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     bool default_open = lua_toboolean(L, 3);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_COLLAPSING_HEADER, label);
@@ -945,7 +970,7 @@ static int imgui_window_add_progressbar(lua_State *L) {
  */
 static int imgui_window_add_radiobutton(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     bool active = lua_toboolean(L, 3);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_RADIO_BUTTON, label);
@@ -967,7 +992,7 @@ static int imgui_window_add_radiobutton(lua_State *L) {
  */
 static int imgui_window_add_coloredit(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     float r = (float)luaL_optnumber(L, 3, 1.0);
     float g = (float)luaL_optnumber(L, 4, 1.0);
     float b = (float)luaL_optnumber(L, 5, 1.0);
@@ -992,7 +1017,7 @@ static int imgui_window_add_coloredit(lua_State *L) {
  */
 static int imgui_window_add_colorpicker(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     float r = (float)luaL_optnumber(L, 3, 1.0);
     float g = (float)luaL_optnumber(L, 4, 1.0);
     float b = (float)luaL_optnumber(L, 5, 1.0);
@@ -1017,7 +1042,7 @@ static int imgui_window_add_colorpicker(lua_State *L) {
  */
 static int imgui_window_add_drag(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     float value = (float)luaL_optnumber(L, 3, 0.0);
     float min_val = (float)luaL_optnumber(L, 4, 0.0);
     float max_val = (float)luaL_optnumber(L, 5, 1.0);
@@ -1044,7 +1069,7 @@ static int imgui_window_add_drag(lua_State *L) {
  */
 static int imgui_window_add_dragint(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     int value = (int)luaL_optinteger(L, 3, 0);
     int min_val = (int)luaL_optinteger(L, 4, 0);
     int max_val = (int)luaL_optinteger(L, 5, 100);
@@ -1071,7 +1096,7 @@ static int imgui_window_add_dragint(lua_State *L) {
  */
 static int imgui_window_add_inputint(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     int value = (int)luaL_optinteger(L, 3, 0);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_INPUT_INT, label);
@@ -1094,7 +1119,7 @@ static int imgui_window_add_inputint(lua_State *L) {
  */
 static int imgui_window_add_tree(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     bool default_open = lua_toboolean(L, 3);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_TREE, label);
@@ -1119,7 +1144,7 @@ static int imgui_window_add_tree(lua_State *L) {
  */
 static int imgui_window_add_selectable(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     bool selected = lua_toboolean(L, 3);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_SELECTABLE, label);
@@ -1141,7 +1166,7 @@ static int imgui_window_add_selectable(lua_State *L) {
  */
 static int imgui_window_add_table(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     int columns = (int)luaL_checkinteger(L, 3);
     uint32_t flags = (uint32_t)luaL_optinteger(L, 4, 0);
 
@@ -1231,7 +1256,7 @@ static int imgui_window_add_icon(lua_State *L) {
  */
 static int imgui_window_add_tabbar(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     uint32_t flags = (uint32_t)luaL_optinteger(L, 3, 0);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_TAB_BAR, label);
@@ -1253,7 +1278,7 @@ static int imgui_window_add_tabbar(lua_State *L) {
  */
 static int imgui_window_add_tabitem(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     uint32_t flags = (uint32_t)luaL_optinteger(L, 3, 0);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_TAB_ITEM, label);
@@ -1275,7 +1300,7 @@ static int imgui_window_add_tabitem(lua_State *L) {
  */
 static int imgui_window_add_menuitem(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     const char *shortcut = luaL_optstring(L, 3, NULL);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_MENU_ITEM, label);
@@ -1301,7 +1326,7 @@ static int imgui_window_add_menuitem(lua_State *L) {
  */
 static int imgui_window_add_popup(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     uint32_t flags = (uint32_t)luaL_optinteger(L, 3, 0);
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_POPUP, label);
@@ -1324,7 +1349,7 @@ static int imgui_window_add_popup(lua_State *L) {
  */
 static int imgui_window_add_childwindow(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
-    const char *label = luaL_checkstring(L, 2);
+    const char *label = imgui_str_arg(L, 2, __func__);
     float width = (float)luaL_optnumber(L, 3, 0.0);
     float height = (float)luaL_optnumber(L, 4, 0.0);
     uint32_t flags = (uint32_t)luaL_optinteger(L, 5, 0);
@@ -1741,6 +1766,7 @@ static int imgui_widget_index(lua_State *L) {
             break;
     }
 
+    LOG_IMGUI_INFO("IMGUI widget: unknown key '%s' (returning nil)", key);
     lua_pushnil(L);
     return 1;
 }
@@ -1767,7 +1793,7 @@ static int imgui_widget_newindex(lua_State *L) {
         return 0;
     }
     if (strcmp(key, "Label") == 0) {
-        const char *label = luaL_checkstring(L, 3);
+        const char *label = imgui_str_arg(L, 3, "Label=");
         strncpy(obj->styled.label, label, IMGUI_LABEL_MAX - 1);
         obj->styled.label[IMGUI_LABEL_MAX - 1] = '\0';
         return 0;
