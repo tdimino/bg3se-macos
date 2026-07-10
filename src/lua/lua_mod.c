@@ -279,11 +279,24 @@ static void push_mod_table(lua_State *L, const ModUuidEntry *e) {
     // ModVersion, decoded from the packed int64 (Norbyte layout):
     // Major:7 (>>55) Minor:8 (>>47) Revision:16 (>>31) Build:31 (low).
     uint64_t v = e->version64[0] ? strtoull(e->version64, NULL, 10) : 0;
+    lua_Integer major = (lua_Integer)((v >> 55) & 0x7f);
+    lua_Integer minor = (lua_Integer)((v >> 47) & 0xff);
+    lua_Integer revision = (lua_Integer)((v >> 31) & 0xffff);
+    lua_Integer build = (lua_Integer)(v & 0x7fffffff);
     lua_newtable(L);  // ModVersion
-    lua_pushinteger(L, (lua_Integer)((v >> 55) & 0x7f));   lua_setfield(L, -2, "Major");
-    lua_pushinteger(L, (lua_Integer)((v >> 47) & 0xff));   lua_setfield(L, -2, "Minor");
-    lua_pushinteger(L, (lua_Integer)((v >> 31) & 0xffff)); lua_setfield(L, -2, "Revision");
-    lua_pushinteger(L, (lua_Integer)(v & 0x7fffffff));     lua_setfield(L, -2, "Build");
+    // Array form ModVersion[1..4] — this is what mods (MCM, CommunityLibrary)
+    // actually read (e.g. string.format("%d.%d.%d.%d", ModVersion[1], ...)).
+    // A missing [1] made string.format throw and aborted MCM's CreateModMenu,
+    // which is why UIReady never fired (window auto-opened, content stayed empty).
+    lua_pushinteger(L, major);    lua_rawseti(L, -2, 1);
+    lua_pushinteger(L, minor);    lua_rawseti(L, -2, 2);
+    lua_pushinteger(L, revision); lua_rawseti(L, -2, 3);
+    lua_pushinteger(L, build);    lua_rawseti(L, -2, 4);
+    // Named fields too, for consumers that use them.
+    lua_pushinteger(L, major);    lua_setfield(L, -2, "Major");
+    lua_pushinteger(L, minor);    lua_setfield(L, -2, "Minor");
+    lua_pushinteger(L, revision); lua_setfield(L, -2, "Revision");
+    lua_pushinteger(L, build);    lua_setfield(L, -2, "Build");
     lua_setfield(L, -2, "ModVersion");
 
     lua_newtable(L);  lua_setfield(L, -2, "Dependencies");
