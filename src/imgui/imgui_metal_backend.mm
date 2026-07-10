@@ -143,6 +143,49 @@ static void remove_layer_hook(void) {
 }
 
 // ============================================================================
+// Visibility / Input Predicates
+//
+// Mod-created windows (e.g. MCM) set window.Visible = true (obj->styled.visible)
+// but do NOT toggle the F11 debug overlay (s_state.visible). To make those
+// windows render and be interactive on their own, we OR the overlay state with
+// "is any mod window visible" at the render and input gates. The F11 overlay
+// contract is preserved exactly: when no mod window is up, every gate collapses
+// back to the original overlay-only condition.
+// ============================================================================
+
+// True if any Lua/mod-created window is currently visible.
+static bool imgui_metal_has_visible_window(void) {
+    int n = 0;
+    ImguiHandle *w = imgui_get_all_windows(&n);
+    if (!w) return false;
+    for (int i = 0; i < n; i++) {
+        ImguiObject *o = imgui_object_get(w[i]);
+        if (o && o->type == IMGUI_OBJ_WINDOW && o->styled.visible) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Feed gate: ImGui has something on screen that should receive input — the F11
+// overlay or any visible mod window. Requires the backend to be READY.
+// (Replaces the old `!s_state.visible || state != READY` early-return.)
+static bool imgui_input_target_present(void) {
+    return s_state.state == IMGUI_METAL_STATE_READY &&
+           (s_state.visible || imgui_metal_has_visible_window());
+}
+
+// Capture gate: ImGui is allowed to CONSUME the input it wants. True when the
+// overlay is in capture mode OR a mod window is visible. Consumption is still
+// ultimately governed by io.WantCapture* at the call site, so game input passes
+// through whenever the cursor/focus is not over an ImGui widget. When neither
+// the overlay is capturing nor a mod window is up, this is false and nothing is
+// ever taken from the game.
+static bool imgui_input_capture_active(void) {
+    return s_state.capturing_input || imgui_metal_has_visible_window();
+}
+
+// ============================================================================
 // Drawable Present Hook
 // ============================================================================
 
@@ -150,8 +193,10 @@ static void remove_layer_hook(void) {
 // This allows us to render ImGui AFTER the game finishes but BEFORE the frame is shown.
 
 static void hooked_present(id self, SEL _cmd) {
-    // Render ImGui BEFORE presenting (so it appears on top of game content)
-    if (s_state.state == IMGUI_METAL_STATE_READY && s_state.visible) {
+    // Render ImGui BEFORE presenting (so it appears on top of game content).
+    // Render when the F11 overlay is up OR any mod window is visible (MCM etc.).
+    if (s_state.state == IMGUI_METAL_STATE_READY &&
+        (s_state.visible || imgui_metal_has_visible_window())) {
         id<CAMetalDrawable> drawable = (id<CAMetalDrawable>)self;
         imgui_metal_render_frame(drawable);
 
@@ -1113,38 +1158,42 @@ static void imgui_metal_render_frame(id<CAMetalDrawable> drawable) {
             }
             debug_log_counter++;
 
-            // Also show built-in debug window for testing
-            ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowBgAlpha(1.0f);  // Fully opaque background
+            // Built-in debug/test window: only shown with the F11 debug overlay,
+            // NOT when only a mod window (MCM) is visible. The mod-window loop
+            // above renders independently (render_window skips non-visible ones).
+            if (s_state.visible) {
+                ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowBgAlpha(1.0f);  // Fully opaque background
 
-            if (ImGui::Begin("BG3SE Debug", nullptr, ImGuiWindowFlags_NoCollapse)) {
-                ImGui::TextColored(ImVec4(1,1,0,1), "=== IMGUI OVERLAY TEST ===");
-                ImGui::Text("Frame: %llu", s_state.frame_count);
-                ImGui::Separator();
-                ImGui::TextColored(ImVec4(0,1,0,1), "If you can see this, ImGui is working!");
-                ImGui::Text("Device: %s", [[s_state.device name] UTF8String]);
+                if (ImGui::Begin("BG3SE Debug", nullptr, ImGuiWindowFlags_NoCollapse)) {
+                    ImGui::TextColored(ImVec4(1,1,0,1), "=== IMGUI OVERLAY TEST ===");
+                    ImGui::Text("Frame: %llu", s_state.frame_count);
+                    ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0,1,0,1), "If you can see this, ImGui is working!");
+                    ImGui::Text("Device: %s", [[s_state.device name] UTF8String]);
 
-                // Debug: Show mouse position and window bounds
-                ImGuiIO& dbgIo = ImGui::GetIO();
-                ImGui::Text("Mouse: (%.0f, %.0f)", dbgIo.MousePos.x, dbgIo.MousePos.y);
-                ImGui::Text("WantCapture: %d  MouseDown: %d", dbgIo.WantCaptureMouse, dbgIo.MouseDown[0]);
-                ImGui::Text("DisplaySize: %.0fx%.0f", dbgIo.DisplaySize.x, dbgIo.DisplaySize.y);
+                    // Debug: Show mouse position and window bounds
+                    ImGuiIO& dbgIo = ImGui::GetIO();
+                    ImGui::Text("Mouse: (%.0f, %.0f)", dbgIo.MousePos.x, dbgIo.MousePos.y);
+                    ImGui::Text("WantCapture: %d  MouseDown: %d", dbgIo.WantCaptureMouse, dbgIo.MouseDown[0]);
+                    ImGui::Text("DisplaySize: %.0fx%.0f", dbgIo.DisplaySize.x, dbgIo.DisplaySize.y);
 
-                // Show Lua window count
-                ImGui::Separator();
-                ImGui::Text("Lua Windows: %d", window_count);
+                    // Show Lua window count
+                    ImGui::Separator();
+                    ImGui::Text("Lua Windows: %d", window_count);
 
-                // Test button
-                ImGui::Separator();
-                if (ImGui::Button("Test Button")) {
-                    LOG_IMGUI_INFO("Button clicked!");
+                    // Test button
+                    ImGui::Separator();
+                    if (ImGui::Button("Test Button")) {
+                        LOG_IMGUI_INFO("Button clicked!");
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::TextColored(ImVec4(0,1,0,1), "HOVERING");
+                    }
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::TextColored(ImVec4(0,1,0,1), "HOVERING");
-                }
+                ImGui::End();
             }
-            ImGui::End();
 
             // End frame and render
             ImGui::Render();
@@ -1258,7 +1307,10 @@ void imgui_metal_set_input_capture(bool capture) {
 }
 
 bool imgui_metal_is_capturing_input(void) {
-    return s_state.capturing_input && s_state.visible;
+    // True when the overlay is capturing OR a mod window is visible (so mod
+    // text fields receive character input). Preserves overlay semantics when no
+    // mod window is up.
+    return imgui_input_target_present() && imgui_input_capture_active();
 }
 
 void imgui_metal_get_viewport_size(float *width, float *height) {
@@ -1415,11 +1467,11 @@ bool imgui_metal_process_key(uint16_t keycode, bool down, uint32_t modifiers) {
     }
 
     // Other keys only processed when visible
-    if (!s_state.visible || s_state.state != IMGUI_METAL_STATE_READY) {
+    if (!imgui_input_target_present()) {
         return false;
     }
 
-    if (!s_state.capturing_input) {
+    if (!imgui_input_capture_active()) {
         return false;
     }
 
@@ -1486,7 +1538,7 @@ static bool convert_screen_to_window(float screenX, float screenY, float *outX, 
 }
 
 bool imgui_metal_process_mouse(float x, float y, int button, bool down) {
-    if (!s_state.visible || s_state.state != IMGUI_METAL_STATE_READY) {
+    if (!imgui_input_target_present()) {
         return false;
     }
 
@@ -1504,7 +1556,7 @@ bool imgui_metal_process_mouse(float x, float y, int button, bool down) {
             down ? "DOWN" : "UP", button, windowX, windowY, io.WantCaptureMouse);
     }
 
-    return s_state.capturing_input && io.WantCaptureMouse;
+    return imgui_input_capture_active() && io.WantCaptureMouse;
 }
 
 void imgui_metal_process_mouse_move(float x, float y) {
@@ -1536,7 +1588,7 @@ void imgui_metal_process_mouse_move(float x, float y) {
 
 // Direct input functions - coordinates already in ImGui space (from NSView swizzling)
 bool imgui_metal_process_mouse_direct(float x, float y, int button, bool down) {
-    if (!s_state.visible || s_state.state != IMGUI_METAL_STATE_READY) {
+    if (!imgui_input_target_present()) {
         return false;
     }
 
@@ -1549,7 +1601,7 @@ bool imgui_metal_process_mouse_direct(float x, float y, int button, bool down) {
             down ? "DOWN" : "UP", button, x, y, io.WantCaptureMouse);
     }
 
-    return s_state.capturing_input && io.WantCaptureMouse;
+    return imgui_input_capture_active() && io.WantCaptureMouse;
 }
 
 void imgui_metal_process_mouse_move_direct(float x, float y) {
@@ -1562,7 +1614,7 @@ void imgui_metal_process_mouse_move_direct(float x, float y) {
 }
 
 void imgui_metal_process_scroll(float dx, float dy) {
-    if (!s_state.visible || s_state.state != IMGUI_METAL_STATE_READY) {
+    if (!imgui_input_target_present()) {
         return;
     }
 
@@ -1571,8 +1623,7 @@ void imgui_metal_process_scroll(float dx, float dy) {
 }
 
 void imgui_metal_process_char(unsigned int c) {
-    if (!s_state.visible || s_state.state != IMGUI_METAL_STATE_READY ||
-        !s_state.capturing_input) {
+    if (!imgui_input_target_present() || !imgui_input_capture_active()) {
         return;
     }
 

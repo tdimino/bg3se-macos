@@ -1872,6 +1872,18 @@ static int imgui_widget_newindex(lua_State *L) {
 static int lua_imgui_new_window(lua_State *L) {
     const char *label = luaL_checkstring(L, 1);
 
+    // Bootstrap the Metal compositor on first window creation. Mods such as MCM
+    // create windows and set .Visible = true but never call Ext.IMGUI.Show(), so
+    // without this the backend would never initialize and no mod window would
+    // ever render. imgui_metal_init() is idempotent (guards on UNINITIALIZED)
+    // and safe to call once the game is up. We deliberately do NOT force the
+    // overlay visible here — the present hook renders any window whose .Visible
+    // is set once the backend reaches READY.
+    if (imgui_metal_get_state() == IMGUI_METAL_STATE_UNINITIALIZED) {
+        LOG_IMGUI_INFO("Bootstrapping ImGui Metal backend on window creation");
+        imgui_metal_init();
+    }
+
     // Initialize object system if needed
     static bool objects_initialized = false;
     if (!objects_initialized) {
