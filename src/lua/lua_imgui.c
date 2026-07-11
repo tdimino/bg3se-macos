@@ -828,7 +828,10 @@ static int imgui_window_add_inputtext(lua_State *L) {
 static int imgui_window_add_combo(lua_State *L) {
     ImguiUserdata *ud = imgui_to_userdata(L, 1);
     const char *label = imgui_str_arg(L, 2, __func__);
-    luaL_checktype(L, 3, LUA_TTABLE);
+    // Options table is OPTIONAL: MCM calls AddCombo(label) and populates the
+    // options later via the .Options property. Requiring a table here threw and
+    // aborted MCM's profile header (and thus keybinding registration).
+    int has_options = (lua_type(L, 3) == LUA_TTABLE);
     int selected = (int)luaL_optinteger(L, 4, 1) - 1;  // Lua 1-indexed to C 0-indexed
 
     ImguiHandle child = imgui_object_create_child(ud->handle, IMGUI_OBJ_COMBO, label);
@@ -839,7 +842,7 @@ static int imgui_window_add_combo(lua_State *L) {
     ImguiObject *obj = imgui_object_get(child);
     if (obj) {
         // Count options
-        int count = (int)lua_rawlen(L, 3);
+        int count = has_options ? (int)lua_rawlen(L, 3) : 0;
         if (count > 0) {
             obj->data.combo.options = (char**)malloc(sizeof(char*) * count);
             if (!obj->data.combo.options) {

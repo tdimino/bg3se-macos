@@ -338,15 +338,28 @@ bool input_init(void) {
                             (1 << kCGEventRightMouseDragged) |
                             (1 << kCGEventScrollWheel);
 
-    // Note: Using kCGEventTapOptionListenOnly - doesn't require Accessibility permissions
-    // but means we can't consume events (F10 will also go to game)
-    // TODO: Consider using a different hotkey that doesn't conflict with game
-    s_event_tap = CGEventTapCreate(kCGSessionEventTap,
+    // Tap at the HID level (lowest CGEvent tap point) rather than the session
+    // level: in-game, BG3 grabs regular keyboard input before session-level taps
+    // see it, so a session tap only ever receives modifier (FlagsChanged) events.
+    // A HID head-insert tap sees key events before the game consumes them, so mod
+    // keybindings (MCM etc.) can work on normal keys. Still listen-only (we never
+    // consume, so the game keeps receiving input too).
+    s_event_tap = CGEventTapCreate(kCGHIDEventTap,
                                    kCGHeadInsertEventTap,
                                    kCGEventTapOptionListenOnly,
                                    eventMask,
                                    event_tap_callback,
                                    NULL);
+    if (!s_event_tap) {
+        // Fall back to a session-level tap if HID-level isn't permitted.
+        LOG_INPUT_INFO("HID-level tap unavailable; falling back to session tap");
+        s_event_tap = CGEventTapCreate(kCGSessionEventTap,
+                                       kCGHeadInsertEventTap,
+                                       kCGEventTapOptionListenOnly,
+                                       eventMask,
+                                       event_tap_callback,
+                                       NULL);
+    }
 
     if (!s_event_tap) {
         LOG_INPUT_ERROR("Failed to create CGEventTap. Check Accessibility permissions.");

@@ -456,6 +456,11 @@ ImguiHandle imgui_object_create_child(ImguiHandle parent, ImguiObjectType type, 
         child_obj->parent = parent;
         imgui_object_add_child(parent, child);
     }
+    // TREE DIAG (temporary): trace MCM's CreateModMenu build to find where it aborts.
+    LOG_IMGUI_INFO("TREE: %s '%s' <- %s '%s'",
+                   imgui_object_type_name(parent_obj->type),
+                   parent_obj->styled.label[0] ? parent_obj->styled.label : "?",
+                   imgui_object_type_name(type), label ? label : "");
     pthread_mutex_unlock(&g_pool_mutex);
 
     return child;
