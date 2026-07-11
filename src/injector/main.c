@@ -57,6 +57,7 @@ extern "C" {
 #include "osiris_functions.h"
 #include "custom_functions.h"
 #include "pattern_scan.h"
+#include "safe_memory.h"
 
 // PAK file reading
 #include "pak_reader.h"
@@ -1376,6 +1377,178 @@ static int lua_entity_get_discovered_players(lua_State *L) {
 // ============================================================================
 
 /**
+ * Resolve an Osiris COsiStringHandle to its C string, replicating
+ * COsiStringTable::GetStr (libOsiris arm64 @ 0x39c30) read-only:
+ *   index = handle & 0x1FFFFF;  (0 => empty string)
+ *   table = *(base+0x96cb8);  str = *( *( *(table) + 0x28 ) + index*32 )
+ * Fills buf; returns 1 on success (including the empty-string case).
+ */
+static int osi_resolve_string_handle(uint64_t handle, char *buf, size_t bufsz) {
+    if (bufsz == 0) return 0;
+    uint64_t index = handle & 0x1FFFFF;
+    if (index == 0) { buf[0] = '\0'; return 1; }   /* handle 0 => "" */
+    if (!g_pOsiFunctionMan) return 0;
+    uintptr_t base = (uintptr_t)g_pOsiFunctionMan - 0x9f348;
+    void *tableObj = NULL, *sub = NULL, *arr = NULL, *strPtr = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)(base + 0x96cb8), &tableObj) || !tableObj) return 0;
+    if (!safe_memory_read_pointer((mach_vm_address_t)tableObj, &sub) || !sub) return 0;
+    if (!safe_memory_read_pointer((mach_vm_address_t)sub + 0x28, &arr) || !arr) return 0;
+    if (!safe_memory_read_pointer((mach_vm_address_t)arr + (mach_vm_address_t)index * 32, &strPtr) || !strPtr) return 0;
+    return safe_memory_read_string((mach_vm_address_t)strPtr, buf, bufsz) ? 1 : 0;
+}
+
+/**
+ * Push one Osiris COsiTypedValue (16 bytes) as a Lua value.
+ * Layout (RE'd from libOsiris Compare/COsiTypedValueBase ctor): value @ tv+0x00
+ * (8 bytes), typeId (u16) @ tv+0x08. INTEGER/INTEGER64 store the integer inline;
+ * REAL stores a float; STRING/GUIDSTRING and custom GUID subtypes store a
+ * COsiStringHandle (resolved via the string table), NOT a raw char*.
+ */
+static void osi_push_typed_value(lua_State *L, mach_vm_address_t tv) {
+    uint16_t typeId = 0;
+    safe_memory_read(tv + 0x08, &typeId, sizeof(typeId));
+    if (typeId == OSI_TYPE_INTEGER) {
+        uint32_t v = 0; safe_memory_read_u32(tv, &v);
+        lua_pushinteger(L, (lua_Integer)(int32_t)v);
+    } else if (typeId == OSI_TYPE_INTEGER64) {
+        uint64_t v = 0; safe_memory_read_u64(tv, &v);
+        lua_pushinteger(L, (lua_Integer)(int64_t)v);
+    } else if (typeId == OSI_TYPE_REAL) {
+        uint32_t v = 0; safe_memory_read_u32(tv, &v);
+        float f; memcpy(&f, &v, sizeof(f));
+        lua_pushnumber(L, (lua_Number)f);
+    } else {
+        uint64_t handle = 0;
+        char buf[256];
+        safe_memory_read_u64(tv, &handle);
+        if (osi_resolve_string_handle(handle, buf, sizeof(buf))) {
+            lua_pushstring(L, buf);
+        } else {
+            lua_pushstring(L, "");
+        }
+    }
+}
+
+/**
+ * Read all rows of an Osiris database directly from its CReteDBase Facts list,
+ * the way Windows BG3SE does. Databases have OsiFunctionId==0 and cannot be
+ * dispatched via InternalQuery, so we resolve def -> node -> CReteDBase and walk
+ * its std::list<CTuple>. `def` is the COsiFunctionData* from the name index
+ * (osi_db_lookup). Filter args are on the Lua stack at 2..N (nil = wildcard,
+ * matching Osiris column order). Pushes a result table (array of row tables).
+ *
+ * Chain (RE'd from libOsiris — see ghidra/offsets/OSIRIS_DATABASES.md):
+ *   nodeId = *(def+0x20); factory = *(base+0x9f338);
+ *   node   = *( *(factory+0x08) + (nodeId-1)*8 ); dbId = *(node+0x18);
+ *   dbmgr  = *(base+0x9f5b0);  db = *( *(dbmgr+0x08) + (dbId-1)*8 ) (CReteDBase);
+ *   colCount = *(db+0x40); facts list @ db+0x10 sentinel, begin=*(db+0x18),
+ *   node.next @ +0x08, CTuple @ node+0x10, CTuple.values = *(CTuple+0x00),
+ *   column i COsiTypedValue @ values + i*0x10.
+ */
+static int osi_db_read_facts(lua_State *L, void *def) {
+    int nfilter = lua_gettop(L) - 1;      /* filter args at stack 2..top */
+    if (nfilter < 0) nfilter = 0;
+
+    lua_newtable(L);                       /* result table (always returned) */
+    int resultIdx = lua_gettop(L);
+    int rowCount = 0;
+
+    if (!def || !g_pOsiFunctionMan) return 1;
+    uintptr_t base = (uintptr_t)g_pOsiFunctionMan - 0x9f348;
+
+    void *factory = NULL, *dbmgr = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)(base + 0x9f338), &factory) || !factory) return 1;
+    if (!safe_memory_read_pointer((mach_vm_address_t)(base + 0x9f5b0), &dbmgr) || !dbmgr) return 1;
+
+    uint32_t nodeId = 0;
+    if (!safe_memory_read_u32((mach_vm_address_t)def + 0x20, &nodeId) || nodeId == 0) return 1;
+
+    /* def -> node via node factory vector (id-1 index; validate node id). */
+    void *fbegin = NULL, *node = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)factory + 0x08, &fbegin) || !fbegin) return 1;
+    if (!safe_memory_read_pointer((mach_vm_address_t)fbegin + (uintptr_t)(nodeId - 1) * 8, &node) || !node) return 1;
+    uint32_t nodeChk = 0;
+    safe_memory_read_u32((mach_vm_address_t)node + 0x08, &nodeChk);
+    if (nodeChk != nodeId) {
+        LOG_OSIRIS_DEBUG("Osi DB: node id mismatch (%u != %u)", nodeChk, nodeId);
+        return 1;
+    }
+
+    uint32_t dbId = 0;
+    if (!safe_memory_read_u32((mach_vm_address_t)node + 0x18, &dbId) || dbId == 0) return 1;
+
+    /* node -> CReteDBase via databases vector (id-1 index; validate db id). */
+    void *dbegin = NULL, *db = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)dbmgr + 0x08, &dbegin) || !dbegin) return 1;
+    if (!safe_memory_read_pointer((mach_vm_address_t)dbegin + (uintptr_t)(dbId - 1) * 8, &db) || !db) return 1;
+    uint32_t dbChk = 0;
+    safe_memory_read_u32((mach_vm_address_t)db + 0x00, &dbChk);
+    if (dbChk != dbId) {
+        LOG_OSIRIS_DEBUG("Osi DB: database id mismatch (%u != %u)", dbChk, dbId);
+        return 1;
+    }
+
+    uint8_t colCount = 0;
+    safe_memory_read_u8((mach_vm_address_t)db + 0x40, &colCount);
+    if (colCount == 0 || colCount > 32) {
+        LOG_OSIRIS_DEBUG("Osi DB: implausible column count %u", colCount);
+        return 1;
+    }
+
+    /* Walk the fact list (std::list<CTuple> sentinel @ db+0x10). */
+    mach_vm_address_t sentinel = (mach_vm_address_t)db + 0x10;
+    void *cur = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)db + 0x18, &cur)) return 1;
+
+    int guard = 0;
+    while (cur && (mach_vm_address_t)cur != sentinel && rowCount < 100000 && guard < 500000) {
+        guard++;
+
+        void *values = NULL;   /* CTuple.values = *(node+0x10) */
+        safe_memory_read_pointer((mach_vm_address_t)cur + 0x10, &values);
+
+        int match = (values != NULL);
+        for (int i = 0; i < nfilter && match; i++) {
+            int slot = 2 + i;
+            if (lua_isnil(L, slot)) continue;      /* wildcard */
+            if ((uint32_t)i >= colCount) { match = 0; break; }
+            mach_vm_address_t tv = (mach_vm_address_t)values + (mach_vm_address_t)i * 0x10;
+            uint16_t colType = 0;
+            safe_memory_read(tv + 0x08, &colType, sizeof(colType));
+            if (lua_type(L, slot) == LUA_TNUMBER) {
+                int64_t want = (int64_t)lua_tointeger(L, slot), got;
+                if (colType == OSI_TYPE_INTEGER) { uint32_t v = 0; safe_memory_read_u32(tv, &v); got = (int32_t)v; }
+                else { uint64_t v = 0; safe_memory_read_u64(tv, &v); got = (int64_t)v; }
+                if (got != want) match = 0;
+            } else {
+                const char *want = lua_tostring(L, slot);
+                uint64_t handle = 0; char buf[256]; buf[0] = '\0';
+                safe_memory_read_u64(tv, &handle);
+                osi_resolve_string_handle(handle, buf, sizeof(buf));
+                if (!want || strcmp(buf, want) != 0) match = 0;
+            }
+        }
+
+        if (match) {
+            lua_newtable(L);                        /* row */
+            for (uint32_t i = 0; i < colCount; i++) {
+                osi_push_typed_value(L, (mach_vm_address_t)values + (mach_vm_address_t)i * 0x10);
+                lua_rawseti(L, -2, (int)i + 1);
+            }
+            rowCount++;
+            lua_rawseti(L, resultIdx, rowCount);
+        }
+
+        void *nxt = NULL;
+        if (!safe_memory_read_pointer((mach_vm_address_t)cur + 0x08, &nxt)) break;
+        cur = nxt;
+    }
+
+    LOG_OSIRIS_DEBUG("Osi DB (Facts): %d rows, %u cols", rowCount, colCount);
+    return 1;
+}
+
+/**
  * Generic Osi.DB_<name>:Get([filter...]) read-only accessor.
  *
  * Security: this function is QUERY-ONLY. It dispatches via g_divQuery
@@ -1397,6 +1570,13 @@ static int lua_osi_db_get(lua_State *L) {
         LOG_OSIRIS_WARN("Osi.DB_<?>:Get() called but DBName is missing");
         lua_newtable(L);
         return 1;
+    }
+
+    /* Real Osiris databases (registered by the name-index walk) have no dispatch
+     * id — read their Facts list directly (Windows-parity). */
+    void *dbDef = osi_db_lookup(db_name);
+    if (dbDef) {
+        return osi_db_read_facts(L, dbDef);
     }
 
     uint8_t arity = 0;
@@ -3276,6 +3456,24 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
             g_currentDialogInstance = -1;
             g_dialogParticipantCount = 0;
         }
+    }
+
+    // Story-load database discovery: Osiris databases (DB_Players,
+    // DB_PartyMembers, DB_Avatars, ...) live ONLY in the name index, not the
+    // numeric id-index the early enumeration probes — so Osi.DB_*:Get() can
+    // never resolve them and returns empty (breaking mods like Sit This One Out
+    // whose grant loops iterate DB_PartyMembers). SavegameLoaded and
+    // LevelGameplayStarted fire after story load, so walk the name index here
+    // BEFORE dispatching to Lua callbacks. One-shot flag: run once per session
+    // (not on every level transition); the walk is idempotent and read-only.
+    static int g_dbNamesEnumerated = 0;
+    if (!g_dbNamesEnumerated && funcName &&
+        (strcmp(funcName, "SavegameLoaded") == 0 ||
+         strcmp(funcName, "LevelGameplayStarted") == 0)) {
+        g_dbNamesEnumerated = 1;
+        LOG_OSIRIS_INFO("Story loaded (%s) — walking Osiris name index to "
+                        "discover databases", funcName);
+        osi_func_enumerate_by_name();
     }
 
     // Dispatch to "before" callbacks if we know the function name

@@ -498,21 +498,41 @@ void osi_func_enumerate(void) {
     // Osiris function IDs are split into two ranges:
     // 1. Regular functions: 0 to ~64K (low IDs)
     // 2. Registered functions: 0x80000000 + offset (high bit set)
+    //
+    // Caps are kept below MAX_CACHED_FUNCTIONS (4096) to avoid overflow.
+    // Databases (DB_Players, DB_PartyMembers, ...) live among the regular
+    // functions but at higher IDs; the previous found_count<1000 low-range cap
+    // stopped the scan before reaching them, so Osi.DB_*:Get() always returned
+    // empty. Widened to 20000/found_count<4000 (low) and 50000 (high) so DB
+    // nodes are captured. This function is idempotent — osi_func_cache() dedups
+    // by ID, and already-cached IDs are skipped below — so it is safe to re-run
+    // after the story loads (see fake_Event re-enumeration on SavegameLoaded).
+    #define ENUM_CAP 4000
 
-    // Probe low range (regular functions) - usually 0-10000
-    for (uint32_t id = 1; id < 10000 && found_count < 1000; id++) {
+    // Probe low range (regular functions incl. databases)
+    for (uint32_t id = 1; id < 20000 && found_count < ENUM_CAP; id++) {
+        if (osi_func_get_name(id) != NULL) {  // already cached — skip expensive probe
+            found_count++;
+            continue;
+        }
         if (osi_func_cache_by_id(id)) {
             found_count++;
         }
     }
 
-    // Probe high range (registered functions) - 0x80000000 + 0 to ~30000
-    for (uint32_t offset = 0; offset < 30000 && found_count < 2000; offset++) {
+    // Probe high range (registered functions) - 0x80000000 + 0 to ~50000
+    for (uint32_t offset = 0; offset < 50000 && found_count < ENUM_CAP; offset++) {
         uint32_t id = 0x80000000 | offset;
+        if (osi_func_get_name(id) != NULL) {  // already cached — skip expensive probe
+            found_count++;
+            continue;
+        }
         if (osi_func_cache_by_id(id)) {
             found_count++;
         }
     }
+
+    #undef ENUM_CAP
 
     LOG_OSIRIS_DEBUG("Enumeration complete: %d functions cached", found_count);
 
@@ -530,6 +550,190 @@ void osi_func_enumerate(void) {
             LOG_OSIRIS_DEBUG("  %s -> 0x%08x", key_funcs[i], fid);
         }
     }
+}
+
+/* Extract name/arity/type/handle from a resolved OsiFunctionData* and cache it
+ * under funcId. Self-contained (mirrors the extraction in osi_func_cache_by_id)
+ * so the name-index walk can cache defs it already holds without re-probing by
+ * id. Returns 1 if a name was extracted and cached. */
+static int osi_func_cache_def(void *funcDef, uint32_t funcId) {
+    if (!funcDef) return 0;
+
+    const char *name = extract_func_name_from_def(funcDef);
+    if (!name || !name[0]) return 0;
+
+    /* Arity: funcDef+0x18 → Signature → +0x10 ParamList → +0x10 Size (in+out). */
+    uint8_t arity = 0;
+    void *sigPtr = NULL;
+    if (safe_memory_read_pointer((mach_vm_address_t)funcDef + OSIFUNCDEF_SIGNATURE_OFFSET, &sigPtr) && sigPtr) {
+        void *paramListPtr = NULL;
+        if (safe_memory_read_pointer((mach_vm_address_t)sigPtr + FUNCSIG_PARAMS_OFFSET, &paramListPtr) && paramListPtr) {
+            uint32_t paramSize = 0;
+            if (safe_memory_read_u32((mach_vm_address_t)paramListPtr + PARAMLIST_SIZE_OFFSET, &paramSize)) {
+                arity = (paramSize <= 20) ? (uint8_t)paramSize : 0;
+            }
+        }
+    }
+
+    /* Type + Key[4] at funcDef+0x28 (same layout the id-based path uses). */
+    uint8_t type = osi_func_guess_type(name);
+    uint32_t keys[4] = {0};
+    uint32_t handle = funcId;
+    if (safe_memory_read((mach_vm_address_t)funcDef + 0x28, keys, sizeof(keys))) {
+        if (keys[0] >= OSI_FUNC_EVENT && keys[0] <= OSI_FUNC_USERQUERY) {
+            type = (uint8_t)keys[0];
+            handle = osi_encode_handle(keys[0], keys[1], keys[2], keys[3]);
+        }
+    }
+
+    osi_func_cache(name, funcId, arity, type);
+    if (handle != 0) {
+        osi_func_cache_set_handle(funcId, handle);
+    }
+    return 1;
+}
+
+// ============================================================================
+// Database registry
+// ============================================================================
+// Osiris databases (DB_*) have OsiFunctionId==0 — they cannot be keyed in the
+// id-based function cache. Instead we register name -> COsiFunctionData* so the
+// Facts reader (osi_db_read_facts in main.c) can resolve them.
+
+#define MAX_DATABASES 32768
+typedef struct { char name[96]; void *def; } DbRegEntry;
+static DbRegEntry g_dbReg[MAX_DATABASES];
+static int g_dbRegCount = 0;
+
+int osi_db_register(const char *name, void *def) {
+    if (!name || !name[0] || !def) return 0;
+    for (int i = 0; i < g_dbRegCount; i++) {
+        if (strcmp(g_dbReg[i].name, name) == 0) {
+            g_dbReg[i].def = def;  /* refresh on re-enumeration */
+            return 0;
+        }
+    }
+    if (g_dbRegCount >= MAX_DATABASES) return 0;
+    strncpy(g_dbReg[g_dbRegCount].name, name, sizeof(g_dbReg[0].name) - 1);
+    g_dbReg[g_dbRegCount].name[sizeof(g_dbReg[0].name) - 1] = '\0';
+    g_dbReg[g_dbRegCount].def = def;
+    g_dbRegCount++;
+    return 1;
+}
+
+void *osi_db_lookup(const char *name) {
+    if (!name) return NULL;
+    for (int i = 0; i < g_dbRegCount; i++) {
+        if (strcmp(g_dbReg[i].name, name) == 0) return g_dbReg[i].def;
+    }
+    return NULL;
+}
+
+int osi_db_count(void) { return g_dbRegCount; }
+
+/* Walk the Osiris name index (CSearchIndex<COsiFunctionData*, COsiString, 1023>)
+ * that lives at the start of COsiFunctionMan and cache every function BY NAME.
+ *
+ * Unlike osi_func_enumerate() — which brute-force probes numeric IDs via
+ * COsiFunctionMan::pFunctionData(uint) and only sees the runtime id-index —
+ * this walks the *name* index, which is the ONLY place Osiris databases
+ * (DB_Players, DB_PartyMembers, DB_Avatars, ...) are registered. Without this,
+ * Osi.DB_*:Get() can never resolve a funcId and always returns empty, breaking
+ * every mod that reads an Osiris database.
+ *
+ * Layout reverse-engineered from COsiFunctionMan::pFunctionData(CKey const&)
+ * (libOsiris arm64 @ 0x29b88):
+ *   manager = *s_ppOsiFunctionMan
+ *   bucket  = manager + (hash % 1023) * 0x18 ; tree root = *(bucket + 0x8)
+ *   node    : left=*(n+0x00), right=*(n+0x08), value(COsiFunctionData*)=*(n+0x38)
+ * All reads go through safe_memory_* so bad pointers fail gracefully; total
+ * node visits are capped to bound worst-case cost against a malformed tree. */
+void osi_func_enumerate_by_name(void) {
+    if (!s_ppOsiFunctionMan) {
+        LOG_OSIRIS_DEBUG("enumerate_by_name: OsiFunctionMan pointer not set");
+        return;
+    }
+    void *manager = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)s_ppOsiFunctionMan, &manager) || !manager) {
+        LOG_OSIRIS_DEBUG("enumerate_by_name: OsiFunctionMan is null");
+        return;
+    }
+
+    LOG_OSIRIS_DEBUG("Starting name-index enumeration (databases included)...");
+
+    #define OSI_NAME_BUCKETS   1023
+    #define OSI_BUCKET_STRIDE  0x18
+    #define OSI_NODE_LEFT      0x00
+    #define OSI_NODE_RIGHT     0x08
+    #define OSI_NODE_VALUE     0x38
+    #define OSI_WALK_STACK     8192
+    #define OSI_MAX_VISITS     200000
+
+    void *stack[OSI_WALK_STACK];
+    int found = 0;
+    int totalVisits = 0;
+
+    for (int b = 0; b < OSI_NAME_BUCKETS; b++) {
+        mach_vm_address_t bucket = (mach_vm_address_t)manager +
+                                   (mach_vm_address_t)b * OSI_BUCKET_STRIDE;
+        void *root = NULL;
+        if (!safe_memory_read_pointer(bucket + 0x8, &root) || !root) {
+            continue;
+        }
+
+        int sp = 0;
+        stack[sp++] = root;
+        while (sp > 0 && totalVisits < OSI_MAX_VISITS) {
+            void *node = stack[--sp];
+            if (!node) continue;
+            totalVisits++;
+
+            void *def = NULL;
+            if (safe_memory_read_pointer((mach_vm_address_t)node + OSI_NODE_VALUE, &def) && def) {
+                uint8_t ftype = 0;
+                safe_memory_read_u8((mach_vm_address_t)def + 0x24, &ftype);  /* Type @ def+0x24 */
+                if (ftype == OSI_FUNC_DATABASE) {
+                    /* Databases have OsiFunctionId==0 (not id-cacheable); register
+                     * name -> def so the Facts reader can resolve them. */
+                    const char *dbName = extract_func_name_from_def(def);
+                    if (osi_db_register(dbName, def)) {
+                        found++;
+                    }
+                } else {
+                    uint32_t osiId = 0;
+                    /* OsiFunctionId at def+0x38 (same field the id path caches under). */
+                    if (safe_memory_read_u32((mach_vm_address_t)def + 0x38, &osiId) && osiId != 0) {
+                        if (osi_func_get_name(osiId) == NULL && osi_func_cache_def(def, osiId)) {
+                            found++;
+                        }
+                    }
+                }
+            }
+
+            /* Push children (NULL-terminated leaves). Bounded by stack size. */
+            if (sp < OSI_WALK_STACK - 2) {
+                void *left = NULL, *right = NULL;
+                if (safe_memory_read_pointer((mach_vm_address_t)node + OSI_NODE_LEFT, &left) && left) {
+                    stack[sp++] = left;
+                }
+                if (safe_memory_read_pointer((mach_vm_address_t)node + OSI_NODE_RIGHT, &right) && right) {
+                    stack[sp++] = right;
+                }
+            }
+        }
+    }
+
+    #undef OSI_NAME_BUCKETS
+    #undef OSI_BUCKET_STRIDE
+    #undef OSI_NODE_LEFT
+    #undef OSI_NODE_RIGHT
+    #undef OSI_NODE_VALUE
+    #undef OSI_WALK_STACK
+    #undef OSI_MAX_VISITS
+
+    LOG_OSIRIS_INFO("Name-index enumeration: %d new entries (%d visits); "
+                    "databases registered=%d, DB_Players %s", found, totalVisits,
+                    osi_db_count(), osi_db_lookup("DB_Players") ? "FOUND" : "missing");
 }
 
 // ============================================================================
