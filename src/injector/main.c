@@ -175,6 +175,8 @@ static OsiArgumentDesc *alloc_args(int count);
 static void set_arg_string(OsiArgumentDesc *arg, const char *value, int isGuid);
 static void set_arg_int(OsiArgumentDesc *arg, int32_t value);
 static void set_arg_real(OsiArgumentDesc *arg, float value);
+typedef struct { uint32_t type; uint8_t direction; } OsiParamDef;
+static int osi_read_param_defs(uint32_t handle, OsiParamDef *defs, int maxDefs);
 static int osiris_query_by_id(uint32_t funcId, OsiArgumentDesc *args);
 static int osi_value_to_lua(lua_State *L, OsiArgumentValue *val);
 static int osi_is_tagged(const char *character, const char *tag);
@@ -1708,15 +1710,14 @@ static int osi_value_to_lua(lua_State *L, OsiArgumentValue *val) {
             return 1;
         case OSI_TYPE_STRING:
         case OSI_TYPE_GUIDSTRING:
+        default:
+            // STRING/GUIDSTRING and all custom GUID subtypes (CHARACTERGUID,
+            // ITEMGUID, ... typeId > 5) carry a char* value from the engine.
             if (val->stringVal) {
                 lua_pushstring(L, val->stringVal);
             } else {
                 lua_pushstring(L, "");
             }
-            return 1;
-        default:
-            LOG_OSIRIS_DEBUG("Unknown type %d", val->typeId);
-            lua_pushnil(L);
             return 1;
     }
 }
@@ -1840,74 +1841,88 @@ static int osi_dynamic_call(lua_State *L) {
         numArgs = arity;
     }
 
-    // Allocate arguments based on clamped arg count.
-    // For queries, the full arity (in+out) is needed — this requires
-    // correct ParamCount from funcDef. See osi_func_enumerate() for offset.
+    // Build the Osiris argument chain. Prefer the game's authoritative param
+    // definitions (types + in/out directions) read from the OsirisInterface —
+    // the same structure OsirisQuery validates against. Fall back to guessing
+    // arity/types (legacy) if the defs are unavailable.
+    OsiParamDef pdefs[20];
+    int pcount = osi_read_param_defs(funcId, pdefs, 20);
+    int useDefs = (pcount >= 0);
+    int numOut = 0;
     int allocCount = numArgs;
-    if ((funcType == OSI_FUNC_QUERY || funcType == OSI_FUNC_SYSQUERY ||
-         funcType == OSI_FUNC_USERQUERY) && arity > numArgs) {
-        allocCount = arity;
-        LOG_OSIRIS_DEBUG("Osi.%s: Query allocated %d slots (luaArgs=%d, arity=%d)",
-                        funcName, allocCount, numArgs, arity);
-    }
-
     OsiArgumentDesc *args = NULL;
-    if (allocCount > 0) {
-        args = alloc_args(allocCount);
-        if (!args) {
-            return luaL_error(L, "Failed to allocate Osiris arguments");
+
+    if (useDefs) {
+        allocCount = pcount;
+        if (allocCount > 0) {
+            args = alloc_args(allocCount);
+            if (!args) return luaL_error(L, "Failed to allocate Osiris arguments");
+            int luaIdx = 1;  // next Lua input arg (stack index; inputs start at 1)
+            for (int i = 0; i < allocCount; i++) {
+                uint16_t decl = (uint16_t)pdefs[i].type;
+                if (pdefs[i].direction == 2) {  // OUTPUT: declared type, zeroed value
+                    args[i].value.stringVal = NULL;
+                    args[i].value.typeId = decl;
+                    numOut++;
+                    continue;
+                }
+                // INPUT: consume the next Lua arg, using the declared type.
+                int haveArg = (luaIdx <= numArgs);
+                int lt = haveArg ? lua_type(L, luaIdx) : LUA_TNIL;
+                if (decl == OSI_TYPE_INTEGER) {
+                    args[i].value.typeId = OSI_TYPE_INTEGER;
+                    args[i].value.int32Val = haveArg ? (int32_t)lua_tointeger(L, luaIdx) : 0;
+                } else if (decl == OSI_TYPE_INTEGER64) {
+                    args[i].value.typeId = OSI_TYPE_INTEGER64;
+                    args[i].value.int64Val = haveArg ? (int64_t)lua_tointeger(L, luaIdx) : 0;
+                } else if (decl == OSI_TYPE_REAL) {
+                    args[i].value.typeId = OSI_TYPE_REAL;
+                    args[i].value.floatVal = haveArg ? (float)lua_tonumber(L, luaIdx) : 0.0f;
+                } else {  // string / GUID family: pass Lua string with declared type
+                    const char *s = "";
+                    if (haveArg && (lt == LUA_TSTRING || lt == LUA_TNUMBER)) s = lua_tostring(L, luaIdx);
+                    args[i].value.typeId = decl;
+                    args[i].value.stringVal = (char *)s;
+                }
+                luaIdx++;
+            }
+            LOG_OSIRIS_DEBUG("Osi.%s: %d params (%d out) from signature, luaArgs=%d",
+                            funcName, pcount, numOut, numArgs);
         }
-
-        // Convert Lua arguments to Osiris arguments (input slots only)
-        for (int i = 0; i < numArgs; i++) {
-            int argIdx = i + 1;  // Lua indices start at 1
-            int luaType = lua_type(L, argIdx);
-
-            switch (luaType) {
-                case LUA_TSTRING: {
-                    const char *str = lua_tostring(L, argIdx);
-                    // Check if it looks like a GUID
-                    int isGuid = (str && strlen(str) >= 36 &&
-                                  strchr(str, '-') != NULL);
-                    set_arg_string(&args[i], str, isGuid);
-                    break;
-                }
-                case LUA_TNUMBER: {
-                    if (lua_isinteger(L, argIdx)) {
-                        set_arg_int(&args[i], (int32_t)lua_tointeger(L, argIdx));
-                    } else {
-                        set_arg_real(&args[i], (float)lua_tonumber(L, argIdx));
+    } else {
+        // Legacy fallback: guess arity/types.
+        if ((funcType == OSI_FUNC_QUERY || funcType == OSI_FUNC_SYSQUERY ||
+             funcType == OSI_FUNC_USERQUERY) && arity > numArgs) {
+            allocCount = arity;
+        }
+        if (allocCount > 0) {
+            args = alloc_args(allocCount);
+            if (!args) return luaL_error(L, "Failed to allocate Osiris arguments");
+            for (int i = 0; i < numArgs; i++) {
+                int argIdx = i + 1;
+                int luaType = lua_type(L, argIdx);
+                switch (luaType) {
+                    case LUA_TSTRING: {
+                        const char *str = lua_tostring(L, argIdx);
+                        int isGuid = (str && strlen(str) >= 36 && strchr(str, '-') != NULL);
+                        set_arg_string(&args[i], str, isGuid);
+                        break;
                     }
-                    break;
-                }
-                case LUA_TBOOLEAN: {
-                    set_arg_int(&args[i], lua_toboolean(L, argIdx) ? 1 : 0);
-                    break;
-                }
-                case LUA_TNIL: {
-                    // Nil treated as empty string
-                    set_arg_string(&args[i], "", 0);
-                    break;
-                }
-                default: {
-                    LOG_OSIRIS_DEBUG("Osi.%s: Warning: Unsupported arg type %d at position %d",
-                                funcName, luaType, argIdx);
-                    set_arg_string(&args[i], "", 0);
-                    break;
+                    case LUA_TNUMBER:
+                        if (lua_isinteger(L, argIdx)) set_arg_int(&args[i], (int32_t)lua_tointeger(L, argIdx));
+                        else set_arg_real(&args[i], (float)lua_tonumber(L, argIdx));
+                        break;
+                    case LUA_TBOOLEAN: set_arg_int(&args[i], lua_toboolean(L, argIdx) ? 1 : 0); break;
+                    default: set_arg_string(&args[i], "", 0); break;
                 }
             }
-        }
-        // Pre-initialize output slot TypeIds for queries.
-        // DivQuery calls COsiArgumentDesc::GetDataSrcPtr() which needs a valid typeId
-        // to return the correct union member pointer. Without this, typeId=0 (NONE) causes
-        // a C++ exception → std::terminate → SIGABRT.
-        // Windows BG3SE reads exact types from Signature->Params (Function.inl:376).
-        // Default to GUIDSTRING (type 5) which is the most common Osiris output type.
-        // TODO: Read actual param types from funcDef->Signature->Params linked list.
-        if (funcType == OSI_FUNC_QUERY || funcType == OSI_FUNC_SYSQUERY ||
-            funcType == OSI_FUNC_USERQUERY) {
-            for (int i = numArgs; i < allocCount; i++) {
-                args[i].value.typeId = OSI_TYPE_GUIDSTRING;
+            if (funcType == OSI_FUNC_QUERY || funcType == OSI_FUNC_SYSQUERY ||
+                funcType == OSI_FUNC_USERQUERY) {
+                for (int i = numArgs; i < allocCount; i++) {
+                    args[i].value.stringVal = NULL;
+                    args[i].value.typeId = OSI_TYPE_GUIDSTRING;
+                }
+                numOut = allocCount - numArgs;
             }
         }
     }
@@ -1954,21 +1969,38 @@ static int osi_dynamic_call(lua_State *L) {
                 LOG_OSIRIS_DEBUG("Osi.%s: Query returned %d (via %s, handle=0x%08x)", funcName, result,
                                 g_divQuery ? "DivQuery" : "InternalQuery", dispatchHandle);
 
-                if (result && allocCount > numArgs) {
-                    // Return output args (slots after the input args)
+                if (result && numOut > 0) {
+                    // Return output-param values. With signature defs, outputs are
+                    // the direction==2 params (anywhere in the list); in the legacy
+                    // path they are the slots after the inputs.
                     int returnCount = 0;
-                    for (int i = numArgs; i < allocCount; i++) {
-                        osi_value_to_lua(L, &args[i].value);
-                        returnCount++;
+                    if (useDefs) {
+                        for (int i = 0; i < allocCount; i++) {
+                            if (pdefs[i].direction == 2) {
+                                osi_value_to_lua(L, &args[i].value);
+                                returnCount++;
+                            }
+                        }
+                    } else {
+                        for (int i = numArgs; i < allocCount; i++) {
+                            osi_value_to_lua(L, &args[i].value);
+                            returnCount++;
+                        }
                     }
-                    LOG_OSIRIS_DEBUG("Osi.%s: Returning %d output values from query (slots %d..%d)",
-                                    funcName, returnCount, numArgs, allocCount - 1);
+                    LOG_OSIRIS_DEBUG("Osi.%s: returning %d output value(s)", funcName, returnCount);
                     return returnCount;
+                } else if (numOut > 0) {
+                    // Query has output params but DID NOT MATCH (result==0): it
+                    // produced no tuple, so there is no value. Return nil — NOT 0.
+                    // e.g. CharacterGetOwner(char-with-no-owner) must be nil so mod
+                    // logic like `owner and ...` short-circuits (0/"" are truthy in
+                    // Lua and would wrongly proceed).
+                    lua_pushnil(L);
+                    return 1;
                 } else {
-                    // Test query (no captured out params): the DivQuery return IS
-                    // the boolean result. Osiris returns these as INTEGER 0/1 — mods
-                    // compare `== 0` / `== 1` (e.g. `if Osi.HasSpell(c,s) == 0`), so
-                    // returning true/nil breaks them. Push 1 (matched) or 0 (not).
+                    // Pure test query (no output params): the DivQuery return IS the
+                    // boolean result. Osiris returns these as INTEGER 0/1 — mods
+                    // compare `== 0` / `== 1` (e.g. `if Osi.HasSpell(c,s) == 0`).
                     lua_pushinteger(L, result ? 1 : 0);
                     return 1;
                 }
@@ -2624,7 +2656,12 @@ static void init_lua(void) {
     dispatch_source_set_event_handler(s_console_poll_timer, ^{
         static _Atomic int polling = 0;
         if (L && !atomic_exchange(&polling, 1)) {
+            // Run console commands in SERVER context so Osiris queries/DB reads
+            // match server-side game state (matches how mods run).
+            LuaContext prev = lua_context_get();
+            lua_context_set(LUA_CONTEXT_SERVER);
             console_poll(L);
+            lua_context_set(prev);
             atomic_store(&polling, 0);
         }
     });
@@ -3000,6 +3037,80 @@ static void set_arg_real(OsiArgumentDesc *arg, float value) {
     if (!arg) return;
     arg->value.typeId = OSI_TYPE_REAL;
     arg->value.floatVal = value;
+}
+
+// ---------------------------------------------------------------------------
+// Authoritative Osiris param definitions (types + in/out directions)
+// ---------------------------------------------------------------------------
+// The port previously guessed arity from the COsiFunctionData signature (which
+// reads 0 for many DIV/engine functions) and defaulted every output slot to
+// GUIDSTRING. osi::OsirisInterface::OsirisQuery (game @ ghidra 0x105c093b0)
+// strictly type-checks OUTPUT args against each param's declared type, so a
+// GUIDSTRING slot for an INTEGER output makes the whole query return 0. Read the
+// game's real param defs from the same structure OsirisQuery uses:
+//   g_instance = *(gameBase + 0x8a86128)            (ghidra 0x108a86128, image base 0x100000000)
+//   idx  = (handle >> 3) & 0x1ffffff
+//   fn   = (*( *(g_instance+8) + 0x20 ))[idx]        (bound = *( *(g_instance+8)+0x2c ))
+//   paramCount = *(fn+0x18);  params = *(fn+0x10)
+//   each param 0x10 bytes: type(u32) @ +0x08, direction(u32: 1=in,2=out) @ +0x0c
+// The game image is ASLR-slid, so the g_instance pointer lives at the runtime
+// image base + its file offset (verified live).
+#define OSI_INSTANCE_FILE_OFFSET 0x8a86128ULL
+
+// Runtime base of the Baldur's Gate 3 main image (cached).
+static uintptr_t osi_game_image_base(void) {
+    static uintptr_t s_base = 0;
+    if (s_base) return s_base;
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, "Baldur")) {
+            s_base = (uintptr_t)_dyld_get_image_header(i);
+            return s_base;
+        }
+    }
+    return 0;
+}
+
+// Fills defs[] for the function identified by `handle`. Returns param count
+// (>=0) on success, or -1 if unavailable (caller falls back to guessing). All
+// reads go through safe_memory so a wrong/unmapped address fails gracefully.
+static int osi_read_param_defs(uint32_t handle, OsiParamDef *defs, int maxDefs) {
+    uintptr_t gameBase = osi_game_image_base();
+    if (!gameBase) return -1;
+    void *instance = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)(gameBase + OSI_INSTANCE_FILE_OFFSET), &instance) || !instance)
+        return -1;
+    void *sub = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)instance + 0x08, &sub) || !sub)
+        return -1;
+    uint32_t bound = 0;
+    if (!safe_memory_read_u32((mach_vm_address_t)sub + 0x2c, &bound))
+        return -1;
+    uint32_t idx = (handle >> 3) & 0x1ffffff;
+    if (idx >= bound || bound > 1000000)  // sanity on the array bound
+        return -1;
+    void *funcArray = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)sub + 0x20, &funcArray) || !funcArray)
+        return -1;
+    void *fn = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)funcArray + (mach_vm_address_t)idx * 8, &fn) || !fn)
+        return -1;
+    uint32_t pcount = 0;
+    if (!safe_memory_read_u32((mach_vm_address_t)fn + 0x18, &pcount) || pcount > 20)
+        return -1;
+    void *params = NULL;
+    if (pcount > 0 &&
+        (!safe_memory_read_pointer((mach_vm_address_t)fn + 0x10, &params) || !params))
+        return -1;
+    for (uint32_t i = 0; i < pcount && (int)i < maxDefs; i++) {
+        mach_vm_address_t p = (mach_vm_address_t)params + (mach_vm_address_t)i * 0x10;
+        uint32_t type = 0, dir = 0;
+        safe_memory_read_u32(p + 0x08, &type);
+        safe_memory_read_u32(p + 0x0c, &dir);
+        defs[i].type = type;
+        defs[i].direction = (uint8_t)dir;
+    }
+    return (int)pcount;
 }
 
 /**
