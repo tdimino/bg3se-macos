@@ -1964,11 +1964,12 @@ static int osi_dynamic_call(lua_State *L) {
                     LOG_OSIRIS_DEBUG("Osi.%s: Returning %d output values from query (slots %d..%d)",
                                     funcName, returnCount, numArgs, allocCount - 1);
                     return returnCount;
-                } else if (result) {
-                    lua_pushboolean(L, 1);
-                    return 1;
                 } else {
-                    lua_pushnil(L);
+                    // Test query (no captured out params): the DivQuery return IS
+                    // the boolean result. Osiris returns these as INTEGER 0/1 — mods
+                    // compare `== 0` / `== 1` (e.g. `if Osi.HasSpell(c,s) == 0`), so
+                    // returning true/nil breaks them. Push 1 (matched) or 0 (not).
+                    lua_pushinteger(L, result ? 1 : 0);
                     return 1;
                 }
             }
