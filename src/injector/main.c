@@ -690,6 +690,17 @@ static void mod_env_set(lua_State *L, const char *mod_table, const char *uuid) {
         lua_setmetatable(L, -2);              // setmetatable(E, mt) ; [Mods, E]
     }
 
+    // Make _G inside this mod refer to the mod's own environment (Windows parity).
+    // Mods commonly define bare globals (Foo = {}) — which land in this env table E —
+    // and then read them back via `_G["Foo"]`. Without this, `_G` resolves to the
+    // REAL global table (where the mod's writes never went), so `_G[name]` returns
+    // nil. That silently breaks library mods like CommunityLibrary (its Import() does
+    // `_G[val]`), which cascades into every mod that depends on them (e.g.
+    // SubclassCompatibilityFramework -> CLUtils nil -> modded class level-up broken).
+    // Verified live: with E._G = E, CommunityLibrary.Import() returns its tables.
+    lua_pushvalue(L, -1);                     // [Mods, E, E]
+    lua_setfield(L, -2, "_G");                // E._G = E ; [Mods, E]
+
     lua_pushvalue(L, -1);                     // [Mods, E, E]
     g_mod_env_ref = luaL_ref(L, LUA_REGISTRYINDEX);  // pops E ; [Mods, E]
     lua_pop(L, 2);                            // [] pop E, Mods
@@ -1162,6 +1173,9 @@ static int lua_gethostcharacter(lua_State *L) {
  * Osi.IsTagged(character, tag) - Check if character has a tag
  * Uses real Osiris query when available, falls back to heuristics
  */
+// Retained for reference/fallback only; Osi.IsTagged now routes through the
+// generic dynamic dispatcher (see register_osi_namespace). Not currently bound.
+__attribute__((unused))
 static int lua_osi_istagged(lua_State *L) {
     const char *character = luaL_checkstring(L, 1);
     const char *tag = luaL_checkstring(L, 2);
@@ -2140,6 +2154,56 @@ static int osi_index_handler(lua_State *L) {
 }
 
 /**
+ * _G __index fallback: expose Osiris functions as bare globals.
+ *
+ * Windows BG3SE runs GenerateOsiHelpers() at story load, injecting
+ *   IsTagged = Osi.IsTagged   (and one line per Osiris symbol)
+ * into the global table, so mods can call Osiris functions as bare globals
+ * (e.g. `if IsTagged(char, tag) == 1`). Many mods depend on this — without it
+ * the bare call hits a nil global and the whole Osiris listener aborts (seen
+ * live: Expansion's Equipped/Unequipped/LevelGameplayStarted handlers).
+ *
+ * Rather than a one-shot dump we resolve lazily via _G's metatable, so symbols
+ * discovered after bootstrap (databases, late-registered functions) are covered
+ * too. Only names backed by a real Osiris function resolve; genuine unknown
+ * globals still return nil so mod `if X == nil` feature checks keep working.
+ * A pre-existing __index (captured as upvalue 1) is honored as a fallback.
+ */
+static int lua_global_osi_fallback(lua_State *L) {
+    // stack: [1]=_G, [2]=key
+    const char *key = lua_tostring(L, 2);
+    if (key && osi_func_lookup_id(key) != INVALID_FUNCTION_ID) {
+        lua_getglobal(L, "Osi");            // [_G, key, Osi]
+        if (lua_istable(L, -1)) {
+            lua_pushvalue(L, 2);            // key
+            lua_gettable(L, -2);            // Osi[key] (osi_index_handler resolves + caches)
+            if (!lua_isnil(L, -1)) {
+                lua_pushvalue(L, 2);        // key
+                lua_pushvalue(L, -2);       // Osi[key]
+                lua_rawset(L, 1);           // _G[key] = Osi[key] (skip metamethod next time)
+                return 1;                   // return Osi[key]
+            }
+        }
+    }
+    // Honor any pre-existing __index (upvalue 1).
+    int prev = lua_upvalueindex(1);
+    if (lua_istable(L, prev)) {
+        lua_pushvalue(L, prev);
+        lua_pushvalue(L, 2);
+        lua_gettable(L, -2);
+        return 1;
+    } else if (lua_isfunction(L, prev)) {
+        lua_pushvalue(L, prev);
+        lua_pushvalue(L, 1);
+        lua_pushvalue(L, 2);
+        lua_call(L, 2, 1);
+        return 1;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+/**
  * Register Osi namespace with dynamic metatable
  */
 static void register_osi_namespace(lua_State *L) {
@@ -2149,8 +2213,14 @@ static void register_osi_namespace(lua_State *L) {
     // Pre-register known functions that have special implementations
     // These override the dynamic lookup for better behavior
 
-    lua_pushcfunction(L, lua_osi_istagged);
-    lua_setfield(L, -2, "IsTagged");
+    // NOTE: Osi.IsTagged is deliberately NOT bound to a dedicated C function.
+    // The hand-rolled helper hardcoded the tag argument as GUIDSTRING, but the
+    // Osiris IsTagged query declares that param as the TAG subtype; the strict
+    // OsirisQuery type check then rejected the call and every tag read false,
+    // breaking all tag-driven mod logic (e.g. the Demon Hunter class). Leaving
+    // IsTagged unbound routes it through osi_index_handler -> osi_dynamic_call,
+    // which reads the game's authoritative param defs (types + in/out dirs) and
+    // types the argument correctly. Verified live: Osi.IsTagged(host, DH_TAG) -> 1.
 
     lua_pushcfunction(L, lua_osi_getdistanceto);
     lua_setfield(L, -2, "GetDistanceTo");
@@ -2183,6 +2253,21 @@ static void register_osi_namespace(lua_State *L) {
     // Also register GetHostCharacter as a global function
     lua_pushcfunction(L, lua_gethostcharacter);
     lua_setglobal(L, "GetHostCharacter");
+
+    // Expose all Osiris functions as bare globals (Windows GenerateOsiHelpers
+    // parity) by installing a resolving __index on _G's metatable. Preserves any
+    // existing __index as an upvalue fallback.
+    {
+        lua_pushglobaltable(L);                              // [_G]
+        int hadMeta = lua_getmetatable(L, -1);               // [_G, mt?]
+        if (!hadMeta) lua_newtable(L);                       // [_G, mt]
+        lua_getfield(L, -1, "__index");                      // [_G, mt, prev__index]
+        lua_pushcclosure(L, lua_global_osi_fallback, 1);     // [_G, mt, closure]
+        lua_setfield(L, -2, "__index");                      // mt.__index = closure ; [_G, mt]
+        if (!hadMeta) lua_setmetatable(L, -2);               // setmetatable(_G, mt) ; [_G]
+        else lua_pop(L, 1);                                  // [_G]
+        lua_pop(L, 1);                                       // []
+    }
 
     LOG_OSIRIS_INFO("Osi namespace registered with dynamic metatable");
 }
@@ -3215,13 +3300,24 @@ static int osi_is_tagged(const char *character, const char *tag) {
         return -1;  // Unknown
     }
 
-    OsiArgumentDesc *args = alloc_args(2);
+    // IsTagged is a 3-arity query: (GUIDSTRING _Object, GUIDSTRING _Tag,
+    // [out]INTEGER _IsTagged). The boolean result is delivered through the OUT
+    // param, NOT the query's success flag. Allocating only 2 args (missing the
+    // out slot) makes the game's OsirisQuery strict param check reject the call
+    // and return 0, so every tag read false — breaking all tag-driven mod logic.
+    // Mirrors osi_get_distance_to, which correctly handles GetDistanceTo's out param.
+    OsiArgumentDesc *args = alloc_args(3);
     if (!args) return -1;
 
-    set_arg_string(&args[0], character, 1);  // GUID
-    set_arg_string(&args[1], tag, 1);        // GUID
+    set_arg_string(&args[0], character, 1);   // GUID (in)
+    set_arg_string(&args[1], tag, 1);         // GUID/TAG (in)
+    args[2].value.typeId = OSI_TYPE_INTEGER;  // out param (isTagged 0/1)
+    args[2].value.int32Val = 0;
 
-    return osiris_query_by_id(funcId, args);
+    if (osiris_query_by_id(funcId, args)) {
+        return args[2].value.int32Val;
+    }
+    return 0;
 }
 
 /**
