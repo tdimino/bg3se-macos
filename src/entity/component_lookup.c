@@ -8,6 +8,7 @@
 #include "component_lookup.h"
 #include "arm64_call.h"
 #include "../core/logging.h"
+#include "../core/offset_table.h"
 
 #include <string.h>
 
@@ -41,9 +42,19 @@ bool component_lookup_init(void *entityWorld, void *binaryBase) {
         return false;
     }
 
-    // Calculate runtime address of TryGet function
-    uintptr_t runtime_addr = ADDR_STORAGE_CONTAINER_TRYGET - GHIDRA_BASE_ADDRESS + (uintptr_t)binaryBase;
-    g_TryGetFnAddr = (void *)runtime_addr;
+    // Calculate runtime address of TryGet function.
+    // CRASH GUARD: source from the per-version offset table. If the running
+    // version has no verified offset (field == 0), leave g_TryGetFnAddr NULL so
+    // component_lookup_ready() is false and component access safely returns nil
+    // instead of calling a stale address (which lands in the wrong game function
+    // and faults). The hardcoded ADDR_* is only the 6995620 fallback.
+    const VersionOffsets *off = offset_table_get();
+    if (off && off->fn_storage_tryget) {
+        g_TryGetFnAddr = (void *)((uintptr_t)binaryBase + off->fn_storage_tryget);
+    } else {
+        g_TryGetFnAddr = NULL;
+        LOG_ENTITY_DEBUG("StorageContainer::TryGet disabled: no verified offset for this version");
+    }
 
     LOG_ENTITY_DEBUG("Initialized:");
     LOG_ENTITY_DEBUG("  EntityWorld: %p", g_EntityWorld);

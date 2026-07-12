@@ -400,10 +400,70 @@ static void register_damage_flags(void) {
 }
 
 // ============================================================================
+// ClientGameState (ecl::GameState) — used by MCM to react to Menu/Running, etc.
+// Values from Windows BG3SE Enumerations/Engine.inl.
+// ============================================================================
+static void register_client_game_state(void) {
+    int idx = enum_registry_add_type("ClientGameState", false);
+    if (idx < 0) return;
+
+    REG_VALUE(idx, "Unknown", 0);
+    REG_VALUE(idx, "Init", 1);
+    REG_VALUE(idx, "InitMenu", 2);
+    REG_VALUE(idx, "InitNetwork", 3);
+    REG_VALUE(idx, "InitConnection", 4);
+    REG_VALUE(idx, "Idle", 5);
+    REG_VALUE(idx, "LoadMenu", 6);
+    REG_VALUE(idx, "Menu", 7);
+    REG_VALUE(idx, "Exit", 8);
+    REG_VALUE(idx, "SwapLevel", 9);
+    REG_VALUE(idx, "LoadLevel", 10);
+    REG_VALUE(idx, "LoadModule", 11);
+    REG_VALUE(idx, "LoadSession", 12);
+    REG_VALUE(idx, "UnloadLevel", 13);
+    REG_VALUE(idx, "UnloadModule", 14);
+    REG_VALUE(idx, "UnloadSession", 15);
+    REG_VALUE(idx, "Paused", 16);
+    REG_VALUE(idx, "PrepareRunning", 17);
+    REG_VALUE(idx, "Running", 18);
+    REG_VALUE(idx, "Disconnect", 19);
+    REG_VALUE(idx, "Join", 20);
+    REG_VALUE(idx, "Save", 21);
+    REG_VALUE(idx, "StartLoading", 22);
+    REG_VALUE(idx, "StopLoading", 23);
+    REG_VALUE(idx, "StartServer", 24);
+    REG_VALUE(idx, "Movie", 25);
+    REG_VALUE(idx, "Installation", 26);
+    REG_VALUE(idx, "ModReceiving", 27);
+    REG_VALUE(idx, "Lobby", 28);
+    REG_VALUE(idx, "BuildStory", 29);
+    REG_VALUE(idx, "GeneratePsoCache", 32);
+    REG_VALUE(idx, "LoadPsoCache", 33);
+    REG_VALUE(idx, "AnalyticsSessionEnd", 34);
+}
+
+// ============================================================================
+// ClientInputControllerFlags (ecl::InputControllerFlags) — bitfield
+// ============================================================================
+static void register_client_input_controller_flags(void) {
+    int idx = enum_registry_add_type("ClientInputControllerFlags", true);
+    if (idx < 0) return;
+
+    EnumTypeInfo *info = enum_registry_get(idx);
+    if (info) {
+        info->allowed_flags = 0x1;
+    }
+
+    REG_VALUE(idx, "ControllerMode", 0x1);
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 void enum_register_definitions(void) {
     // Regular enums
+    register_client_game_state();
+    register_client_input_controller_flags();
     register_damage_type();
     register_ability_id();
     register_skill_id();

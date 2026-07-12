@@ -15,15 +15,14 @@
 #include "level_manager.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/offset_table.h"
 #include <string.h>
 
 // ============================================================================
 // Constants and Offsets
 // ============================================================================
 
-// LevelManager::m_ptr global singleton
-// Same address used in template_manager.c
-#define OFFSET_LEVEL_MANAGER_PTR    0x08a3be40
+// LevelManager::m_ptr — sourced from offset_table at runtime
 
 // LevelManager internal offsets (need ARM64 runtime verification)
 #define LEVELMANAGER_CURRENT_LEVEL_OFFSET   0x90   // EoCLevel* CurrentLevel
@@ -76,12 +75,20 @@ bool level_manager_init(void *main_binary_base) {
     }
 
     g_level.main_binary_base = main_binary_base;
-    g_level.level_manager_ptr = (void **)((uintptr_t)main_binary_base + OFFSET_LEVEL_MANAGER_PTR);
+
+    const VersionOffsets *off = offset_table_get();
+    if (!off || !off->level_mgr_ptr) {
+        log_message("[Level] WARN: level_mgr_ptr not available for this BG3 version — Level API disabled");
+        g_level.initialized = true;
+        return true;  // Not a fatal error; Level APIs will return NULL gracefully
+    }
+
+    g_level.level_manager_ptr = (void **)offset_table_resolve(off->level_mgr_ptr);
 
     log_message("[Level] Level manager initialized");
     log_message("[Level]   Base: %p", main_binary_base);
-    log_message("[Level]   LevelManager::m_ptr at offset 0x%x -> %p",
-                OFFSET_LEVEL_MANAGER_PTR, (void *)g_level.level_manager_ptr);
+    log_message("[Level]   LevelManager::m_ptr at offset 0x%llx -> %p",
+                (unsigned long long)off->level_mgr_ptr, (void *)g_level.level_manager_ptr);
 
     g_level.initialized = true;
     return true;

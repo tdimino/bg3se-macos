@@ -7,6 +7,8 @@
 #include "staticdata_manager.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/version_detect.h"
+#include "../core/offset_table.h"
 #include "../strings/fixed_string.h"
 #include "../hooks/arm64_hook.h"
 #include <dobby.h>
@@ -16,23 +18,14 @@
 #include <ctype.h>
 
 // ============================================================================
-// Constants and Offsets (Discovered via Ghidra)
+// Constants and Offsets
 // ============================================================================
-
-// Function addresses (relative to base)
-#define OFFSET_FEAT_GETFEATS          0x01b752b4  // FeatManager::GetFeats
-#define OFFSET_GETALLFEATS            0x0120b3e8  // GetAllFeats (for context capture)
-
-// ImmutableDataHeadmaster m_State pointer address (for TypeContext traversal)
-#define OFFSET_MSTATE_PTR             0x083c4a68  // PTR_m_State - pointer to m_State
-
-// Get<T> function addresses (for real manager capture - Dec 22, 2025)
-// These functions return the real manager pointers from ImmutableDataHeadmaster
-#define OFFSET_GET_BACKGROUND         0x02994834  // Get<eoc::BackgroundManager>
-#define OFFSET_GET_ORIGIN             0x0341c42c  // Get<eoc::OriginManager>
-#define OFFSET_GET_CLASS              0x0262f184  // Get<eoc::ClassDescriptions>
-#define OFFSET_GET_PROGRESSION        0x03697f0c  // Get<eoc::ProgressionManager>
-#define OFFSET_GET_ACTIONRESOURCE     0x011a4494  // Get<eoc::ActionResourceTypes>
+//
+// All address-dependent values (the m_State pointer, the FeatManager::GetFeats
+// and GetAllFeats functions, and the ImmutableDataHeadmaster::Get<T> accessors)
+// are sourced per game version from src/core/offset_table.c. See the
+// VersionOffsets fields: staticdata_mstate_ptr, fn_feat_getfeats,
+// fn_getallfeats, fn_get_background/origin/class/progression/actionresource.
 
 // FeatManager structure offsets
 //
@@ -341,9 +334,14 @@ static int capture_managers_via_typecontext(void) {
         return 0;
     }
 
-    // Safely get pointer to m_State
+    // Safely get pointer to m_State (address from per-version offset table)
+    const VersionOffsets *off = offset_table_get();
+    if (!off || !off->staticdata_mstate_ptr) {
+        log_message("[StaticData] staticdata_mstate_ptr not available for this version");
+        return 0;
+    }
     void* m_state = NULL;
-    mach_vm_address_t ptr_mstate_addr = (mach_vm_address_t)g_staticdata.main_binary_base + OFFSET_MSTATE_PTR;
+    mach_vm_address_t ptr_mstate_addr = (mach_vm_address_t)offset_table_resolve(off->staticdata_mstate_ptr);
     if (!safe_memory_read_pointer(ptr_mstate_addr, &m_state)) {
         log_message("[StaticData] Could not read m_State pointer at %p", (void*)ptr_mstate_addr);
         return 0;
@@ -433,9 +431,13 @@ static void* find_manager_via_typecontext(const char* type_name) {
         return NULL;
     }
 
-    // Get pointer to m_State
-    void** ptr_mstate = (void**)((uint8_t*)g_staticdata.main_binary_base + OFFSET_MSTATE_PTR);
-    void* m_state = *ptr_mstate;
+    // Get pointer to m_State (address from per-version offset table)
+    const VersionOffsets *off = offset_table_get();
+    if (!off || !off->staticdata_mstate_ptr) {
+        return NULL;
+    }
+    void** ptr_mstate = (void**)offset_table_resolve(off->staticdata_mstate_ptr);
+    void* m_state = ptr_mstate ? *ptr_mstate : NULL;
     if (!m_state) {
         log_message("[StaticData] m_State is NULL");
         return NULL;
@@ -684,47 +686,47 @@ static void* hook_GetActionResource(void* headmaster) {
  * Uses standard Dobby hooks (Get<T> functions are small and typically safe).
  */
 static void install_get_manager_hooks(void* main_binary_base) {
+    (void)main_binary_base;  // address now sourced from offset_table
+    const VersionOffsets *off = offset_table_get();
+    if (!off) {
+        log_message("[StaticData] Get<T> hooks SKIPPED (no offset table entry for this version)");
+        return;
+    }
+
+    // CRASH GUARD: these Get<T> accessors are hooked with PLAIN DobbyHook, which
+    // mangles their PC-relative (adrp/cbz) prologue on shifted versions — the
+    // trampoline then returns a garbage manager and the character-progression
+    // validator calls through a bad pointer (e.g. Barbarian level 2->3 subclass
+    // pick -> SIGBUS, with zero SE frames in the stack). Only install on the
+    // exact baseline version where DobbyHook is known-safe. On other versions the
+    // TypeContext traversal (capture_managers_via_typecontext) already captures
+    // these managers without hooking, so StaticData degrades gracefully.
+    // (Proper future fix: give Get<T> the same ADRP-safe install FeatManager uses.)
+    if (!version_detect_matches()) {
+        log_message("[StaticData] Get<T> code hooks SKIPPED on this version "
+                    "(plain DobbyHook is prologue-unsafe) — using TypeContext traversal only");
+        return;
+    }
+
     log_message("[StaticData] Installing Get<T> hooks for real manager capture...");
+    void* target;
 
-    // Background
-    void* target = (uint8_t*)main_binary_base + OFFSET_GET_BACKGROUND;
-    if (DobbyHook(target, (void*)hook_GetBackground, (void**)&g_orig_GetBackground) == 0) {
-        log_message("[StaticData] Installed Get<BackgroundManager> hook at %p", target);
-    } else {
-        log_message("[StaticData] WARNING: Failed to hook Get<BackgroundManager>");
+#define INSTALL_HOOK(field, fn_hook, fn_orig, label) \
+    if (off->field) { \
+        target = offset_table_fn(off->field); \
+        if (DobbyHook(target, (void*)(fn_hook), (void**)(fn_orig)) == 0) \
+            log_message("[StaticData] Installed " label " hook at %p", target); \
+        else \
+            log_message("[StaticData] WARNING: Failed to hook " label); \
     }
 
-    // Origin
-    target = (uint8_t*)main_binary_base + OFFSET_GET_ORIGIN;
-    if (DobbyHook(target, (void*)hook_GetOrigin, (void**)&g_orig_GetOrigin) == 0) {
-        log_message("[StaticData] Installed Get<OriginManager> hook at %p", target);
-    } else {
-        log_message("[StaticData] WARNING: Failed to hook Get<OriginManager>");
-    }
+    INSTALL_HOOK(fn_get_background,    hook_GetBackground,    &g_orig_GetBackground,    "Get<BackgroundManager>")
+    INSTALL_HOOK(fn_get_origin,        hook_GetOrigin,        &g_orig_GetOrigin,        "Get<OriginManager>")
+    INSTALL_HOOK(fn_get_class,         hook_GetClass,         &g_orig_GetClass,         "Get<ClassDescriptions>")
+    INSTALL_HOOK(fn_get_progression,   hook_GetProgression,   &g_orig_GetProgression,   "Get<ProgressionManager>")
+    INSTALL_HOOK(fn_get_actionresource,hook_GetActionResource,&g_orig_GetActionResource,"Get<ActionResourceTypes>")
 
-    // Class
-    target = (uint8_t*)main_binary_base + OFFSET_GET_CLASS;
-    if (DobbyHook(target, (void*)hook_GetClass, (void**)&g_orig_GetClass) == 0) {
-        log_message("[StaticData] Installed Get<ClassDescriptions> hook at %p", target);
-    } else {
-        log_message("[StaticData] WARNING: Failed to hook Get<ClassDescriptions>");
-    }
-
-    // Progression
-    target = (uint8_t*)main_binary_base + OFFSET_GET_PROGRESSION;
-    if (DobbyHook(target, (void*)hook_GetProgression, (void**)&g_orig_GetProgression) == 0) {
-        log_message("[StaticData] Installed Get<ProgressionManager> hook at %p", target);
-    } else {
-        log_message("[StaticData] WARNING: Failed to hook Get<ProgressionManager>");
-    }
-
-    // ActionResource
-    target = (uint8_t*)main_binary_base + OFFSET_GET_ACTIONRESOURCE;
-    if (DobbyHook(target, (void*)hook_GetActionResource, (void**)&g_orig_GetActionResource) == 0) {
-        log_message("[StaticData] Installed Get<ActionResourceTypes> hook at %p", target);
-    } else {
-        log_message("[StaticData] WARNING: Failed to hook Get<ActionResourceTypes>");
-    }
+#undef INSTALL_HOOK
 
     log_message("[StaticData] Get<T> hooks installation complete");
 }
@@ -976,7 +978,26 @@ int staticdata_hash_lookup_capture(void) {
  * Returns true if hook was installed successfully.
  */
 static bool install_feat_getfeats_safe_hook(void* main_binary_base) {
-    void* target = (uint8_t*)main_binary_base + OFFSET_FEAT_GETFEATS;
+    const VersionOffsets *off = offset_table_get();
+    if (!off || !off->fn_feat_getfeats) {
+        log_message("[StaticData] FeatGetFeats offset not available for this version");
+        return false;
+    }
+
+    // CRASH GUARD: this hook fires during character level-up (it captures the
+    // session FeatManager). Even the ARM64-safe hook's trampoline is not proven
+    // correct on shifted prologues — a corrupted accessor crashes the level-up
+    // validator (ApplyAndValidateLevelUp -> indirect call to garbage; zero SE
+    // frames). Only install on the exact baseline version where it's verified.
+    // On other versions StaticData captures FeatManager via the TypeContext
+    // traversal instead (no hooking). Restores the pre-offset-table-fill behavior.
+    if (!version_detect_matches()) {
+        log_message("[StaticData] FeatManager::GetFeats hook SKIPPED on this version "
+                    "(hook trampoline unverified) — using TypeContext traversal only");
+        return false;
+    }
+
+    void* target = offset_table_fn(off->fn_feat_getfeats);
 
     // First, analyze the prologue to understand the ADRP patterns
     log_message("[StaticData] Analyzing FeatManager::GetFeats prologue at %p", target);
@@ -1042,6 +1063,20 @@ bool staticdata_manager_init(void *main_binary_base) {
     // Clear manager pointers
     memset(g_staticdata.managers, 0, sizeof(g_staticdata.managers));
     memset(g_staticdata.real_managers, 0, sizeof(g_staticdata.real_managers));
+
+    // Manager capture installs inline Dobby CODE hooks at function addresses.
+    // Addresses are sourced from the offset table (keyed by game version).
+    // A missing table entry means 0 offsets → hooks are individually skipped.
+    // This replaced the old exact-version-match gate (Issue #78) with a
+    // per-version table so new BG3 versions can be supported without source changes.
+    const VersionOffsets *off = offset_table_get();
+    if (!off || (!off->fn_feat_getfeats && !off->fn_get_background)) {
+        log_message("[StaticData] Manager hooks SKIPPED (no function offsets for version %s — "
+                    "add to offset_table.c to enable; Ext.StaticData in degraded mode)",
+                    version_detect_get_version() ? version_detect_get_version() : "unknown");
+        g_staticdata.initialized = true;
+        return true;
+    }
 
     // Try to install ARM64-safe hook for FeatManager::GetFeats
     // This uses the skip-and-redirect strategy from Issue #44

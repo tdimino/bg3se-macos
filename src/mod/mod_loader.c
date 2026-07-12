@@ -22,10 +22,12 @@
 
 // Detected mods from modsettings.lsx
 static char detected_mods[MAX_MODS][MAX_MOD_NAME_LEN];
+static char detected_uuids[MAX_MODS][64];  // parallel to detected_mods (mod UUIDs)
 static int detected_mod_count = 0;
 
 // Detected SE mods (mods with ScriptExtender/Config.json containing "Lua")
 static char se_mods[MAX_MODS][MAX_MOD_NAME_LEN];
+static char se_mod_uuids[MAX_MODS][64];    // parallel to se_mods (mod UUIDs)
 static int se_mod_count = 0;
 
 // Current mod context (for Ext.Require)
@@ -211,6 +213,12 @@ int mod_find_pak(const char *mod_name, char *pak_path_out, size_t pak_path_size)
     return 0;
 }
 
+static mod_chunk_env_hook_t g_chunk_env_hook = NULL;
+
+void mod_loader_set_chunk_env_hook(mod_chunk_env_hook_t hook) {
+    g_chunk_env_hook = hook;
+}
+
 int mod_load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua_path) {
     PakFile *pak = pak_open(pak_path);
     if (!pak) return 0;
@@ -227,16 +235,28 @@ int mod_load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua_pa
 
     if (!content) return 0;
 
-    // Execute the Lua code
-    if (luaL_dostring(L, content) != LUA_OK) {
+    // Load the chunk (do NOT execute yet): we must install the per-mod _ENV on the
+    // loaded function before running it, so mods like MCM whose API lives on their
+    // ModTable (Mods.<ModTable>) can reference it as a bare global.
+    if (luaL_loadbuffer(L, content, size, lua_path) != LUA_OK) {
         const char *error = lua_tostring(L, -1);
-        LOG_LUA_ERROR("PAK load error (%s): %s", lua_path, error);
+        LOG_LUA_ERROR("PAK compile error (%s): %s", lua_path, error);
         lua_pop(L, 1);
         free(content);
         return 0;
     }
-
     free(content);
+
+    // Install per-mod _ENV on the freshly loaded chunk (no-op if none is active).
+    if (g_chunk_env_hook) g_chunk_env_hook(L);
+
+    if (lua_pcall(L, 0, LUA_MULTRET, 0) != LUA_OK) {
+        const char *error = lua_tostring(L, -1);
+        LOG_LUA_ERROR("PAK load error (%s): %s", lua_path, error);
+        lua_pop(L, 1);
+        return 0;
+    }
+
     LOG_LUA_INFO("Loaded from PAK: %s", lua_path);
     return 1;
 }
@@ -289,7 +309,13 @@ void mod_detect_enabled(void) {
 
     int mod_count = 0;
     char *ptr = content;
-    const char *name_marker = "attribute id=\"Name\" type=\"LSString\" value=\"";
+    // Key on the mod's Folder, NOT its Name. ScriptExtender files inside a pak
+    // live at Mods/<Folder>/ScriptExtender/..., and the Folder frequently differs
+    // from the display Name (e.g. "Mod Configuration Menu" -> folder "BG3MCM",
+    // "Sit This One Out 2" -> folder "Sit This One Out"). Parsing Name here caused
+    // those mods' bootstraps to never load. Folder values are also unescaped
+    // identifiers, avoiding &apos;-style HTML entities present in Names.
+    const char *name_marker = "attribute id=\"Folder\" type=\"LSString\" value=\"";
     size_t marker_len = strlen(name_marker);
 
     while ((ptr = strstr(ptr, name_marker)) != NULL) {
@@ -307,6 +333,26 @@ void mod_detect_enabled(void) {
                 // Store in detected mods array
                 strncpy(detected_mods[detected_mod_count], mod_name, MAX_MOD_NAME_LEN - 1);
                 detected_mods[detected_mod_count][MAX_MOD_NAME_LEN - 1] = '\0';
+
+                // Capture this ModuleShortDesc's UUID (appears after Folder, before
+                // the next node) so we can set the ModuleUUID Lua global per mod.
+                detected_uuids[detected_mod_count][0] = '\0';
+                {
+                    const char *uuid_marker = "id=\"UUID\" type=\"guid\" value=\"";
+                    char *next_folder = strstr(end, name_marker);
+                    char *uuid_pos = strstr(end, uuid_marker);
+                    if (uuid_pos && (!next_folder || uuid_pos < next_folder)) {
+                        uuid_pos += strlen(uuid_marker);
+                        char *uend = strchr(uuid_pos, '"');
+                        if (uend) {
+                            size_t ulen = (size_t)(uend - uuid_pos);
+                            if (ulen < sizeof(detected_uuids[0])) {
+                                strncpy(detected_uuids[detected_mod_count], uuid_pos, ulen);
+                                detected_uuids[detected_mod_count][ulen] = '\0';
+                            }
+                        }
+                    }
+                }
                 detected_mod_count++;
 
                 mod_count++;
@@ -335,6 +381,8 @@ void mod_detect_enabled(void) {
             if (se_mod_count < MAX_MODS) {
                 strncpy(se_mods[se_mod_count], detected_mods[i], MAX_MOD_NAME_LEN - 1);
                 se_mods[se_mod_count][MAX_MOD_NAME_LEN - 1] = '\0';
+                strncpy(se_mod_uuids[se_mod_count], detected_uuids[i], sizeof(se_mod_uuids[0]) - 1);
+                se_mod_uuids[se_mod_count][sizeof(se_mod_uuids[0]) - 1] = '\0';
                 se_mod_count++;
                 LOG_MOD_INFO("  [SE] %s", detected_mods[i]);
             }
@@ -382,6 +430,7 @@ void mod_detect_enabled(void) {
                     if (se_mod_count < MAX_MODS) {
                         strncpy(se_mods[se_mod_count], entry->d_name, MAX_MOD_NAME_LEN - 1);
                         se_mods[se_mod_count][MAX_MOD_NAME_LEN - 1] = '\0';
+                        se_mod_uuids[se_mod_count][0] = '\0';  // UUID unknown for folder-scan mods
                         se_mod_count++;
                         LOG_MOD_INFO("  [SE] %s (from Mods folder)", entry->d_name);
                     }
@@ -411,6 +460,11 @@ int mod_get_se_count(void) {
 const char *mod_get_se_name(int index) {
     if (index < 0 || index >= se_mod_count) return NULL;
     return se_mods[index];
+}
+
+const char *mod_get_se_uuid(int index) {
+    if (index < 0 || index >= se_mod_count) return NULL;
+    return se_mod_uuids[index];
 }
 
 // ============================================================================

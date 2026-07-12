@@ -16,6 +16,8 @@
 #include "prototype_managers.h"
 #include "logging.h"
 #include "../strings/fixed_string.h"
+#include "../core/offset_table.h"
+#include "../game/game_state.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -283,14 +285,21 @@ void stats_manager_init(void *main_binary_base) {
         }
     }
 
-    // Fallback: Calculate from Ghidra offset
+    // Fallback: use offset table (version-keyed), then old Ghidra absolute if nothing else
     if (!g_pRPGStatsPtr && main_binary_base) {
-        uintptr_t runtime_addr = (uintptr_t)main_binary_base +
-                                  (OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS);
-        g_pRPGStatsPtr = (void**)runtime_addr;
-        LOG_STATS_DEBUG("Using Ghidra offset: %p (base %p + offset 0x%llx)",
-                  (void*)g_pRPGStatsPtr, main_binary_base,
-                  (unsigned long long)(OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS));
+        const VersionOffsets *off = offset_table_get();
+        if (off && off->rpgstats_ptr) {
+            g_pRPGStatsPtr = (void**)offset_table_resolve(off->rpgstats_ptr);
+            LOG_STATS_DEBUG("Using offset table: %p (offset 0x%llx)",
+                      (void*)g_pRPGStatsPtr, (unsigned long long)off->rpgstats_ptr);
+        } else {
+            uintptr_t runtime_addr = (uintptr_t)main_binary_base +
+                                      (OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS);
+            g_pRPGStatsPtr = (void**)runtime_addr;
+            LOG_STATS_DEBUG("Using Ghidra offset fallback: %p (base %p + offset 0x%llx)",
+                      (void*)g_pRPGStatsPtr, main_binary_base,
+                      (unsigned long long)(OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS));
+        }
     }
 
     g_Initialized = true;
@@ -1419,6 +1428,18 @@ static void* get_cached_vmt(void) {
 
 bool stats_sync(const char *name) {
     if (!name) return false;
+
+    // CRASH GUARD: stats_sync is a *mutating* op — it calls the game's
+    // SpellPrototype::Init on prototypes held in the manager's RefMap. During a
+    // session load/unload/sync the game is rebuilding those managers, so a
+    // prototype pointer can be freed mid-call (use-after-free -> SIGBUS). Only
+    // run when the server is in a stable state.
+    ServerGameState gs = game_state_get_current();
+    if (gs != SERVER_STATE_RUNNING && gs != SERVER_STATE_PAUSED) {
+        LOG_STATS_DEBUG("stats_sync: skipped for '%s' — server not stable (state=%s)",
+                        name, game_state_get_name(gs));
+        return false;
+    }
 
     // Get the stat object (shadow or game)
     StatsObjectPtr obj = stats_get(name);

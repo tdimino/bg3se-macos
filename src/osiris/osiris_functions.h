@@ -59,6 +59,23 @@ void osi_func_cache_set_known_events(KnownEvent *events);
  */
 void osi_func_enumerate(void);
 
+/**
+ * Walk the Osiris name index (CSearchIndex in COsiFunctionMan) and cache every
+ * function by name — including databases (DB_*), which the id-probe in
+ * osi_func_enumerate() cannot see. Call once the story/save is loaded so
+ * Osi.DB_*:Get() can resolve. Idempotent; read-only.
+ */
+void osi_func_enumerate_by_name(void);
+
+/**
+ * Database registry (databases have OsiFunctionId==0 and cannot be id-cached).
+ * osi_db_register: name -> COsiFunctionData* (returns 1 if newly added).
+ * osi_db_lookup: returns the COsiFunctionData* for a DB name, or NULL.
+ */
+int   osi_db_register(const char *name, void *def);
+void *osi_db_lookup(const char *name);
+int   osi_db_count(void);
+
 // ============================================================================
 // Caching
 // ============================================================================

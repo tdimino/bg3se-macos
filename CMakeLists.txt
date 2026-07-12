@@ -150,6 +150,7 @@ add_library(bg3se SHARED
     src/core/safe_memory.c
     src/core/crashlog.c
     src/core/version_detect.c
+    src/core/offset_table.c
     src/core/mach_exception.c
     src/core/mach_exc_stubs/mach_excServer.c
     src/lua/lua_ext.c

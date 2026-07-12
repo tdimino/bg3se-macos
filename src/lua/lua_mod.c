@@ -14,6 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 // ============================================================================
 // Static State: UUID to Name Mapping
@@ -25,6 +26,8 @@
 typedef struct {
     char uuid[UUID_LEN];
     char name[256];
+    char folder[256];       // meta Folder (== pak internal dir); Directory for Info
+    char version64[32];     // packed int64 version string, decoded into Info.ModVersion
 } ModUuidEntry;
 
 static ModUuidEntry g_mod_uuids[MAX_MOD_UUIDS];
@@ -126,12 +129,38 @@ static void load_mod_uuids(void) {
             }
         }
 
+        // Extract Folder (pak internal directory) and Version64
+        const char *folder_marker = "attribute id=\"Folder\" type=\"LSString\" value=\"";
+        const char *folder_start = strstr(node_start, folder_marker);
+        char folder[256] = "";
+        if (folder_start && folder_start < node_end) {
+            folder_start += strlen(folder_marker);
+            const char *fe = strchr(folder_start, '"');
+            if (fe && fe < node_end) {
+                size_t len = fe - folder_start;
+                if (len < sizeof(folder)) { strncpy(folder, folder_start, len); folder[len] = '\0'; }
+            }
+        }
+
+        const char *ver_marker = "attribute id=\"Version64\" type=\"int64\" value=\"";
+        const char *ver_start = strstr(node_start, ver_marker);
+        char version64[32] = "";
+        if (ver_start && ver_start < node_end) {
+            ver_start += strlen(ver_marker);
+            const char *ve = strchr(ver_start, '"');
+            if (ve && ve < node_end) {
+                size_t len = ve - ver_start;
+                if (len < sizeof(version64)) { strncpy(version64, ver_start, len); version64[len] = '\0'; }
+            }
+        }
+
         // Store if both found
         if (uuid[0] && name[0] && g_mod_uuid_count < MAX_MOD_UUIDS) {
-            strncpy(g_mod_uuids[g_mod_uuid_count].uuid, uuid, UUID_LEN - 1);
-            g_mod_uuids[g_mod_uuid_count].uuid[UUID_LEN - 1] = '\0';  // Ensure null termination
-            strncpy(g_mod_uuids[g_mod_uuid_count].name, name, 255);
-            g_mod_uuids[g_mod_uuid_count].name[255] = '\0';  // Ensure null termination
+            ModUuidEntry *e = &g_mod_uuids[g_mod_uuid_count];
+            strncpy(e->uuid, uuid, UUID_LEN - 1);   e->uuid[UUID_LEN - 1] = '\0';
+            strncpy(e->name, name, 255);            e->name[255] = '\0';
+            strncpy(e->folder, folder, 255);        e->folder[255] = '\0';
+            strncpy(e->version64, version64, 31);   e->version64[31] = '\0';
             g_mod_uuid_count++;
         }
 
@@ -213,6 +242,69 @@ static int lua_mod_get_load_order(lua_State *L) {
 }
 
 /**
+ * Push a mod object matching the real BG3SE shape: a top-level table plus a
+ * nested `Info` (ModuleInfo) table. SE libraries (CommunityLibrary, MCM,
+ * CompatibilityFramework) read mod.Info.ModVersion / .Directory / .ModuleUUID;
+ * a missing Info table aborted their bootstraps.
+ */
+static void push_mod_table(lua_State *L, const ModUuidEntry *e) {
+    const char *dir = e->folder[0] ? e->folder : e->name;
+
+    lua_newtable(L);  // mod
+
+    lua_pushstring(L, e->uuid);  lua_setfield(L, -2, "UUID");
+    lua_pushstring(L, e->name);  lua_setfield(L, -2, "Name");
+    lua_pushstring(L, dir);      lua_setfield(L, -2, "Directory");
+
+    int se_count = mod_get_se_count();
+    bool is_se = false;
+    for (int j = 0; j < se_count; j++) {
+        const char *sn = mod_get_se_name(j);
+        if (sn && (strcasecmp(sn, e->name) == 0 ||
+                   (e->folder[0] && strcasecmp(sn, e->folder) == 0))) {
+            is_se = true;
+            break;
+        }
+    }
+    lua_pushboolean(L, is_se);  lua_setfield(L, -2, "HasScriptExtender");
+
+    // Info (ModuleInfo) sub-table — what SE libraries actually read.
+    lua_newtable(L);  // Info
+    lua_pushstring(L, e->name);  lua_setfield(L, -2, "Name");
+    lua_pushstring(L, dir);      lua_setfield(L, -2, "Directory");
+    lua_pushstring(L, e->uuid);  lua_setfield(L, -2, "ModuleUUID");
+    lua_pushstring(L, "");       lua_setfield(L, -2, "Author");
+    lua_pushstring(L, "");       lua_setfield(L, -2, "Description");
+
+    // ModVersion, decoded from the packed int64 (Norbyte layout):
+    // Major:7 (>>55) Minor:8 (>>47) Revision:16 (>>31) Build:31 (low).
+    uint64_t v = e->version64[0] ? strtoull(e->version64, NULL, 10) : 0;
+    lua_Integer major = (lua_Integer)((v >> 55) & 0x7f);
+    lua_Integer minor = (lua_Integer)((v >> 47) & 0xff);
+    lua_Integer revision = (lua_Integer)((v >> 31) & 0xffff);
+    lua_Integer build = (lua_Integer)(v & 0x7fffffff);
+    lua_newtable(L);  // ModVersion
+    // Array form ModVersion[1..4] — this is what mods (MCM, CommunityLibrary)
+    // actually read (e.g. string.format("%d.%d.%d.%d", ModVersion[1], ...)).
+    // A missing [1] made string.format throw and aborted MCM's CreateModMenu,
+    // which is why UIReady never fired (window auto-opened, content stayed empty).
+    lua_pushinteger(L, major);    lua_rawseti(L, -2, 1);
+    lua_pushinteger(L, minor);    lua_rawseti(L, -2, 2);
+    lua_pushinteger(L, revision); lua_rawseti(L, -2, 3);
+    lua_pushinteger(L, build);    lua_rawseti(L, -2, 4);
+    // Named fields too, for consumers that use them.
+    lua_pushinteger(L, major);    lua_setfield(L, -2, "Major");
+    lua_pushinteger(L, minor);    lua_setfield(L, -2, "Minor");
+    lua_pushinteger(L, revision); lua_setfield(L, -2, "Revision");
+    lua_pushinteger(L, build);    lua_setfield(L, -2, "Build");
+    lua_setfield(L, -2, "ModVersion");
+
+    lua_newtable(L);  lua_setfield(L, -2, "Dependencies");
+
+    lua_setfield(L, -2, "Info");  // mod.Info = Info
+}
+
+/**
  * Ext.Mod.GetMod(modGuid) -> table|nil
  *
  * Get mod information by UUID.
@@ -224,29 +316,7 @@ static int lua_mod_get_mod(lua_State *L) {
 
     for (int i = 0; i < g_mod_uuid_count; i++) {
         if (strcasecmp(g_mod_uuids[i].uuid, uuid) == 0) {
-            lua_newtable(L);
-
-            lua_pushstring(L, g_mod_uuids[i].uuid);
-            lua_setfield(L, -2, "UUID");
-
-            lua_pushstring(L, g_mod_uuids[i].name);
-            lua_setfield(L, -2, "Name");
-
-            lua_pushstring(L, g_mod_uuids[i].name);
-            lua_setfield(L, -2, "Directory");
-
-            // Check if it's an SE mod
-            int se_count = mod_get_se_count();
-            bool is_se = false;
-            for (int j = 0; j < se_count; j++) {
-                if (strcasecmp(mod_get_se_name(j), g_mod_uuids[i].name) == 0) {
-                    is_se = true;
-                    break;
-                }
-            }
-            lua_pushboolean(L, is_se);
-            lua_setfield(L, -2, "HasScriptExtender");
-
+            push_mod_table(L, &g_mod_uuids[i]);
             return 1;
         }
     }

@@ -68,6 +68,9 @@ typedef enum {
     EVENT_SPELL_CAST_PREPARE_START,          // Spell prepare phase started
     EVENT_SPELL_CAST_PREPARE_END,            // Spell prepare phase ended
     EVENT_SPELL_CAST_PREVIEW_END,            // Spell preview phase ended
+    // Client input events (needed by MCM's SubscribedEvents)
+    EVENT_CONTROLLER_BUTTON_INPUT,           // Gamepad button input
+    EVENT_MOUSE_BUTTON_INPUT,                // Mouse button input
     EVENT_MAX
 } BG3SEEventType;
 
@@ -114,6 +117,10 @@ void events_fire_tick(lua_State *L, float delta_time);
  * @param toState   New state value
  */
 void events_fire_game_state_changed(lua_State *L, int fromState, int toState);
+
+// Push the Ext.Enums.ClientGameState EnumValue userdata for an internal
+// ServerGameState (used by Ext.Utils.GetGameState so mods can compare it with ==).
+void events_push_client_gamestate(lua_State *L, int internal_state);
 
 /**
  * Fire the KeyInput event with key data.

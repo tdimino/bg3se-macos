@@ -20,6 +20,7 @@
 #include "localization.h"
 #include "logging.h"
 #include "fixed_string.h"
+#include "../core/offset_table.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -133,13 +134,21 @@ void localization_init(void *main_binary_base) {
 
     s_loca.binary_base = main_binary_base;
 
-    // Calculate address of ls::TranslatedStringRepository::m_ptr
-    s_loca.repo_ptr_addr = (void**)((uintptr_t)main_binary_base + LOCA_REPO_OFFSET);
+    // The repository m_ptr is a __DATA global -> apply the per-version data shift.
+    const VersionOffsets *vo = offset_table_get();
+    uintptr_t data_shift = vo ? vo->component_data_shift : 0;
+    s_loca.repo_ptr_addr = (void**)((uintptr_t)main_binary_base + LOCA_REPO_OFFSET + data_shift);
 
-    // Calculate function addresses
-    s_loca.fs_create = (FixedStringCreateFn)((uintptr_t)main_binary_base + LOCA_FIXEDSTRING_CREATE);
-    s_loca.tryget_fn = (void*)((uintptr_t)main_binary_base + LOCA_TRYGET_OFFSET);
-    s_loca.add_string_fn = (AddTranslatedStringFn)((uintptr_t)main_binary_base + LOCA_ADDTRANSLATEDSTRING);
+    // The functions are __TEXT -> remap each hardcoded 6995620 address. If a
+    // function has no verified address for this version, leave it NULL so the
+    // caller skips it instead of jumping to a stale address.
+    #define LOCA_FN(off) ({ \
+        uint64_t _a = offset_table_remap_fn(0x100000000ULL + (off)); \
+        _a ? (void*)((uintptr_t)main_binary_base + (_a - 0x100000000ULL)) : NULL; })
+    s_loca.fs_create     = (FixedStringCreateFn)LOCA_FN(LOCA_FIXEDSTRING_CREATE);
+    s_loca.tryget_fn     = LOCA_FN(LOCA_TRYGET_OFFSET);
+    s_loca.add_string_fn = (AddTranslatedStringFn)LOCA_FN(LOCA_ADDTRANSLATEDSTRING);
+    #undef LOCA_FN
 
     LOG_CORE_INFO("LOCA: Initialized - repo_ptr at %p", (void*)s_loca.repo_ptr_addr);
     LOG_CORE_DEBUG("LOCA: FixedString::Create at %p", (void*)s_loca.fs_create);

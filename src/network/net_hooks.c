@@ -23,6 +23,8 @@
 #include "network_backend.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/offset_table.h"
+#include "../hooks/arm64_hook.h"        // arm64_safe_hook (JIT-W^X-aware inline hook)
 #include "../game/game_state.h"        // game_state_get_current()
 #include "../entity/entity_system.h"   // entity_get_binary_base(), entity_get_eoc_server()
 #include <dobby.h>
@@ -47,6 +49,7 @@ static void *s_net_msg_factory = NULL;     // NetMessageFactory* (from GameServe
 typedef void *(*GetMessage_t)(void *factory, uint32_t message_id);
 static GetMessage_t s_orig_GetMessage = NULL;
 static void *s_hook_target_addr = NULL;    // For cleanup
+static ARM64HookHandle *s_getmsg_hook = NULL;  // arm64_safe_hook handle (for unhook)
 
 // Outbound send state (Phase 4G)
 static bool s_send_vmt_probed = false;
@@ -96,7 +99,11 @@ static bool safe_read_u64(const void *base, uintptr_t offset, uint64_t *out) {
 static uintptr_t get_runtime_addr(uintptr_t ghidra_addr) {
     void *base = entity_get_binary_base();
     if (!base) return 0;
-    return ghidra_addr - GHIDRA_BASE_ADDRESS + (uintptr_t)base;
+    // Remap the hardcoded 6995620 address to the running version (0 = no verified
+    // address -> caller skips the hook rather than hooking a stale function).
+    uint64_t remapped = offset_table_remap_fn(ghidra_addr);
+    if (!remapped) return 0;
+    return remapped - GHIDRA_BASE_ADDRESS + (uintptr_t)base;
 }
 
 // ============================================================================
@@ -272,13 +279,17 @@ void net_hooks_remove(void) {
     }
 
     // Remove GetMessage hook (Phase 4F)
-    // Note: Dobby doesn't provide DobbyDestroy on all platforms.
-    // Clear our state so the hook becomes a pass-through if it fires during shutdown.
+    // arm64_safe_hook installs a real, reversible inline hook: arm64_unhook
+    // restores the original prologue bytes and frees the trampoline. After this
+    // the game calls net::MessageFactory::GetFreeMessage directly again.
     if (s_status.message_factory_hooked) {
-        LOG_NET_INFO("  Clearing GetMessage hook state");
+        if (s_getmsg_hook) {
+            arm64_unhook(s_getmsg_hook);
+            s_getmsg_hook = NULL;
+            LOG_NET_INFO("  Removed GetMessage hook");
+        }
         s_status.message_factory_hooked = false;
-        // After this, hook_GetMessage will still call s_orig_GetMessage for all IDs
-        // since message_factory_hooked is cleared. This is safe.
+        s_orig_GetMessage = NULL;
     }
 
     // Destroy the ExtenderProtocol singleton
@@ -292,6 +303,7 @@ void net_hooks_remove(void) {
     s_game_server = NULL;
     s_net_msg_factory = NULL;
     s_hook_target_addr = NULL;
+    s_getmsg_hook = NULL;
     s_send_vmt_probed = false;
     s_send_fn = NULL;
 
@@ -481,10 +493,25 @@ bool net_hooks_register_message(void) {
     // Hooking GetMessage avoids needing GameAlloc and Larian container RE.
     // For ID 400 we return our own pooled ExtenderMessage, for all other IDs
     // we pass through to the original.
+    //
+    // NOTE (build 7209685 / macOS 26): the hook target address is resolved via
+    // offset_table_remap_fn(ADDR_GETMESSAGE), which maps the baseline 6995620
+    // address (0x1063d5998) to this build's net::MessageFactory::GetFreeMessage
+    // (0x1063c4550, symbol-verified). We install the hook with arm64_safe_hook()
+    // rather than DobbyHook(): on recent macOS (Darwin 25 / macOS 26), Dobby's
+    // trampoline builder writes to a MAP_JIT page WITHOUT toggling per-thread JIT
+    // write protection, so the build faults (KERN_PROTECTION_FAILURE) and
+    // DobbyHook returns -1 (routing error). arm64_safe_hook() calls
+    // pthread_jit_write_protect_np() around its trampoline writes (see
+    // src/hooks/arm64_hook.c) and manages __TEXT page protection itself, which is
+    // the same mechanism the StaticData/FeatManager "ADRP-safe" path uses.
+    // GetFreeMessage's prologue is a plain frame setup (no ADRP / PC-relative), so
+    // the safe hook installs cleanly at offset 0.
 
     uintptr_t runtime_addr = get_runtime_addr(ADDR_GETMESSAGE);
     if (!runtime_addr) {
-        LOG_NET_WARN("  GetMessage hook: failed to resolve runtime address (no binary base)");
+        LOG_NET_WARN("  GetMessage hook: failed to resolve runtime address "
+                     "(version not in offset table / no binary base) — net disabled");
         return false;
     }
 
@@ -495,15 +522,17 @@ bool net_hooks_register_message(void) {
     // Initialize the message pool before hooking
     extender_message_pool_init();
 
-    int result = DobbyHook(s_hook_target_addr, (void *)hook_GetMessage,
-                           (void **)&s_orig_GetMessage);
-    if (result == 0) {
-        LOG_NET_INFO("  GetMessage hook installed successfully (orig=%p)",
-                     (void *)s_orig_GetMessage);
+    void *orig = NULL;
+    s_getmsg_hook = arm64_safe_hook(s_hook_target_addr, (void *)hook_GetMessage, &orig);
+    if (s_getmsg_hook && orig) {
+        s_orig_GetMessage = (GetMessage_t)orig;
+        LOG_NET_INFO("  GetMessage hook installed successfully (orig=%p)", orig);
         s_status.message_factory_hooked = true;
         return true;
     } else {
-        LOG_NET_ERROR("  GetMessage hook FAILED (Dobby result=%d)", result);
+        LOG_NET_ERROR("  GetMessage hook FAILED (arm64_safe_hook returned NULL)");
+        s_getmsg_hook = NULL;
+        s_orig_GetMessage = NULL;
         s_hook_target_addr = NULL;
         return false;
     }
@@ -918,6 +947,34 @@ static int deferred_backoff_ms(int retry_count) {
     return DEFERRED_BASE_DELAY_MS * (1 << shift);
 }
 
+/**
+ * Net transport selection.
+ *
+ * DEFAULT = LOCAL (in-process message bus). Ext.Net.* / NetChannel traffic is
+ * delivered entirely in-process via message_bus.c (see lua_net.c → message_bus_queue
+ * → message_bus_process → NetModMessage event). It NEVER touches the game's
+ * net::MessageFactory / ProtocolList / SendToPeer. This is single-player-correct
+ * (client and server share one process + one Lua state) and structurally immune to
+ * the factory-corruption crash: net::MessageFactory::GetFreeMessage(int)/
+ * ReleaseMessage(int,*) index `MessagePools.data[id]` with NO bounds check, and the
+ * extender message id (400 = NETMSG_SCRIPT_EXTENDER) is far past the live pool array
+ * (~326 slots on build 7209685). Routing through the bus means the game never sees
+ * id 400, so it never indexes out of bounds.
+ *
+ * RAKNET transport (real game net) is OPT-IN via BG3SE_NET_RAKNET=1 and is known
+ * UNSAFE on this port: it inserts our ExtenderProtocol into the live ProtocolList
+ * and sends an id-400 message via SendToPeer, which drives id-400 traffic through
+ * the factory and crashes in GetFreeMessage. A safe RakNet path requires calling
+ * net::MessageFactory::RegisterMessage(400, template, ...) (0x1063c4140 on 7209685)
+ * to grow the pool array so slot 400 exists — which Windows BG3SE does and this port
+ * does not yet. Until then the flag exists only for future RE, defaulting off.
+ */
+static bool net_use_raknet_transport(void) {
+    static int v = -1;
+    if (v < 0) v = (getenv("BG3SE_NET_RAKNET") != NULL);
+    return v != 0;
+}
+
 void net_hooks_request_deferred_init(void) {
     // Already complete — nothing to do
     if (s_deferred_state == DEFERRED_COMPLETE) {
@@ -1007,6 +1064,32 @@ bool net_hooks_deferred_tick(void) {
 
     // CAPTURING: perform the actual initialization
     if (s_deferred_state == DEFERRED_CAPTURING) {
+        // -------------------------------------------------------------------
+        // LOCAL transport (default): no game-net interaction whatsoever.
+        // NetChannel/Ext.Net traffic flows through the in-process message bus.
+        // We only prime the local PeerManager so Ext.Net.IsReady()/PeerVersion()
+        // report ready for the host. This path CANNOT corrupt the game's message
+        // factory because it never inserts a protocol, switches the backend, or
+        // sends an id-400 message (see net_use_raknet_transport() rationale).
+        // -------------------------------------------------------------------
+        if (!net_use_raknet_transport()) {
+            peer_manager_init();  // idempotent; registers local host peer (user_id 1)
+            peer_manager_set_proto_version(1, PROTO_VERSION_CURRENT);
+            LOG_NET_INFO("Deferred net init: COMPLETE (local in-process transport; "
+                         "NetChannel via message bus, game net untouched)");
+            s_deferred_state = DEFERRED_COMPLETE;
+            return true;
+        }
+
+        // -------------------------------------------------------------------
+        // RAKNET transport (opt-in, BG3SE_NET_RAKNET=1): UNSAFE — see rationale.
+        // Kept for future RE; will crash until MessageFactory::RegisterMessage
+        // grows the pool for id 400.
+        // -------------------------------------------------------------------
+        LOG_NET_WARN("Deferred net init: BG3SE_NET_RAKNET=1 — using game RakNet "
+                     "transport (UNSAFE: id 400 is out of MessagePool range, may "
+                     "crash net::MessageFactory::GetFreeMessage)");
+
         void *eoc_server = entity_get_eoc_server();
         if (!eoc_server) {
             LOG_NET_WARN("Deferred net init: EocServer not available");

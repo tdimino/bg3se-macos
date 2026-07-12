@@ -11,6 +11,8 @@
 #include "logging.h"
 #include "../console/console.h"
 #include "../io/path_override.h"
+#include "../mod/mod_loader.h"
+#include "../pak/pak_reader.h"
 #include "../entity/component_registry.h"
 #include "../entity/component_property.h"
 #include "../enum/enum_registry.h"
@@ -22,6 +24,7 @@
 #include <string.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <sys/stat.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/vm_map.h>
@@ -80,12 +83,103 @@ int lua_ext_getcontext(lua_State *L) {
 // Ext.IO Functions
 // ============================================================================
 
+// Base directory for Script Extender user data (mod settings, profiles). Mirrors
+// Windows BG3SE's "Script Extender" data folder. MCM persists mod settings and
+// its open_on_start first-run migration here via Ext.IO.SaveFile with a relative
+// path (e.g. "BG3MCM/Profiles/Default/BG3MCM/settings.json"); without a real
+// base those paths resolve against the CWD and the writes fail, so nothing
+// persists (and MCM's window keeps auto-opening every launch).
+static const char *io_se_data_base(void) {
+    static char base[MAX_PATH_LEN];
+    static int inited = 0;
+    if (!inited) {
+        const char *home = getenv("HOME");
+        snprintf(base, sizeof(base),
+                 "%s/Documents/Larian Studios/Baldur's Gate 3/Script Extender",
+                 home ? home : "");
+        inited = 1;
+    }
+    return base;
+}
+
+// Create all parent directories of file_path (mkdir -p on the dirname).
+static void io_mkdir_parents(const char *file_path) {
+    char tmp[MAX_PATH_LEN];
+    snprintf(tmp, sizeof(tmp), "%s", file_path);
+    char *last = strrchr(tmp, '/');
+    if (!last) return;
+    *last = '\0';  // strip filename, leaving the directory path
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0755);
+}
+
+// Read a mod-relative VFS path (e.g. "Mods/BG3MCM/ScriptExtender/Config.json")
+// out of the owning mod's PAK. Windows BG3SE's Ext.IO.LoadFile(path, "data")
+// resolves such paths against the game's virtual filesystem, which includes
+// mounted PAKs; the port must do the same so mods like MCM can read their
+// Config.json / JSON blueprints. Returns malloc'd, NUL-terminated content (caller
+// frees) or NULL if not found. *out_size excludes the terminator.
+static char *io_load_from_pak(const char *path, size_t *out_size) {
+    // Only VFS-style "Mods/<Folder>/..." paths live inside PAKs.
+    if (strncmp(path, "Mods/", 5) != 0) return NULL;
+
+    // Extract the mod folder name (between "Mods/" and the next '/').
+    const char *folder_start = path + 5;
+    const char *slash = strchr(folder_start, '/');
+    if (!slash || slash == folder_start) return NULL;
+
+    char folder[256];
+    size_t flen = (size_t)(slash - folder_start);
+    if (flen >= sizeof(folder)) return NULL;
+    memcpy(folder, folder_start, flen);
+    folder[flen] = '\0';
+
+    char pak_path[MAX_PATH_LEN];
+    if (!mod_find_pak(folder, pak_path, sizeof(pak_path))) return NULL;
+
+    PakFile *pak = pak_open(pak_path);
+    if (!pak) return NULL;
+
+    int idx = pak_find_entry(pak, path);
+    if (idx < 0) {
+        pak_close(pak);
+        return NULL;
+    }
+
+    char *content = pak_read_file(pak, idx, out_size);
+    pak_close(pak);
+    return content;  // already NUL-terminated by pak_read_file
+}
+
 int lua_ext_io_loadfile(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     LOG_LUA_INFO("Ext.IO.LoadFile('%s')", path);
 
     FILE *f = fopen(path, "r");
+    if (!f && path[0] != '/') {
+        // Relative VFS path: try the Script Extender data dir (user-saved data
+        // like MCM's settings.json lives here — see io_se_data_base).
+        char se_path[MAX_PATH_LEN];
+        snprintf(se_path, sizeof(se_path), "%s/%s", io_se_data_base(), path);
+        f = fopen(se_path, "r");
+    }
     if (!f) {
+        // Filesystem miss: fall back to reading from the owning mod's PAK
+        // (VFS "data" semantics). Required for MCM's reverse-lookup of every
+        // mod's ScriptExtender/Config.json.
+        size_t pak_size = 0;
+        char *pak_content = io_load_from_pak(path, &pak_size);
+        if (pak_content) {
+            lua_pushlstring(L, pak_content, pak_size);
+            free(pak_content);
+            return 1;
+        }
         lua_pushnil(L);
         lua_pushstring(L, "File not found");
         return 2;
@@ -117,13 +211,25 @@ int lua_ext_io_savefile(lua_State *L) {
     const char *content = luaL_checkstring(L, 2);
     LOG_LUA_INFO("Ext.IO.SaveFile('%s')", path);
 
-    FILE *f = fopen(path, "w");
+    // Windows BG3SE writes to <UserProfile>/Script Extender/<path> (PathRootType
+    // ::UserProfile) and mkdir -p's the parents. Mirror that so MCM's settings /
+    // profiles / open_on_start migration actually persist.
+    char full[MAX_PATH_LEN];
+    if (path[0] == '/') {
+        snprintf(full, sizeof(full), "%s", path);  // absolute: honor as-is
+    } else {
+        snprintf(full, sizeof(full), "%s/%s", io_se_data_base(), path);
+    }
+    io_mkdir_parents(full);
+
+    FILE *f = fopen(full, "w");
     if (!f) {
+        LOG_LUA_INFO("Ext.IO.SaveFile: could not open '%s' for writing", full);
         lua_pushboolean(L, 0);
         return 1;
     }
 
-    fputs(content, f);
+    fwrite(content, 1, strlen(content), f);
     fclose(f);
 
     lua_pushboolean(L, 1);

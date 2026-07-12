@@ -11,6 +11,7 @@
 #include "entity_storage.h"  // For GHIDRA_BASE_ADDRESS
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/offset_table.h"  // For per-version component_data_shift
 
 #include <string.h>
 
@@ -306,8 +307,12 @@ bool component_typeid_read(uint64_t ghidraAddr, uint16_t *outIndex) {
     }
 
     /* Calculate runtime address
-     * Formula: runtime = ghidra - 0x100000000 + binary_base */
+     * Formula: runtime = ghidra - 0x100000000 + binary_base + per-version data shift.
+     * The TypeId globals live in __DATA, which can shift uniformly between game
+     * versions (e.g. +0x8000 for 7209685); component_data_shift carries that delta. */
     uint64_t offset = ghidraAddr - GHIDRA_BASE_ADDRESS;
+    const VersionOffsets *vo = offset_table_get();
+    if (vo) offset += vo->component_data_shift;
     mach_vm_address_t runtimeAddr = offset + (mach_vm_address_t)g_BinaryBase;
 
     /* Validate the runtime address before attempting to read */
@@ -361,8 +366,10 @@ bool component_typeid_read_pointer(uint64_t ghidraAddr, uint16_t *outIndex) {
         return false;
     }
 
-    /* Calculate runtime address of the pointer */
+    /* Calculate runtime address of the pointer (with per-version data shift) */
     uint64_t offset = ghidraAddr - GHIDRA_BASE_ADDRESS;
+    const VersionOffsets *vo = offset_table_get();
+    if (vo) offset += vo->component_data_shift;
     mach_vm_address_t ptrAddr = offset + (mach_vm_address_t)g_BinaryBase;
 
     /* Validate the pointer address */
@@ -514,7 +521,10 @@ void component_typeid_dump_to_console(void) {
         const TypeIdEntry *entry = &g_KnownTypeIds[i];
         total++;
 
-        mach_vm_address_t runtimeAddr = entry->ghidraAddr - GHIDRA_BASE_ADDRESS + (mach_vm_address_t)g_BinaryBase;
+        const VersionOffsets *vo = offset_table_get();
+        mach_vm_address_t runtimeAddr = entry->ghidraAddr - GHIDRA_BASE_ADDRESS
+                                        + (vo ? vo->component_data_shift : 0)
+                                        + (mach_vm_address_t)g_BinaryBase;
 
         // Check if address is readable
         SafeMemoryInfo info = safe_memory_check_address(runtimeAddr);
@@ -561,7 +571,10 @@ void component_typeid_dump(void) {
     for (int i = 0; g_KnownTypeIds[i].componentName != NULL; i++) {
         const TypeIdEntry *entry = &g_KnownTypeIds[i];
 
-        mach_vm_address_t runtimeAddr = entry->ghidraAddr - GHIDRA_BASE_ADDRESS + (mach_vm_address_t)g_BinaryBase;
+        const VersionOffsets *vo = offset_table_get();
+        mach_vm_address_t runtimeAddr = entry->ghidraAddr - GHIDRA_BASE_ADDRESS
+                                        + (vo ? vo->component_data_shift : 0)
+                                        + (mach_vm_address_t)g_BinaryBase;
 
         LOG_ENTITY_DEBUG("  %s:", entry->componentName);
         LOG_ENTITY_DEBUG("    Ghidra addr: 0x%llx", (unsigned long long)entry->ghidraAddr);

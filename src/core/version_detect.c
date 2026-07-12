@@ -9,6 +9,7 @@
  */
 
 #include "version_detect.h"
+#include "offset_table.h"
 #include "logging.h"
 
 #include <stdio.h>
@@ -231,6 +232,12 @@ static bool probe_sentinel_addresses(void) {
 
 void version_detect_set_binary_base(void *base) {
     g_binary_base = base;
+    // Both version string and binary base are now available — initialize offset table.
+    offset_table_init();
+}
+
+void *version_detect_get_binary_base(void) {
+    return g_binary_base;
 }
 
 bool version_detect_addresses_safe(void) {

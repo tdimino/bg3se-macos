@@ -7,6 +7,7 @@
 #include "resource_manager.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/offset_table.h"
 #include "../strings/fixed_string.h"
 #include <string.h>
 #include <strings.h>
@@ -102,8 +103,12 @@ bool resource_manager_init(void *main_binary_base) {
 
     g_resource.main_binary_base = main_binary_base;
 
-    // Calculate runtime address of ResourceManager global pointer
-    g_resource.resource_manager_ptr = (void**)((uintptr_t)main_binary_base + OFFSET_RESOURCEMANAGER_PTR);
+    const VersionOffsets *off = offset_table_get();
+    if (off && off->resource_mgr_ptr) {
+        g_resource.resource_manager_ptr = (void**)offset_table_resolve(off->resource_mgr_ptr);
+    } else {
+        g_resource.resource_manager_ptr = (void**)((uintptr_t)main_binary_base + OFFSET_RESOURCEMANAGER_PTR);
+    }
 
     log_message("[Resource] Resource manager initialized");
     log_message("[Resource]   Base: %p", main_binary_base);
@@ -217,9 +222,15 @@ void* resource_get(ResourceBankType type, uint32_t fixed_string_id) {
         return NULL;
     }
 
-    // Call GetResource function
-    // Function address = base + offset
-    GetResourceFunc get_resource = (GetResourceFunc)((uintptr_t)g_resource.main_binary_base + OFFSET_GETRESOURCE_FUNC);
+    // Resolve GetResource for the running version (remap the hardcoded 6995620
+    // address; 0 = no verified address for this version -> bail instead of
+    // calling a stale function).
+    uint64_t fn_ghidra = offset_table_remap_fn(0x100000000ULL + OFFSET_GETRESOURCE_FUNC);
+    if (!fn_ghidra) {
+        return NULL;
+    }
+    GetResourceFunc get_resource = (GetResourceFunc)((uintptr_t)g_resource.main_binary_base
+                                                     + (fn_ghidra - 0x100000000ULL));
 
     // Note: FixedString is passed as pointer to its hash value
     void* result = get_resource(bank, (uint32_t)type, &fixed_string_id);

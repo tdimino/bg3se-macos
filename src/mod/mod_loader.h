@@ -55,6 +55,11 @@ int mod_get_se_count(void);
  */
 const char *mod_get_se_name(int index);
 
+/**
+ * Get the UUID of a detected SE mod by index (empty string if unknown).
+ */
+const char *mod_get_se_uuid(int index);
+
 // ============================================================================
 // PAK File Helpers
 // ============================================================================
@@ -75,6 +80,14 @@ int mod_find_pak(const char *mod_name, char *pak_path_out, size_t pak_path_size)
  * @return 1 on success, 0 on failure
  */
 int mod_load_lua_from_pak(lua_State *L, const char *pak_path, const char *lua_path);
+
+/**
+ * Hook invoked after a mod chunk is loaded (function on top of the Lua stack)
+ * but before it is executed, so the loader can install the per-mod _ENV
+ * (Mods.<ModTable>) on the chunk. See main.c mod_env_apply().
+ */
+typedef void (*mod_chunk_env_hook_t)(lua_State *L);
+void mod_loader_set_chunk_env_hook(mod_chunk_env_hook_t hook);
 
 // ============================================================================
 // Current Mod State (for Ext.Require)

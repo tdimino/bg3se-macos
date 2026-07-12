@@ -8,6 +8,8 @@
 #include "template_manager.h"
 #include "../core/logging.h"
 #include "../core/safe_memory.h"
+#include "../core/version_detect.h"
+#include "../core/offset_table.h"
 #include "../strings/fixed_string.h"
 #include "../hooks/arm64_hook.h"
 #include <string.h>
@@ -206,35 +208,39 @@ static bool install_arm64_safe_hook(const char* name, void* target, void* hook_f
  * Returns true if at least one manager was captured.
  */
 static bool template_read_global_pointers(void* main_binary_base) {
-    if (!main_binary_base) return false;
+    (void)main_binary_base;  // addresses now sourced from offset_table
+
+    const VersionOffsets *off = offset_table_get();
+    if (!off) return false;
 
     int captured = 0;
+    void *mgr = NULL;
 
-    // Read GlobalTemplateManager::m_ptr
-    void** global_mgr_ptr = (void**)((uintptr_t)main_binary_base + OFFSET_GLOBAL_TEMPLATE_MANAGER_PTR);
-    void* global_mgr = *global_mgr_ptr;
-    if (global_mgr && !g_template.managers[TEMPLATE_MANAGER_GLOBAL_BANK]) {
-        g_template.managers[TEMPLATE_MANAGER_GLOBAL_BANK] = global_mgr;
-        log_message("[Template] Captured GlobalTemplateManager: %p (from global ptr)", global_mgr);
-        captured++;
+    if (off->global_template_mgr_ptr && !g_template.managers[TEMPLATE_MANAGER_GLOBAL_BANK]) {
+        void *slot = offset_table_resolve(off->global_template_mgr_ptr);
+        if (slot && safe_memory_read_pointer((mach_vm_address_t)slot, &mgr) && mgr) {
+            g_template.managers[TEMPLATE_MANAGER_GLOBAL_BANK] = mgr;
+            log_message("[Template] Captured GlobalTemplateManager: %p", mgr);
+            captured++;
+        }
     }
 
-    // Read CacheTemplateManager::m_ptr
-    void** cache_mgr_ptr = (void**)((uintptr_t)main_binary_base + OFFSET_CACHE_TEMPLATE_MANAGER_PTR);
-    void* cache_mgr = *cache_mgr_ptr;
-    if (cache_mgr && !g_template.managers[TEMPLATE_MANAGER_CACHE]) {
-        g_template.managers[TEMPLATE_MANAGER_CACHE] = cache_mgr;
-        log_message("[Template] Captured CacheTemplateManager: %p (from global ptr)", cache_mgr);
-        captured++;
+    if (off->cache_template_mgr_ptr && !g_template.managers[TEMPLATE_MANAGER_CACHE]) {
+        void *slot = offset_table_resolve(off->cache_template_mgr_ptr);
+        if (slot && safe_memory_read_pointer((mach_vm_address_t)slot, &mgr) && mgr) {
+            g_template.managers[TEMPLATE_MANAGER_CACHE] = mgr;
+            log_message("[Template] Captured CacheTemplateManager: %p", mgr);
+            captured++;
+        }
     }
 
-    // Read Level::s_CacheTemplateManager (level-local cache)
-    void** level_cache_ptr = (void**)((uintptr_t)main_binary_base + OFFSET_LEVEL_CACHE_MANAGER_PTR);
-    void* level_cache = *level_cache_ptr;
-    if (level_cache && !g_template.managers[TEMPLATE_MANAGER_LOCAL_CACHE]) {
-        g_template.managers[TEMPLATE_MANAGER_LOCAL_CACHE] = level_cache;
-        log_message("[Template] Captured Level::CacheTemplateManager: %p (from global ptr)", level_cache);
-        captured++;
+    if (off->level_cache_mgr_ptr && !g_template.managers[TEMPLATE_MANAGER_LOCAL_CACHE]) {
+        void *slot = offset_table_resolve(off->level_cache_mgr_ptr);
+        if (slot && safe_memory_read_pointer((mach_vm_address_t)slot, &mgr) && mgr) {
+            g_template.managers[TEMPLATE_MANAGER_LOCAL_CACHE] = mgr;
+            log_message("[Template] Captured Level::CacheTemplateManager: %p", mgr);
+            captured++;
+        }
     }
 
     return captured > 0;
@@ -255,10 +261,18 @@ bool template_install_hooks(void* main_binary_base) {
 
     g_template.main_binary_base = main_binary_base;
 
+    const VersionOffsets *off = offset_table_get();
     log_message("[Template] Using global pointer read approach (no hooks needed)");
-    log_message("[Template]   GlobalTemplateManager::m_ptr at offset 0x%x", OFFSET_GLOBAL_TEMPLATE_MANAGER_PTR);
-    log_message("[Template]   CacheTemplateManager::m_ptr at offset 0x%x", OFFSET_CACHE_TEMPLATE_MANAGER_PTR);
-    log_message("[Template]   Level::s_CacheTemplateManager at offset 0x%x", OFFSET_LEVEL_CACHE_MANAGER_PTR);
+    if (off) {
+        log_message("[Template]   GlobalTemplateManager::m_ptr offset 0x%llx",
+                    (unsigned long long)off->global_template_mgr_ptr);
+        log_message("[Template]   CacheTemplateManager::m_ptr offset 0x%llx",
+                    (unsigned long long)off->cache_template_mgr_ptr);
+        log_message("[Template]   Level::s_CacheTemplateManager offset 0x%llx",
+                    (unsigned long long)off->level_cache_mgr_ptr);
+    } else {
+        log_message("[Template]   No offset table entry for this version — pointers may not resolve");
+    }
 
     // Try to read managers now (may be NULL if called early)
     bool captured = template_read_global_pointers(main_binary_base);
@@ -436,14 +450,17 @@ bool template_manager_init(void* main_binary_base) {
     memset(g_template.managers, 0, sizeof(g_template.managers));
     memset(g_template.template_counts, -1, sizeof(g_template.template_counts));
 
-    // Install auto-capture hooks
-    if (main_binary_base) {
+    // template_install_hooks reads global singleton pointers from the offset table.
+    // It is safe to call whenever a table entry exists (no code patching involved).
+    if (main_binary_base && offset_table_get()) {
         bool hooks_ok = template_install_hooks(main_binary_base);
         if (hooks_ok) {
-            log_message("[Template] Auto-capture hooks installed (waiting for game activity)");
+            log_message("[Template] Template pointers initialized");
         } else {
-            log_message("[Template] Failed to install auto-capture hooks, falling back to Frida capture");
+            log_message("[Template] Template pointers not yet available, will retry on first access");
         }
+    } else if (main_binary_base) {
+        log_message("[Template] Skipping pointer reads (no offset table entry for this version)");
     }
 
     g_template.initialized = true;

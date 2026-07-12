@@ -14,6 +14,7 @@
 #include "arm64_call.h"
 #include "logging.h"
 #include "../core/version_detect.h"
+#include "../core/offset_table.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -459,10 +460,20 @@ static void *read_eocserver_from_global(void) {
         return NULL;
     }
 
-    // Calculate runtime address of esv::EocServer::m_ptr
+    // Calculate runtime address of esv::EocServer::m_ptr.
+    // Prefer the per-version offset table (eocserver_ptr); fall back to the
+    // hardcoded 6995620 address only if the version is unknown. Using the stale
+    // hardcoded value on a shifted version reads the wrong slot -> garbage
+    // EoCServer -> garbage EntityWorld -> crash inside the ECS query.
     uintptr_t ghidra_base = GHIDRA_BASE_ADDRESS;
     uintptr_t actual_base = (uintptr_t)g_MainBinaryBase;
-    uintptr_t global_addr = OFFSET_EOCSERVER_SINGLETON_PTR - ghidra_base + actual_base;
+    uintptr_t global_addr;
+    const VersionOffsets *off = offset_table_get();
+    if (off && off->eocserver_ptr) {
+        global_addr = actual_base + off->eocserver_ptr;
+    } else {
+        global_addr = OFFSET_EOCSERVER_SINGLETON_PTR - ghidra_base + actual_base;
+    }
 
     LOG_ENTITY_DEBUG("Reading EoCServer from global at 0x%llx", (unsigned long long)global_addr);
     LOG_ENTITY_DEBUG("  (Ghidra offset: 0x%llx, base: %p)",
@@ -1001,9 +1012,22 @@ int entity_system_init(void *main_binary_base) {
     LOG_ENTITY_DEBUG("Main binary hooks disabled (macOS memory protection issues)");
     LOG_ENTITY_DEBUG("EntityWorld must be set manually via Ext.Entity.SetWorldPtr() or discovered via Osiris hooks");
 
-    // Set up function pointers for component accessors and singleton getters
-    // These don't need hooks - we just need to know where to call
-    g_TryGetUuidMappingSingleton = (TryGetSingletonFn)(OFFSET_TRY_GET_UUID_MAPPING_SINGLETON - ghidra_base + actual_base);
+    // Set up function pointers for component accessors and singleton getters.
+    // CRASH GUARD: source the UUID-mapping singleton getter from the per-version
+    // offset table. If the running version has no *verified* offset (field == 0),
+    // the pointer stays NULL and entity_get_by_guid safely no-ops instead of
+    // calling a stale address (which is valid-but-wrong code and would crash).
+    // The hardcoded OFFSET_* below is only the 6995620 fallback.
+    {
+        const VersionOffsets *off = offset_table_get();
+        if (off && off->fn_try_get_uuid_mapping) {
+            g_TryGetUuidMappingSingleton =
+                (TryGetSingletonFn)offset_table_fn(off->fn_try_get_uuid_mapping);
+        } else {
+            g_TryGetUuidMappingSingleton = NULL;
+            LOG_ENTITY_DEBUG("UUID-mapping getter disabled: no verified offset for this version");
+        }
+    }
 
     // ls:: components - all DISABLED until addresses are verified via Ghidra
     // When offset is 0, pointer stays NULL (safe)

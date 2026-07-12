@@ -460,6 +460,14 @@ bool imgui_object_detach_child(ImguiHandle parent, ImguiHandle child);
 bool imgui_object_attach_child(ImguiHandle parent, ImguiHandle child);
 ImguiHandle* imgui_object_get_children(ImguiHandle parent, int* count);
 
+// Serialize object-tree access between the render thread (present-hook walk) and
+// the main/Lua thread (Add*/Destroy). Recursive: nesting is safe. The render walk
+// must hold this across imgui_get_all_windows() + the whole traversal.
+void imgui_objects_lock(void);
+void imgui_objects_unlock(void);
+// Non-blocking acquire for the render thread; returns 1 if acquired, else 0.
+int imgui_objects_trylock(void);
+
 // Window management
 ImguiHandle* imgui_get_all_windows(int* count);
 void imgui_register_window(ImguiHandle handle);
