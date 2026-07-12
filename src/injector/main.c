@@ -3477,6 +3477,14 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
         osi_func_enumerate_by_name();
     }
 
+    // Osiris events are server-side. After bootstrap, the context is left at
+    // CLIENT (Phase 2 client-bootstrap load never resets it), so mod event
+    // handlers — and the Osi.* queries they make — would run mislabelled as
+    // client and hit client-side Osiris state (queries return 0, e.g. SitOut's
+    // HasActiveStatus). Force SERVER context around event dispatch and restore.
+    LuaContext prevCtx = lua_context_get();
+    lua_context_set(LUA_CONTEXT_SERVER);
+
     // Dispatch to "before" callbacks if we know the function name
     if (funcName) {
         dispatch_event_to_lua(funcName, arity, args, "before");
@@ -3491,6 +3499,8 @@ static void fake_Event(void *thisPtr, uint32_t funcId, OsiArgumentDesc *args) {
     if (funcName) {
         dispatch_event_to_lua(funcName, arity, args, "after");
     }
+
+    lua_context_set(prevCtx);
 }
 
 /**
