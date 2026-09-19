@@ -418,8 +418,14 @@ void events_fire(lua_State *L, BG3SEEventType event) {
 // Public API: Fire Tick Event (with DeltaTime)
 // ============================================================================
 
+static double s_tick_total_time = 0.0;
+static uint64_t s_tick_count = 0;
+
 void events_fire_tick(lua_State *L, float delta_time) {
     if (!L) return;
+
+    s_tick_total_time += delta_time;
+    s_tick_count++;
 
     int count = g_handler_counts[EVENT_TICK];
     if (count == 0) return;
@@ -447,10 +453,19 @@ void events_fire_tick(lua_State *L, float delta_time) {
             continue;
         }
 
-        // Create event data table with DeltaTime
+        // Event data: DeltaTime (this API's original field) plus the Windows
+        // shape e.Time = {DeltaTime, Time, Ticks}; e.Time.DeltaTime was nil.
         lua_newtable(L);
         lua_pushnumber(L, delta_time);
         lua_setfield(L, -2, "DeltaTime");
+        lua_createtable(L, 0, 3);
+        lua_pushnumber(L, delta_time);
+        lua_setfield(L, -2, "DeltaTime");
+        lua_pushnumber(L, s_tick_total_time);
+        lua_setfield(L, -2, "Time");
+        lua_pushinteger(L, (lua_Integer)s_tick_count);
+        lua_setfield(L, -2, "Ticks");
+        lua_setfield(L, -2, "Time");
 
         // Protected call
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
