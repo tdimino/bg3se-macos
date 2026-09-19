@@ -385,6 +385,22 @@ void events_get_mod_health_stats(int index, uint32_t *handlers, uint32_t *errors
  */
 const char *events_get_mod_last_error(int index);
 
+/** One captured handler error (Ext.Debug.ModErrors). */
+typedef struct {
+    uint64_t time_ms;       // CLOCK_MONOTONIC milliseconds
+    char mod_name[64];
+    char error[1024];       // message + Lua traceback, truncated
+} ModErrorEntry;
+
+/** Number of captured handler errors (at most 32). */
+int events_get_mod_error_count(void);
+
+/** Captured error by age: 0 is the newest. NULL when out of range. */
+const ModErrorEntry *events_get_mod_error(int newest_index);
+
+/** Forget all captured handler errors. */
+void events_clear_mod_errors(void);
+
 /**
  * Soft-disable/enable a mod's event handlers.
  * Returns true if mod was found.

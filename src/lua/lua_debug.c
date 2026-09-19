@@ -706,6 +706,9 @@ static int lua_debug_mod_health_count(lua_State *L) {
  * Ext.Debug.ModHealthAll() - Get all mod health entries
  * @return table of {name, handlers, errors, handled, disabled, last_error}
  */
+static int lua_debug_mod_errors(lua_State *L);
+static int lua_debug_clear_mod_errors(lua_State *L);
+
 static int lua_debug_mod_health_all(lua_State *L) {
     int count = events_get_mod_health_count();
     lua_createtable(L, count, 0);
@@ -934,6 +937,12 @@ void lua_ext_register_debug(lua_State *L, int ext_table_index) {
     lua_pushcfunction(L, lua_debug_mod_health_all);
     lua_setfield(L, -2, "ModHealthAll");
 
+    lua_pushcfunction(L, lua_debug_mod_errors);
+    lua_setfield(L, -2, "ModErrors");
+
+    lua_pushcfunction(L, lua_debug_clear_mod_errors);
+    lua_setfield(L, -2, "ClearModErrors");
+
     lua_pushcfunction(L, lua_debug_mod_disable);
     lua_setfield(L, -2, "ModDisable");
 
@@ -965,4 +974,34 @@ void lua_ext_register_debug(lua_State *L, int ext_table_index) {
 
     LOG_LUA_INFO("Registered Ext.Debug namespace (session started at %s)",
                  ctime(&g_session_start_time));
+}
+
+/**
+ * Ext.Debug.ModErrors([modName]) - Recent event-handler errors, newest first:
+ * { {Time=ms, Mod=name, Error=message and traceback}, ... }. At most 32.
+ */
+static int lua_debug_mod_errors(lua_State *L) {
+    const char *filter = luaL_optstring(L, 1, NULL);
+    lua_newtable(L);
+    int out = 0;
+    for (int i = 0; i < events_get_mod_error_count(); i++) {
+        const ModErrorEntry *e = events_get_mod_error(i);
+        if (!e || (filter && strcmp(filter, e->mod_name) != 0)) continue;
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)e->time_ms);
+        lua_setfield(L, -2, "Time");
+        lua_pushstring(L, e->mod_name);
+        lua_setfield(L, -2, "Mod");
+        lua_pushstring(L, e->error);
+        lua_setfield(L, -2, "Error");
+        lua_rawseti(L, -2, ++out);
+    }
+    return 1;
+}
+
+/** Ext.Debug.ClearModErrors() */
+static int lua_debug_clear_mod_errors(lua_State *L) {
+    (void)L;
+    events_clear_mod_errors();
+    return 0;
 }

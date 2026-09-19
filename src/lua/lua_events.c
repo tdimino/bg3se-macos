@@ -19,6 +19,8 @@
 
 #include <stdatomic.h>
 #include <string.h>
+#include <stdio.h>
+#include <time.h>
 #include <mach/mach_time.h>
 
 // ============================================================================
@@ -227,10 +229,63 @@ static void mod_health_record_success(const char *mod_name) {
     if (entry) entry->events_handled++;
 }
 
+// The last MOD_ERROR_RING_SIZE handler errors across all mods, oldest
+// overwritten first (Ext.Debug.ModErrors). Static storage: the error path
+// does not allocate.
+#define MOD_ERROR_RING_SIZE 32
+static ModErrorEntry g_mod_errors[MOD_ERROR_RING_SIZE];
+static int g_mod_error_next = 0;
+static int g_mod_error_count = 0;
+
+static void mod_error_ring_push(const char *mod_name, const char *error_msg) {
+    ModErrorEntry *e = &g_mod_errors[g_mod_error_next];
+    g_mod_error_next = (g_mod_error_next + 1) % MOD_ERROR_RING_SIZE;
+    if (g_mod_error_count < MOD_ERROR_RING_SIZE) g_mod_error_count++;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    e->time_ms = (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+    snprintf(e->mod_name, sizeof(e->mod_name), "%s", mod_name && mod_name[0] ? mod_name : "unknown");
+    snprintf(e->error, sizeof(e->error), "%s", error_msg ? error_msg : "(no message)");
+}
+
+int events_get_mod_error_count(void) {
+    return g_mod_error_count;
+}
+
+const ModErrorEntry *events_get_mod_error(int newest_index) {
+    if (newest_index < 0 || newest_index >= g_mod_error_count) return NULL;
+    int slot = (g_mod_error_next - 1 - newest_index + MOD_ERROR_RING_SIZE) % MOD_ERROR_RING_SIZE;
+    return &g_mod_errors[slot];
+}
+
+void events_clear_mod_errors(void) {
+    g_mod_error_count = 0;
+    g_mod_error_next = 0;
+}
+
+// Message handler: the error with a Lua stack traceback appended.
+static int events_traceback(lua_State *L) {
+    const char *msg = lua_tostring(L, 1);
+    luaL_traceback(L, L, msg ? msg : "(error object is not a string)", 1);
+    return 1;
+}
+
+// lua_pcall(L, nargs, 0, 0) with events_traceback as the message handler.
+// Leaves the stack as lua_pcall would (the error message on failure).
+static int events_pcall(lua_State *L, int nargs) {
+    int base = lua_gettop(L) - nargs;
+    lua_pushcfunction(L, events_traceback);
+    lua_insert(L, base);
+    int status = lua_pcall(L, nargs, 0, base);
+    lua_remove(L, base);
+    return status;
+}
+
 /**
  * Record an error for a mod.
  */
 static void mod_health_record_error(const char *mod_name, const char *error_msg) {
+    mod_error_ring_push(mod_name, error_msg);
     ModHealthEntry *entry = mod_health_get_or_create(mod_name);
     if (!entry) return;
     entry->errors_logged++;
@@ -383,7 +438,7 @@ void events_fire(lua_State *L, BG3SEEventType event) {
         lua_newtable(L);
 
         // Protected call to prevent cascade failures
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("Error in %s handler (id=%llu, mod=%s): %s",
                        g_event_names[event], h->handler_id,
@@ -453,7 +508,7 @@ void events_fire_tick(lua_State *L, float delta_time) {
         lua_setfield(L, -2, "DeltaTime");
 
         // Protected call
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("Tick handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -607,7 +662,7 @@ void events_fire_game_state_changed(lua_State *L, int fromState, int toState) {
         lua_setfield(L, -2, "ToState");
 
         // Protected call
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("GameStateChanged handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -740,7 +795,7 @@ void events_fire_key_input(lua_State *L, int keyCode, bool pressed, int modifier
             }
             lua_setfield(L, -2, "Character");
 
-            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            if (events_pcall(L, 1) != LUA_OK) {
                 const char *err = lua_tostring(L, -1);
                 LOG_EVENTS_ERROR("KeyInput handler %llu (mod=%s) error: %s",
                            (unsigned long long)h->handler_id, h->mod_name, err ? err : "unknown");
@@ -815,7 +870,7 @@ bool events_fire_do_console_command(lua_State *L, const char *command) {
         lua_pushvalue(L, -1);
         int event_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("DoConsoleCommand handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -895,7 +950,7 @@ bool events_fire_lua_console_input(lua_State *L, const char *input) {
         lua_pushvalue(L, -1);
         int event_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("LuaConsoleInput handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1261,7 +1316,7 @@ void events_fire_turn_started(lua_State *L, uint64_t entity, int round) {
         lua_pushinteger(L, round);
         lua_setfield(L, -2, "Round");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("TurnStarted handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1330,7 +1385,7 @@ void events_fire_turn_started_from_osiris(lua_State *L, const char *characterGui
         }
         lua_setfield(L, -2, "CharacterGuid");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("TurnStarted (Osiris) handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1395,7 +1450,7 @@ void events_fire_turn_ended_from_osiris(lua_State *L, const char *characterGuid)
         }
         lua_setfield(L, -2, "CharacterGuid");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("TurnEnded (Osiris) handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1461,7 +1516,7 @@ void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statu
         lua_pushinteger(L, (lua_Integer)source);
         lua_setfield(L, -2, "Source");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("StatusApplied handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1530,7 +1585,7 @@ void events_fire_execute_functor(lua_State *L, int ctxType, void *functors, void
         lua_pushinteger(L, (lua_Integer)(uintptr_t)context);
         lua_setfield(L, -2, "ContextPtr");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("ExecuteFunctor handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1594,7 +1649,7 @@ void events_fire_after_execute_functor(lua_State *L, int ctxType, void *functors
         lua_pushinteger(L, (lua_Integer)(uintptr_t)context);
         lua_setfield(L, -2, "ContextPtr");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("AfterExecuteFunctor handler error (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1709,7 +1764,7 @@ void events_fire_damage(
         set_nil_field(L, "SpellAttackType");
         set_nil_field(L, "Result");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR(
                 "%s handler error (id=%llu, mod=%s): %s",
@@ -1801,7 +1856,7 @@ void events_fire_net_mod_message(lua_State *L, const char *channel, const char *
         lua_pushboolean(L, binary);
         lua_setfield(L, -2, "Binary");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("Error in NetModMessage handler (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -1880,7 +1935,7 @@ void events_fire_net_message(lua_State *L, const char *channel, const char *payl
         lua_pushinteger(L, userId);
         lua_setfield(L, -2, "UserID");
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             LOG_EVENTS_ERROR("Error in NetMessage handler (id=%llu, mod=%s): %s",
                        h->handler_id, h->mod_name, err ? err : "unknown");
@@ -2051,7 +2106,7 @@ bool events_fire_log(lua_State *L, const char *level, const char *module, const 
         lua_pushvalue(L, -1);
         int event_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (events_pcall(L, 1) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
             // Don't use LOG_EVENTS_ERROR here - would cause recursion!
             fprintf(stderr, "[BG3SE] Log event handler error (mod=%s): %s\n",
@@ -2338,7 +2393,7 @@ static void handle_turn_started(lua_State *L, uint64_t entity) {
                 lua_newtable(L); \
                 lua_pushinteger(L, (lua_Integer)(ENTITY_VAR)); \
                 lua_setfield(L, -2, FIELD_NAME); \
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) { \
+                if (events_pcall(L, 1) != LUA_OK) { \
                     mod_health_record_error(h->mod_name, lua_tostring(L, -1)); \
                     lua_pop(L, 1); \
                 } else { \
