@@ -7801,6 +7801,85 @@ static const ComponentLayoutDef g_ls_UuidToHandleMapping_Layout = {
     .propertyCount = sizeof(g_ls_UuidToHandleMapping_Properties) / sizeof(g_ls_UuidToHandleMapping_Properties[0]),
 };
 
+// ============================================================================
+// Layouts measured on the ARM64 binary (4.1.1.7209685) and read live on
+// 4.1.1.7398727. Sizes come from AddComponent<T> / CreateProgressionEntity
+// AllocRaw; array element sizes from the code that fills them.
+// ============================================================================
+
+// eoc::encumbrance::StatsComponent - 0x0C (AddComponent AllocRaw 0xc).
+static const ComponentPropertyDef g_EncumbranceStatsComponent_Properties[] = {
+    { "UnencumberedWeight",      0x00, FIELD_TYPE_INT32, 0, true },
+    { "EncumberedWeight",        0x04, FIELD_TYPE_INT32, 0, true },
+    { "HeavilyEncumberedWeight", 0x08, FIELD_TYPE_INT32, 0, true },
+};
+static const ComponentLayoutDef g_EncumbranceStatsComponent_Layout = {
+    .componentName = "eoc::encumbrance::StatsComponent", .shortName = "EncumbranceStats",
+    .componentTypeIndex = 0, .componentSize = 0x0c,
+    .properties = g_EncumbranceStatsComponent_Properties,
+    .propertyCount = sizeof(g_EncumbranceStatsComponent_Properties) / sizeof(g_EncumbranceStatsComponent_Properties[0]),
+};
+
+// eoc::WeaponSetComponent - 0x01.
+static const ComponentPropertyDef g_eoc_WeaponSetComponent_Properties[] = {
+    { "WeaponSet", 0x00, FIELD_TYPE_UINT8, 0, true },
+};
+static const ComponentLayoutDef g_eoc_WeaponSetComponent_Layout = {
+    .componentName = "eoc::WeaponSetComponent", .shortName = "WeaponSet",
+    .componentTypeIndex = 0, .componentSize = 0x01,
+    .properties = g_eoc_WeaponSetComponent_Properties,
+    .propertyCount = sizeof(g_eoc_WeaponSetComponent_Properties) / sizeof(g_eoc_WeaponSetComponent_Properties[0]),
+};
+
+// eoc::stats::proficiency::ProficiencyComponent - 0x08; one 64-bit flag word.
+static const ComponentPropertyDef g_eoc_proficiency_ProficiencyComponent_Properties[] = {
+    { "Flags", 0x00, FIELD_TYPE_UINT64, 0, true },
+};
+static const ComponentLayoutDef g_eoc_proficiency_ProficiencyComponent_Layout = {
+    .componentName = "eoc::stats::proficiency::ProficiencyComponent", .shortName = "Proficiency",
+    .componentTypeIndex = 0, .componentSize = 0x08,
+    .properties = g_eoc_proficiency_ProficiencyComponent_Properties,
+    .propertyCount = sizeof(g_eoc_proficiency_ProficiencyComponent_Properties) / sizeof(g_eoc_proficiency_ProficiencyComponent_Properties[0]),
+};
+
+// eoc::progression::PassivesComponent - 0x20: Array<FixedString> x2.
+static const ComponentPropertyDef g_eoc_progression_PassivesComponent_Properties[] = {
+    { "AddPassives",    0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_FIXED_STRING, 4 },
+    { "RemovePassives", 0x10, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_FIXED_STRING, 4 },
+};
+static const ComponentLayoutDef g_eoc_progression_PassivesComponent_Layout = {
+    .componentName = "eoc::progression::PassivesComponent", .shortName = "ProgressionPassives",
+    .componentTypeIndex = 0, .componentSize = 0x20,
+    .properties = g_eoc_progression_PassivesComponent_Properties,
+    .propertyCount = sizeof(g_eoc_progression_PassivesComponent_Properties) / sizeof(g_eoc_progression_PassivesComponent_Properties[0]),
+};
+
+// eoc::progression::SkillsComponent - 0x20: Array<ESkill> x2 (1-byte elements:
+// CreateProgressionEntity's staging loops write one byte per element).
+static const ComponentPropertyDef g_eoc_progression_SkillsComponent_Properties[] = {
+    { "Proficiencies", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 1 },
+    { "Expertise",     0x10, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 1 },
+};
+static const ComponentLayoutDef g_eoc_progression_SkillsComponent_Layout = {
+    .componentName = "eoc::progression::SkillsComponent", .shortName = "ProgressionSkills",
+    .componentTypeIndex = 0, .componentSize = 0x20,
+    .properties = g_eoc_progression_SkillsComponent_Properties,
+    .propertyCount = sizeof(g_eoc_progression_SkillsComponent_Properties) / sizeof(g_eoc_progression_SkillsComponent_Properties[0]),
+};
+
+// eoc::progression::AbilityImprovementsComponent - 0x30 (the Windows 24 is
+// wrong here): Array<EAbility> at 0x00, int32[7] at 0x10.
+static const ComponentPropertyDef g_eoc_progression_AbilityImprovementsComponent_Properties[] = {
+    { "Abilities",           0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 1 },
+    { "AbilityImprovements", 0x10, FIELD_TYPE_INT32_ARRAY,   7, true },
+};
+static const ComponentLayoutDef g_eoc_progression_AbilityImprovementsComponent_Layout = {
+    .componentName = "eoc::progression::AbilityImprovementsComponent", .shortName = "AbilityImprovements",
+    .componentTypeIndex = 0, .componentSize = 0x30,
+    .properties = g_eoc_progression_AbilityImprovementsComponent_Properties,
+    .propertyCount = sizeof(g_eoc_progression_AbilityImprovementsComponent_Properties) / sizeof(g_eoc_progression_AbilityImprovementsComponent_Properties[0]),
+};
+
 static const ComponentLayoutDef* g_AllComponentLayouts[] = {
     &g_HealthComponent_Layout,
     &g_BaseHpComponent_Layout,
@@ -8358,6 +8437,12 @@ static const ComponentLayoutDef* g_AllComponentLayouts[] = {
     &g_ls_IsInsideOf_Layout,
     &g_ls_Uuid_Layout,
     &g_ls_UuidToHandleMapping_Layout,
+    &g_EncumbranceStatsComponent_Layout,
+    &g_eoc_WeaponSetComponent_Layout,
+    &g_eoc_proficiency_ProficiencyComponent_Layout,
+    &g_eoc_progression_PassivesComponent_Layout,
+    &g_eoc_progression_SkillsComponent_Layout,
+    &g_eoc_progression_AbilityImprovementsComponent_Layout,
     NULL  // Sentinel
 };
 
