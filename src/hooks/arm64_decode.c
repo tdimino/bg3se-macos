@@ -11,6 +11,15 @@
 // Decoding Functions
 // =============================================================================
 
+/* Branch immediate -> byte displacement. Not `(int64_t)imm << 2`: left-
+ * shifting a negative value is undefined (C11 6.5.7p4) and every branch
+ * immediate is sign-extended first, so backward branches hit it on each
+ * decode (UBSan caught it live during hook install). The widest field is
+ * imm26, so imm * 4 cannot overflow. */
+static inline int64_t arm64_scale_branch_imm(int64_t imm) {
+    return imm * 4;
+}
+
 uint64_t arm64_decode_adrp_target(uint32_t insn, uint64_t pc) {
     if (!arm64_is_adrp(insn)) {
         return 0;
@@ -143,7 +152,7 @@ void arm64_decode_instruction(uint32_t insn, uint64_t pc, ARM64DecodedInsn* out)
         out->is_pc_relative = true;
         int32_t imm26 = insn & 0x3FFFFFF;
         if (imm26 & 0x2000000) imm26 |= (int32_t)0xFC000000;
-        out->imm = (int64_t)imm26 << 2;
+        out->imm = arm64_scale_branch_imm(imm26);
         return;
     }
 
@@ -153,7 +162,7 @@ void arm64_decode_instruction(uint32_t insn, uint64_t pc, ARM64DecodedInsn* out)
         out->is_pc_relative = true;
         int32_t imm26 = insn & 0x3FFFFFF;
         if (imm26 & 0x2000000) imm26 |= (int32_t)0xFC000000;
-        out->imm = (int64_t)imm26 << 2;
+        out->imm = arm64_scale_branch_imm(imm26);
         return;
     }
 
@@ -185,7 +194,7 @@ void arm64_decode_instruction(uint32_t insn, uint64_t pc, ARM64DecodedInsn* out)
         out->rd = insn & 0x1F;
         int32_t imm19 = (insn >> 5) & 0x7FFFF;
         if (imm19 & 0x40000) imm19 |= (int32_t)0xFFF80000;
-        out->imm = (int64_t)imm19 << 2;
+        out->imm = arm64_scale_branch_imm(imm19);
         return;
     }
     if ((insn & ARM64_CBZ_MASK) == ARM64_CBNZ_OP) {
@@ -194,7 +203,7 @@ void arm64_decode_instruction(uint32_t insn, uint64_t pc, ARM64DecodedInsn* out)
         out->rd = insn & 0x1F;
         int32_t imm19 = (insn >> 5) & 0x7FFFF;
         if (imm19 & 0x40000) imm19 |= (int32_t)0xFFF80000;
-        out->imm = (int64_t)imm19 << 2;
+        out->imm = arm64_scale_branch_imm(imm19);
         return;
     }
 
@@ -206,7 +215,7 @@ void arm64_decode_instruction(uint32_t insn, uint64_t pc, ARM64DecodedInsn* out)
         out->rd = insn & 0x1F;
         int32_t imm14 = (insn >> 5) & 0x3FFF;
         if (imm14 & 0x2000) imm14 |= (int32_t)0xFFFFC000;
-        out->imm = (int64_t)imm14 << 2;
+        out->imm = arm64_scale_branch_imm(imm14);
         return;
     }
 
@@ -216,7 +225,7 @@ void arm64_decode_instruction(uint32_t insn, uint64_t pc, ARM64DecodedInsn* out)
         out->is_pc_relative = true;
         int32_t imm19 = (insn >> 5) & 0x7FFFF;
         if (imm19 & 0x40000) imm19 |= (int32_t)0xFFF80000;
-        out->imm = (int64_t)imm19 << 2;
+        out->imm = arm64_scale_branch_imm(imm19);
         return;
     }
 

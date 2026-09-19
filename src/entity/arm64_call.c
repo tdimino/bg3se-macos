@@ -15,6 +15,21 @@
 
 #if defined(__aarch64__) || defined(__arm64__)
 
+/* Registers an AAPCS64 callee may destroy, which therefore MUST be declared
+ * clobbered by any inline asm performing a `blr`. x2-x7 are caller-saved
+ * argument registers a callee may use as scratch; SIMD/FP registers and the
+ * flags are caller-saved too. Omitting them is invisible at -O0 and silently
+ * corrupts values the optimizer parked there at -O1 and above. x18 is
+ * reserved on Darwin; x19-x28 are callee-saved. */
+#define AAPCS64_CALL_CLOBBERS \
+    "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", \
+    "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", \
+    "x16", "x17", "x30", \
+    "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", \
+    "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", \
+    "v21", "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", \
+    "v31", "cc", "memory"
+
 void* call_try_get_singleton_with_x8(TryGetSingletonFn fn, void *entityWorld) {
     LsResult result;
     memset(&result, 0, sizeof(result));
@@ -28,10 +43,7 @@ void* call_try_get_singleton_with_x8(TryGetSingletonFn fn, void *entityWorld) {
         : [buf] "r"(&result),
           [world] "r"(entityWorld),
           [fn] "r"(fn)
-        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
-          "x14", "x15", "x16", "x17", "x19", "x20",
-          "x21", "x22", "x23", "x24", "x25", "x26",
-          "x30", "memory"
+        : AAPCS64_CALL_CLOBBERS
     );
 
     // Check result
@@ -107,8 +119,7 @@ void* call_get_component_template(void *fn_addr, void *entityWorld, uint64_t ent
         : [world] "r"(entityWorld),
           [handle] "r"(entityHandle),
           [fn] "r"(fn_addr)
-        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
-          "x14", "x15", "x16", "x17", "x30", "memory"
+        : AAPCS64_CALL_CLOBBERS
     );
 
     if (result) {
@@ -139,8 +150,7 @@ void* call_try_get(void *fn_addr, void *storageContainer, uint64_t entityHandle)
         : [storage] "r"(storageContainer),
           [handle] "r"(entityHandle),
           [fn] "r"(fn_addr)
-        : "x0", "x1", "x8", "x9", "x10", "x11", "x12", "x13",
-          "x14", "x15", "x16", "x17", "x30", "memory"
+        : AAPCS64_CALL_CLOBBERS
     );
 
     if (result) {
