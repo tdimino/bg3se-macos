@@ -49,7 +49,8 @@ bool audio_set_state(const char *state_group, const char *state);
 // RTPC (Real-Time Parameter Control)
 // ============================================================================
 
-bool audio_set_rtpc(uint64_t sound_object_id, const char *name, float value);
+bool audio_set_rtpc(uint64_t sound_object_id, const char *name, float value,
+                    bool bypass_interpolation);
 float audio_get_rtpc(uint64_t sound_object_id, const char *name);
 bool audio_reset_rtpc(uint64_t sound_object_id, const char *name);
 

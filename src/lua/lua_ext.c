@@ -2168,9 +2168,23 @@ void lua_ext_register_global_helpers(lua_State *L) {
         "end)\n"
         "BG3SE_AddTest(2, 'Audio.PostEvent', function()\n"
         "  AssertType(Ext.Audio.PostEvent, 'function', 'PostEvent')\n"
+        "  AssertEquals(Ext.Audio.IsReady(), true, 'WwiseManager vtable matched')\n"
+        "  AssertEquals(Ext.Audio.PostEvent('Global', 'BG3SE_NoSuchEvent'), false,\n"
+        "    'PostEvent of an unknown event')\n"
         "end)\n"
         "BG3SE_AddTest(2, 'Audio.SetState', function()\n"
         "  AssertType(Ext.Audio.SetState, 'function', 'SetState')\n"
+        "end)\n"
+        "BG3SE_AddTest(2, 'Audio.RTPC', function()\n"
+        "  -- The calls went through guessed vtable slots of the wrong object.\n"
+        "  -- A new value is applied on a later audio frame, so this cannot read\n"
+        "  -- back its own write within the test.\n"
+        "  local A = Ext.Audio\n"
+        "  local v = A.GetRTPC('Global', 'RTPC_Volume_UI')\n"
+        "  AssertType(v, 'number', 'GetRTPC RTPC_Volume_UI')\n"
+        "  assert(v > 0, 'RTPC_Volume_UI reads the game setting, got ' .. tostring(v))\n"
+        "  AssertEquals(A.GetRTPC('Global', 'BG3SE_NoSuchRTPC'), 0.0, 'unknown RTPC')\n"
+        "  AssertEquals(A.SetRTPC('Global', 'RTPC_Volume_UI', v), true, 'SetRTPC (unchanged value)')\n"
         "end)\n";
 
     // Tier 2 continued: Net + IMGUI + StaticData (split for 4095 limit)

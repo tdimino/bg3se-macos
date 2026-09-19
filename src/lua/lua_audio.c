@@ -11,7 +11,7 @@
  *   Ext.Audio.ResumeAllSounds() -> boolean
  *   Ext.Audio.SetSwitch(soundObject, switchGroup, state) -> boolean
  *   Ext.Audio.SetState(stateGroup, state) -> boolean
- *   Ext.Audio.SetRTPC(soundObject, name, value) -> boolean
+ *   Ext.Audio.SetRTPC(soundObject, name, value[, bypassInterpolation]) -> boolean
  *   Ext.Audio.GetRTPC(soundObject, name) -> number
  *   Ext.Audio.ResetRTPC(soundObject, name) -> boolean
  *   Ext.Audio.LoadEvent(eventName) -> boolean
@@ -154,13 +154,14 @@ static int lua_audio_set_state(lua_State *L) {
 // ============================================================================
 
 /**
- * Ext.Audio.SetRTPC(soundObject, name, value) -> boolean
+ * Ext.Audio.SetRTPC(soundObject, name, value[, bypassInternalValueInterpolation]) -> boolean
  */
 static int lua_audio_set_rtpc(lua_State *L) {
     uint64_t obj = get_sound_object(L, 1);
     const char *name = luaL_checkstring(L, 2);
     float value = (float)luaL_checknumber(L, 3);
-    lua_pushboolean(L, audio_set_rtpc(obj, name, value));
+    bool bypass = lua_toboolean(L, 4);
+    lua_pushboolean(L, audio_set_rtpc(obj, name, value, bypass));
     return 1;
 }
 

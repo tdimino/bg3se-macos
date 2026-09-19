@@ -520,6 +520,12 @@
    "method": "symbol",
    "symbol": "BaseApp::s_AppInstance",
    "note": "moved from focus_hack.c hardcoded VA 2026-08-04; baseline is the 7209685 value — the 6995620 row is 0 (focus hack postdates that vintage). focus_hack.c WRITES through the pointer read here; unknown builds must stay 0."
+  },
+  {
+   "field": "wwise_manager_vtable",
+   "baseline": "0",
+   "method": "symbol",
+   "symbol": "vtable for ww::WwiseManager"
   }
  ],
  "source_addresses": [

@@ -5,11 +5,11 @@
  * for Ext.Audio API (sound playback, state control, RTPC parameters).
  *
  * Access chain:
- *   ResourceManager::m_ptr -> ResourceManager* -> SoundManager (+???)
- *     -> WwiseManager* -> VMT calls for audio control
+ *   ResourceManager::m_ptr -> ResourceManager* -> +0x90 -> ww::WwiseManager*
+ *     -> virtual calls (slot indices below)
  *
- * Note: SoundManager offset from ResourceManager needs runtime discovery.
- * The WwiseManager VMT indices are from Windows BG3SE pattern analysis.
+ * Every call first checks the object's vtable against the version's
+ * `wwise_manager_vtable`; anything else refuses instead of calling.
  */
 
 #include "audio_manager.h"
@@ -26,25 +26,23 @@
 // Constants and Offsets
 // ============================================================================
 
-// SoundManager offset within ResourceManager (needs runtime discovery)
-// Placeholder - probe ResourceManager struct to find actual offset
-#define RESOURCEMANAGER_SOUNDMANAGER_OFFSET  0x88  // TBD: needs runtime probe
+// ww::WwiseManager within ResourceManager. On 4.1.1.7398727 the object at
+// +0x90 has the WwiseManager vtable; the one at +0x88 has no image vtable.
+#define RESOURCEMANAGER_SOUNDMANAGER_OFFSET  0x90
 
-// WwiseManager VMT indices (from Windows BG3SE analysis, need verification)
-#define WWISE_VMT_POST_EVENT        5
-#define WWISE_VMT_STOP              8
-#define WWISE_VMT_SET_SWITCH       10
-#define WWISE_VMT_SET_STATE        12
-#define WWISE_VMT_SET_RTPC         14
-#define WWISE_VMT_GET_RTPC         16
-#define WWISE_VMT_RESET_RTPC       18
-#define WWISE_VMT_PAUSE_ALL        20
-#define WWISE_VMT_RESUME_ALL       22
-#define WWISE_VMT_LOAD_EVENT       24
-#define WWISE_VMT_UNLOAD_EVENT     26
-// Additional VMT indices — TBD: verify via Ghidra for ARM64
-#define WWISE_VMT_PLAY_EXTERNAL    28   /* PlayExternalSound */
-#define WWISE_VMT_GET_ID_FROM_STR  30   /* GetIDFromString (SoundNameId) */
+// ww::WwiseManager vtable slots, read from the live vtable on 4.1.1.7398727
+// and named with nm (argument lists match Windows BG3SE Sound.h):
+#define WWISE_VMT_SET_SWITCH       20   /* SetSwitch(group, state, object) */
+#define WWISE_VMT_SET_STATE        21   /* SetState(group, state) */
+#define WWISE_VMT_SET_RTPC         22   /* SetRTPCValue(object, name, value, bypass) */
+#define WWISE_VMT_GET_RTPC         23   /* GetRTPCValue(object, name) */
+#define WWISE_VMT_RESET_RTPC       24   /* ResetRTPCValue(object, name) */
+#define WWISE_VMT_STOP             29   /* StopSounds(object, transitionMs) */
+#define WWISE_VMT_PAUSE_ALL        35   /* PauseAllSound() */
+#define WWISE_VMT_RESUME_ALL       36   /* ResumeAllSound() */
+#define WWISE_VMT_LOAD_EVENT       56   /* LoadEvent_Blocking(name) */
+#define WWISE_VMT_UNLOAD_EVENT     57   /* UnloadEvent_Blocking(name) */
+#define WWISE_VMT_POST_EVENT       78   /* PostEventInternal(object, name, seek, getPlayPos, callback) */
 
 // Wwise AKRESULT value used by the game's ww::WwiseManager wrappers.
 #define AK_SUCCESS 1
@@ -89,6 +87,7 @@ typedef int32_t (*AkPrepareBankByIdFn)(uint32_t preparation_type,
                                        uint32_t bank_content,
                                        uint32_t flags);
 
+__attribute__((unused))
 static void ls_stdstring_init(LSSTDString *out, const char *str, STDStringCtorFn ctor) {
     size_t len = str ? strlen(str) : 0;
     memset(out, 0, sizeof(*out));
@@ -179,17 +178,14 @@ bool audio_manager_init(void *main_binary_base) {
     return true;
 }
 
+static void *get_sound_manager(void);
+
 bool audio_manager_ready(void) {
     if (!g_audio.initialized || !g_audio.resource_manager_ptr) {
         return false;
     }
 
-    void *rm = NULL;
-    if (!safe_memory_read_pointer((mach_vm_address_t)g_audio.resource_manager_ptr, &rm)) {
-        return false;
-    }
-
-    return rm != NULL;
+    return get_sound_manager() != NULL;
 }
 
 // ============================================================================
@@ -209,15 +205,24 @@ static void *get_resource_manager(void) {
     return rm;
 }
 
+// The WwiseManager, or NULL unless its vtable is this version's
+// ww::WwiseManager vtable (a wrong object here meant jumping to garbage).
 static void *get_sound_manager(void) {
     void *rm = get_resource_manager();
     if (!rm) return NULL;
 
+    const VersionOffsets *off = offset_table_get();
+    if (!off || !off->wwise_manager_vtable) return NULL;
+
     void *sm = NULL;
-    if (!safe_memory_read_pointer((mach_vm_address_t)rm + RESOURCEMANAGER_SOUNDMANAGER_OFFSET, &sm)) {
+    void *vt = NULL;
+    if (!safe_memory_read_pointer((mach_vm_address_t)rm + RESOURCEMANAGER_SOUNDMANAGER_OFFSET, &sm) ||
+        !sm || !safe_memory_read_pointer((mach_vm_address_t)sm, &vt)) {
         return NULL;
     }
-
+    if ((uintptr_t)vt != (uintptr_t)offset_table_resolve(off->wwise_manager_vtable) + 0x10) {
+        return NULL;
+    }
     return sm;
 }
 
@@ -277,8 +282,9 @@ uint64_t audio_resolve_sound_object(const char *name) {
 // Playback Control
 // ============================================================================
 
-typedef void (*WwisePostEventFn)(void *this_, uint64_t sound_object, const char *event_name);
-typedef void (*WwiseStopFn)(void *this_, uint64_t sound_object);
+typedef bool (*WwisePostEventFn)(void *this_, uint64_t sound_object, const char *event_name,
+                                 float seek_position, bool get_play_position, void *callback);
+typedef void (*WwiseStopFn)(void *this_, uint64_t sound_object, uint32_t transition_ms);
 typedef void (*WwisePauseAllFn)(void *this_);
 typedef void (*WwiseResumeAllFn)(void *this_);
 
@@ -309,8 +315,7 @@ bool audio_post_event(uint64_t sound_object_id, const char *event_name) {
     }
 
     WwisePostEventFn post = (WwisePostEventFn)func;
-    post(sm, sound_object_id, event_name);
-    return true;
+    return post(sm, sound_object_id, event_name, 0.0f, false, NULL);
 }
 
 bool audio_stop(uint64_t sound_object_id) {
@@ -327,7 +332,7 @@ bool audio_stop(uint64_t sound_object_id) {
     }
 
     WwiseStopFn stop = (WwiseStopFn)func;
-    stop(sm, sound_object_id);
+    stop(sm, sound_object_id, 0);
     return true;
 }
 
@@ -371,9 +376,9 @@ bool audio_resume_all(void) {
 // State/Switch Control
 // ============================================================================
 
-typedef void (*WwiseSetSwitchFn)(void *this_, uint64_t sound_object,
-                                  const char *switch_group, const char *state);
-typedef void (*WwiseSetStateFn)(void *this_, const char *state_group, const char *state);
+typedef bool (*WwiseSetSwitchFn)(void *this_, const char *switch_group, const char *state,
+                                  uint64_t sound_object);
+typedef bool (*WwiseSetStateFn)(void *this_, const char *state_group, const char *state);
 
 bool audio_set_switch(uint64_t sound_object_id, const char *switch_group, const char *state) {
     if (!switch_group || !state) return false;
@@ -391,8 +396,7 @@ bool audio_set_switch(uint64_t sound_object_id, const char *switch_group, const 
     }
 
     WwiseSetSwitchFn set_switch = (WwiseSetSwitchFn)func;
-    set_switch(sm, sound_object_id, switch_group, state);
-    return true;
+    return set_switch(sm, switch_group, state, sound_object_id);
 }
 
 bool audio_set_state(const char *state_group, const char *state) {
@@ -411,20 +415,20 @@ bool audio_set_state(const char *state_group, const char *state) {
     }
 
     WwiseSetStateFn set_state = (WwiseSetStateFn)func;
-    set_state(sm, state_group, state);
-    return true;
+    return set_state(sm, state_group, state);
 }
 
 // ============================================================================
 // RTPC (Real-Time Parameter Control)
 // ============================================================================
 
-typedef void (*WwiseSetRtpcFn)(void *this_, uint64_t sound_object,
-                                const char *name, float value);
+typedef bool (*WwiseSetRtpcFn)(void *this_, uint64_t sound_object,
+                                const char *name, float value, bool bypass_interpolation);
 typedef float (*WwiseGetRtpcFn)(void *this_, uint64_t sound_object, const char *name);
 typedef void (*WwiseResetRtpcFn)(void *this_, uint64_t sound_object, const char *name);
 
-bool audio_set_rtpc(uint64_t sound_object_id, const char *name, float value) {
+bool audio_set_rtpc(uint64_t sound_object_id, const char *name, float value,
+                    bool bypass_interpolation) {
     if (!name) return false;
 
     void *sm = get_sound_manager();
@@ -440,8 +444,7 @@ bool audio_set_rtpc(uint64_t sound_object_id, const char *name, float value) {
     }
 
     WwiseSetRtpcFn set = (WwiseSetRtpcFn)func;
-    set(sm, sound_object_id, name, value);
-    return true;
+    return set(sm, sound_object_id, name, value, bypass_interpolation);
 }
 
 float audio_get_rtpc(uint64_t sound_object_id, const char *name) {
@@ -487,8 +490,8 @@ bool audio_reset_rtpc(uint64_t sound_object_id, const char *name) {
 // Event/Bank Management
 // ============================================================================
 
-typedef void (*WwiseLoadEventFn)(void *this_, const char *event_name);
-typedef void (*WwiseUnloadEventFn)(void *this_, const char *event_name);
+typedef bool (*WwiseLoadEventFn)(void *this_, const char *event_name);
+typedef bool (*WwiseUnloadEventFn)(void *this_, const char *event_name);
 
 bool audio_load_event(const char *event_name) {
     if (!event_name) return false;
@@ -506,8 +509,7 @@ bool audio_load_event(const char *event_name) {
     }
 
     WwiseLoadEventFn load = (WwiseLoadEventFn)func;
-    load(sm, event_name);
-    return true;
+    return load(sm, event_name);
 }
 
 bool audio_unload_event(const char *event_name) {
@@ -526,29 +528,12 @@ bool audio_unload_event(const char *event_name) {
     }
 
     WwiseUnloadEventFn unload = (WwiseUnloadEventFn)func;
-    unload(sm, event_name);
-    return true;
+    return unload(sm, event_name);
 }
 
 // ============================================================================
 // Extended Bank/External Sound Management
 // ============================================================================
-
-/**
- * GetIDFromString — get a SoundNameId (uint32_t) from an event/bank name string.
- * Returns UINT32_MAX on failure (no valid ID found).
- *
- * On Windows: SoundNameId is a 4-byte integer returned by WwiseManager::GetIDFromString.
- * The function has simple 4-byte return so no x8 buffer needed.
- */
-typedef uint32_t (*WwiseGetIdFromStringFn)(void *this_, const char *name);
-
-static uint32_t get_sound_name_id(void *sm, const char *name) {
-    void *func = read_vmt_entry(sm, WWISE_VMT_GET_ID_FROM_STR);
-    if (!func) return UINT32_MAX;
-    WwiseGetIdFromStringFn get_id = (WwiseGetIdFromStringFn)func;
-    return get_id(sm, name);
-}
 
 /**
  * PlayExternalSound — play a sound from a file path via a Wwise event.
@@ -558,52 +543,19 @@ static uint32_t get_sound_name_id(void *sm, const char *name) {
  *                          STDString& path, uint8_t codec,
  *                          float positionSec, bool loop, void* callback)
  *
- * STDString ABI verified via Ghidra (see STDSTRING_ABI.md):
- *   16 bytes, SSO threshold = 14 chars, constructor at 0x10651fb60.
- *   We construct a proper LSSTDString on the stack and pass its address.
+ * The STDString builder above (ls_stdstring_init) is kept for when this is
+ * implemented; see STDSTRING_ABI.md.
  */
-typedef bool (*WwisePlayExternalFn)(void *this_,
-                                     uint64_t sound_object,
-                                     uint32_t event_id,
-                                     LSSTDString *path,
-                                     uint8_t codec,
-                                     float position_sec,
-                                     bool loop,
-                                     void *callback);
-
 bool audio_play_external_sound(uint64_t sound_object_id, const char *event_name,
                                 const char *file_path, uint8_t codec,
                                 float position_sec) {
-    if (!event_name || !file_path) return false;
-
-    void *sm = get_sound_manager();
-    if (!sm) {
-        log_message("[Audio] SoundManager not available for PlayExternalSound");
-        return false;
-    }
-
-    uint32_t event_id = get_sound_name_id(sm, event_name);
-    if (event_id == UINT32_MAX) {
-        log_message("[Audio] PlayExternalSound: could not resolve event ID for '%s'", event_name);
-        return false;
-    }
-
-    void *func = read_vmt_entry(sm, WWISE_VMT_PLAY_EXTERNAL);
-    if (!func) {
-        log_message("[Audio] PlayExternalSound VMT entry not found at index %d", WWISE_VMT_PLAY_EXTERNAL);
-        return false;
-    }
-
-    // Construct LSSTDString on stack (SSO for <=14 chars, game ctor for longer)
-    LSSTDString path_str;
-    ls_stdstring_init(&path_str, file_path, g_audio.stdstring_ctor);
-
-    WwisePlayExternalFn play = (WwisePlayExternalFn)func;
-    bool result = play(sm, sound_object_id, event_id, &path_str, codec, position_sec, false, NULL);
-
-    log_message("[Audio] PlayExternalSound('%s', path='%s', codec=%u, pos=%.2f) -> %s",
-                event_name, file_path, codec, position_sec, result ? "OK" : "FAIL");
-    return result;
+    // On 4.1.1.7398727 this is the non-virtual ls::SoundManager::PostEventExternal
+    // (object, name, ls::Path const&, codec, uint, float, callback), not a
+    // WwiseManager slot; the old slot 28 was StopSound. Refused until its
+    // ls::Path argument is worked out.
+    (void)sound_object_id; (void)event_name; (void)file_path; (void)codec; (void)position_sec;
+    AUDIO_WARN_ONCE("[Audio] PlayExternalSound refused: not implemented for this build");
+    return false;
 }
 
 static bool bank_api_ready(void) {

@@ -125,6 +125,7 @@ ADDITIONAL_TABLE_FIELDS = (
     # prototype_managers.c singletons + focus_hack.c BaseApp slot.
     "status_proto_mgr_ptr", "passives_ptr", "interrupt_proto_mgr_ptr",
     "boost_proto_mgr_ptr", "baseapp_instance_ptr",
+    "wwise_manager_vtable",
 )
 EXPECTED_MANUAL_FIELDS = ("global_switches_ptr", "osiris_interface_ptr")
 NON_SYMBOL_FIELDS = {

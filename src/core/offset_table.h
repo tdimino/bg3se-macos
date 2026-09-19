@@ -79,6 +79,10 @@ typedef struct {
     uintptr_t passives_ptr;             // eoc::Passives::m_ptr (nm BSS symbol)
     uintptr_t interrupt_proto_mgr_ptr;  // eoc::InterruptPrototypeManager::m_ptr
     uintptr_t boost_proto_mgr_ptr;      // eoc::BoostPrototypeManager::m_ptr
+    uintptr_t wwise_manager_vtable;     // vtable for ww::WwiseManager (symbol address;
+                                        // objects point 0x10 past it). audio_manager.c
+                                        // calls the object at ResourceManager+0x90 only
+                                        // when its vtable matches; 0 = audio refused.
     uintptr_t baseapp_instance_ptr;     // BaseApp::s_AppInstance (focus_hack.c
                                         // reads the instance pointer here, then
                                         // writes the +0x142 focus flag — MUST be

@@ -257,6 +257,7 @@ static const VersionOffsets g_offset_table[] = {
         .spell_proto_mgr_ptr     = 0x089f3320,
         .rpgstats_ptr            = 0x089fddd0,
         .resource_mgr_ptr        = 0x08ac8080,
+        .wwise_manager_vtable    = 0x087bab10,  // vtable for ww::WwiseManager
         .level_mgr_ptr           = 0x08a74610,
         .global_template_mgr_ptr = 0x08ac0d98,
         .cache_template_mgr_ptr  = 0x08a69178,
