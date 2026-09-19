@@ -437,6 +437,7 @@ if(BUILD_TESTS)
         tests/tier0/test_guid_lookup.c
         tests/tier0/test_persistentvars.c
         tests/tier0/test_json_proxies.c
+        tests/tier0/test_lua_json.c
         tests/tier0/test_arm64_prologue.c
         tests/tier0/test_enum_ext.c
         tests/tier0/test_osi_hook_abi.c

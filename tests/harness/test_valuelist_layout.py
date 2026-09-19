@@ -217,19 +217,20 @@ def test_production_walk_matches_evidence_and_is_bounded():
         assert offset in evidence
 
 
-def test_insert_uses_typed_function_id_and_gate_remains_closed_for_7398727():
-    """Mutation stays closed on 7398727 while reads/diagnostics run there.
+def test_insert_uses_typed_function_id_and_gate_is_the_live_verified_build():
+    """Mutation is open only on the build where the live round trip passed.
 
-    Wave 2 lead integration bumped BG3_KNOWN_VERSION to 7398727, so the
-    insert path now carries its own gate constant. It must stay pinned to
-    7209685 (where no live insert ever succeeded either — the registry-root
-    bug blocked it) until the Phase 5 live diagnostic + insert round trip
-    proves it on 7398727."""
+    The insert path carries its own gate constant, separate from
+    BG3_KNOWN_VERSION. It moved to 7398727 with live evidence: on that build
+    GetValueListRegistryDiagnostic read 112 valid lists, and the Tier 2
+    Wave7.Stats.AddEnumerationValue round trip (insert, label<->index,
+    duplicate rejected, unknown enum fails closed) passed. No live insert ever
+    succeeded on 7209685."""
     source = STATS_C.read_text()
     assert "offset_table_game_fn(GAME_FN_VALUELIST_INSERT)" in source
     assert "VALUELIST_INSERT_ADDRESS" not in source
     assert (
-        '#define VALUELIST_INSERT_VERIFIED_BUILD "4.1.1.7209685"' in source
+        '#define VALUELIST_INSERT_VERIFIED_BUILD "4.1.1.7398727"' in source
     )
     assert re.search(
         r"strcmp\(version,\s*VALUELIST_INSERT_VERIFIED_BUILD\)", source
