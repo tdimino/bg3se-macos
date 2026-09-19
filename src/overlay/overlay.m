@@ -660,6 +660,7 @@ static NSColor* colorForLogLevel(const char* text) {
     // append + one scroll per main-queue drain. One queued block per line,
     // each forcing a whole-document relayout via scrollToEndOfDocument:,
     // crashed TextKit under load (2026-07-28, SIGBUS in appendOutput block).
+    if (!text) return;
     @synchronized (self) {
         if (!self.pendingLines) {
             self.pendingLines = [NSMutableArray array];
@@ -946,7 +947,13 @@ bool overlay_is_visible(void) {
 void overlay_append_output(const char *text) {
     if (!s_initialized || !s_console_view || !text) return;
 
+    // stringWithUTF8String: returns nil for bytes that are not UTF-8, and a nil
+    // line added to pendingLines threw an uncaught NSException that aborted
+    // the game. Latin-1 decodes every byte sequence, so the line still shows.
     NSString *nsText = [NSString stringWithUTF8String:text];
+    if (!nsText) {
+        nsText = [NSString stringWithCString:text encoding:NSISOLatin1StringEncoding];
+    }
     [s_console_view appendOutput:nsText];
 }
 
