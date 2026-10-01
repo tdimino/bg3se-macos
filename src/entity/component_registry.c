@@ -6,6 +6,7 @@
  */
 
 #include "component_registry.h"
+#include "component_short_names.h"
 #include "component_lookup.h"
 #include "arm64_call.h"
 #include "entity_system.h"
@@ -253,7 +254,30 @@ static void component_registry_register_known_components(void) {
 // Lookup Functions
 // ============================================================================
 
+const char *component_engine_name(const char *name) {
+    if (!name || strstr(name, "::")) return NULL;
+    size_t lo = 0, hi = COMPONENT_SHORT_NAME_COUNT;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        int c = strcmp(name, g_ComponentShortNames[mid].shortName);
+        if (c == 0) return g_ComponentShortNames[mid].engineName;
+        if (c < 0) hi = mid; else lo = mid + 1;
+    }
+    return NULL;
+}
+
+static const ComponentInfo *component_registry_lookup_exact(const char *name);
+
+// Exact engine name first; otherwise a Windows ExtComponentType name
+// ("Health", "ServerCharacter") mapped to its engine class.
 const ComponentInfo *component_registry_lookup(const char *name) {
+    const ComponentInfo *info = component_registry_lookup_exact(name);
+    if (info) return info;
+    const char *engine = component_engine_name(name);
+    return engine ? component_registry_lookup_exact(engine) : NULL;
+}
+
+static const ComponentInfo *component_registry_lookup_exact(const char *name) {
     if (!name) return NULL;
 
     int bucket = hash_bucket(name);

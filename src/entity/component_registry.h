@@ -95,6 +95,10 @@ bool component_registry_ready(void);
  */
 const ComponentInfo *component_registry_lookup(const char *name);
 
+/** Engine class for a Windows ExtComponentType name ("Health" ->
+ *  "eoc::HealthComponent"); NULL for an engine name or an unknown one. */
+const char *component_engine_name(const char *name);
+
 /**
  * Look up a component by index.
  *

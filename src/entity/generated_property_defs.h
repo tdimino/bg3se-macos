@@ -137,7 +137,7 @@ static const ComponentPropertyDef g_Gen_ecl_GameCameraBehavior_Properties[] = {
     { "XRotationSpeedMouse", 0xb0, FIELD_TYPE_INT32, 0, true },
     { "ZoomSpeed", 0xb4, FIELD_TYPE_FLOAT, 0, true },
     { "CameraMode", 0xb8, FIELD_TYPE_UINT8, 0, true },
-    { "field_A9", 0xb9, FIELD_TYPE_UINT8, 0, true },
+    { "field_A9", 0xa9, FIELD_TYPE_UINT8, 0, true },
     { "RotationY", 0xbc, FIELD_TYPE_FLOAT, 0, true },
     { "MouseRotationSpeed", 0xc0, FIELD_TYPE_FLOAT, 0, true },
     { "TargetLastPosition", 0xc8, FIELD_TYPE_VEC3, 0, true },
@@ -151,7 +151,7 @@ static const ComponentPropertyDef g_Gen_ecl_GameCameraBehavior_Properties[] = {
     { "Trigger3ID", 0xf0, FIELD_TYPE_INT32, 0, true },
     { "LastPlayerInputTime", 0xf4, FIELD_TYPE_FLOAT, 0, true },
     { "PlayerInControl", 0xf8, FIELD_TYPE_BOOL, 0, true },
-    { "field_145", 0xf9, FIELD_TYPE_BOOL, 0, true },
+    { "field_145", 0x145, FIELD_TYPE_BOOL, 0, true },
     { "IsPaused", 0xfa, FIELD_TYPE_BOOL, 0, true },
     { "TargetMode", 0xfc, FIELD_TYPE_UINT32, 0, true },
     { "SelectMode", 0x100, FIELD_TYPE_BOOL, 0, true },
@@ -162,8 +162,8 @@ static const ComponentPropertyDef g_Gen_ecl_GameCameraBehavior_Properties[] = {
     { "PitchDegrees", 0x11c, FIELD_TYPE_FLOAT, 0, true },
     { "field_188", 0x120, FIELD_TYPE_BOOL, 0, true },
     { "FreezeHeight", 0x121, FIELD_TYPE_BOOL, 0, true },
-    { "field_18A", 0x122, FIELD_TYPE_BOOL, 0, true },
-    { "field_18B", 0x123, FIELD_TYPE_BOOL, 0, true },
+    { "field_18A", 0x18a, FIELD_TYPE_BOOL, 0, true },
+    { "field_18B", 0x18b, FIELD_TYPE_BOOL, 0, true },
     { "DebugPosition", 0x128, FIELD_TYPE_VEC3, 0, true },
     { "DebugOffset", 0x134, FIELD_TYPE_FLOAT, 0, true },
     { "TrackTarget", 0x138, FIELD_TYPE_ENTITY_HANDLE, 0, true },
@@ -172,7 +172,7 @@ static const ComponentPropertyDef g_Gen_ecl_GameCameraBehavior_Properties[] = {
     { "field_1F2", 0x142, FIELD_TYPE_BOOL, 0, true },
     { "IsSnapping", 0x143, FIELD_TYPE_BOOL, 0, true },
     { "LastPickingTarget", 0x148, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "field_200", 0x150, FIELD_TYPE_UINT8, 0, true },
+    { "field_200", 0x200, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_ecl_GameCameraBehavior_Layout = {
@@ -233,29 +233,7 @@ static const ComponentLayoutDef g_Gen_ecl_Scenery_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_ecl_TLPreviewDummy_Properties[] = {
-    { "CurrentLevel", 0x00, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "Flags", 0x04, FIELD_TYPE_UINT16, 0, true },
-    { "field_30", 0x08, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "PhysicsResourceId", 0x10, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "VisualResourceId", 0x14, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "SourceTemplateOverride", 0x18, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "ShapeShiftSourceTemplateOverride", 0x1c, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "OriginalCharacterTemplate", 0x20, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "Listener", 0x28, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "VisibilityFlags", 0x30, FIELD_TYPE_UINT32, 0, true },
-    { "field_AC", 0x34, FIELD_TYPE_UINT8, 0, true },
-    { "field_AD", 0x35, FIELD_TYPE_UINT8, 0, true },
-    { "LightChannel", 0x36, FIELD_TYPE_UINT8, 0, true },
-    { "TimelineType", 0x37, FIELD_TYPE_UINT8, 0, true },
-    { "ComponentLayoutFlags", 0x38, FIELD_TYPE_UINT32, 0, true },
-    { "ActiveDummy", 0x3c, FIELD_TYPE_BOOL, 0, true },
-    { "ArmorVisibilityControlled", 0x3d, FIELD_TYPE_BOOL, 0, true },
-    { "field_C2", 0x3e, FIELD_TYPE_UINT8, 0, true },
-    { "ArmorVisibilityControlled2", 0x3f, FIELD_TYPE_BOOL, 0, true },
-    { "field_C4", 0x40, FIELD_TYPE_UINT8, 0, true },
-    { "IsWeaponUnsheathed", 0x41, FIELD_TYPE_BOOL, 0, true },
-    { "ShouldShowVanityWeapon", 0x42, FIELD_TYPE_BOOL, 0, true },
-    { "_Pad", 0x48, FIELD_TYPE_UINT64, 0, true },
+    { "TLPreviewDummyPtr", 0x00, FIELD_TYPE_UINT64, 0, true },  // Ptr to 0xc0 (192b) malloc
 };
 
 static const ComponentLayoutDef g_Gen_ecl_TLPreviewDummy_Layout = {
@@ -319,8 +297,8 @@ static const ComponentLayoutDef g_Gen_ecl_character_creation_CompanionDefinition
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_ecl_character_creation_DefinitionStateComponent_Properties[] = {
-    { "field_8", 0x00, FIELD_TYPE_UINT32, 0, true },
-    { "field_C", 0x04, FIELD_TYPE_UINT32, 0, true },
+    { "field_8", 0x08, FIELD_TYPE_UINT32, 0, true },
+    { "field_C", 0x0c, FIELD_TYPE_UINT32, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_ecl_character_creation_DefinitionStateComponent_Layout = {
@@ -342,7 +320,7 @@ static const ComponentPropertyDef g_Gen_ecl_character_creation_DefinitionStateEx
     { "field_0", 0x00, FIELD_TYPE_UINT8, 0, true },
     { "field_1", 0x01, FIELD_TYPE_UINT8, 0, true },
     { "field_2", 0x02, FIELD_TYPE_UINT8, 0, true },
-    { "field_18", 0x04, FIELD_TYPE_UINT32, 0, true },
+    { "field_18", 0x18, FIELD_TYPE_UINT32, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_ecl_character_creation_DefinitionStateExComponent_Layout = {
@@ -532,8 +510,8 @@ static const ComponentLayoutDef g_Gen_ecl_dummy_UnsheathComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_ecl_equipment_VisualsVisibilityStateComponent_Properties[] = {
-    { "field_40", 0x00, FIELD_TYPE_UINT8, 0, true },
-    { "field_41", 0x01, FIELD_TYPE_UINT8, 0, true },
+    { "field_40", 0x40, FIELD_TYPE_UINT8, 0, true },
+    { "field_41", 0x41, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_ecl_equipment_VisualsVisibilityStateComponent_Layout = {
@@ -813,8 +791,8 @@ static const ComponentLayoutDef g_Gen_eoc_BoostConditionComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_BoostInfoComponent_Properties[] = {
-    { "field_20", 0x00, FIELD_TYPE_BOOL, 0, true },
-    { "Owner", 0x08, FIELD_TYPE_ENTITY_HANDLE, 0, true },
+    { "field_20", 0x10, FIELD_TYPE_BOOL, 0, true },
+    { "Owner", 0x30, FIELD_TYPE_ENTITY_HANDLE, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_BoostInfoComponent_Layout = {
@@ -986,7 +964,7 @@ static const ComponentLayoutDef g_Gen_eoc_CanSpeakComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_CanTravelComponent_Properties[] = {
-    { "field_2", 0x00, FIELD_TYPE_UINT16, 0, true },
+    { "field_2", 0x02, FIELD_TYPE_UINT16, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_CanTravelComponent_Layout = {
@@ -1009,7 +987,7 @@ static const ComponentPropertyDef g_Gen_eoc_CharacterCreationStatsComponent_Prop
     { "SubRace", 0x10, FIELD_TYPE_GUID, 0, true },
     { "BodyType", 0x20, FIELD_TYPE_UINT8, 0, true },
     { "BodyShape", 0x21, FIELD_TYPE_UINT8, 0, true },
-    { "field_5C", 0x22, FIELD_TYPE_UINT8, 0, true },
+    { "field_5C", 0x54, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_CharacterCreationStatsComponent_Layout = {
@@ -1290,9 +1268,7 @@ static const ComponentLayoutDef g_Gen_eoc_GameObjectVisualComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_GameplayLightComponent_Properties[] = {
-    { "field_3C", 0x00, FIELD_TYPE_FLOAT, 0, true },
-    { "field_40", 0x04, FIELD_TYPE_FLOAT, 0, true },
-    { "field_44", 0x08, FIELD_TYPE_UINT8, 0, true },
+
 };
 
 static const ComponentLayoutDef g_Gen_eoc_GameplayLightComponent_Layout = {
@@ -1391,8 +1367,8 @@ static const ComponentLayoutDef g_Gen_eoc_IncreaseMaxHPBoostComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_InteractionFilterComponent_Properties[] = {
-    { "field_30", 0x00, FIELD_TYPE_UINT8, 0, true },
-    { "field_31", 0x01, FIELD_TYPE_UINT8, 0, true },
+    { "field_30", 0x30, FIELD_TYPE_UINT8, 0, true },
+    { "field_31", 0x31, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_InteractionFilterComponent_Layout = {
@@ -1412,8 +1388,8 @@ static const ComponentLayoutDef g_Gen_eoc_InteractionFilterComponent_Layout = {
 
 static const ComponentPropertyDef g_Gen_eoc_InvisibilityComponent_Properties[] = {
     { "field_0", 0x00, FIELD_TYPE_UINT8, 0, true },
-    { "field_4", 0x08, FIELD_TYPE_VEC3, 0, true },
-    { "field_10", 0x14, FIELD_TYPE_UINT8, 0, true },
+    { "field_4", 0x04, FIELD_TYPE_VEC3, 0, true },
+    { "field_10", 0x10, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_InvisibilityComponent_Layout = {
@@ -1554,7 +1530,7 @@ static const ComponentLayoutDef g_Gen_eoc_OriginComponent_Layout = {
 
 static const ComponentPropertyDef g_Gen_eoc_PassiveComponent_Properties[] = {
     { "PassiveId", 0x00, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "field_1C", 0x04, FIELD_TYPE_UINT32, 0, true },
+    { "field_1C", 0x1c, FIELD_TYPE_UINT32, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_PassiveComponent_Layout = {
@@ -1573,14 +1549,14 @@ static const ComponentLayoutDef g_Gen_eoc_PassiveComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_PathingComponent_Properties[] = {
-    { "field_20", 0x00, FIELD_TYPE_VEC3, 0, true },
+    { "field_20", 0x20, FIELD_TYPE_VEC3, 0, true },
     { "MovementTiltToRemap", 0x0c, FIELD_TYPE_FIXEDSTRING, 0, true },
     { "field_30", 0x10, FIELD_TYPE_INT64, 0, true },
-    { "field_38", 0x18, FIELD_TYPE_INT32, 0, true },
+    { "field_38", 0x38, FIELD_TYPE_INT32, 0, true },
     { "PathId", 0x1c, FIELD_TYPE_INT32, 0, true },
     { "Flags", 0x20, FIELD_TYPE_UINT8, 0, true },
     { "PathMovementSpeed", 0x24, FIELD_TYPE_FLOAT, 0, true },
-    { "field_48", 0x28, FIELD_TYPE_INT32, 0, true },
+    { "field_48", 0x48, FIELD_TYPE_INT32, 0, true },
     { "ServerControl", 0x2c, FIELD_TYPE_UINT8, 0, true },
 };
 
@@ -1657,7 +1633,7 @@ static const ComponentLayoutDef g_Gen_eoc_RequestedRollComponent_Layout = {
 
 static const ComponentPropertyDef g_Gen_eoc_ResistancesComponent_Properties[] = {
     { "Resistances", 0x00, FIELD_TYPE_INT32, 0, true },
-    { "field_E", 0x04, FIELD_TYPE_UINT8, 0, true },
+    { "field_E", 0x0e, FIELD_TYPE_UINT8, 0, true },
     { "AC", 0x08, FIELD_TYPE_INT32, 0, true },
 };
 
@@ -1707,10 +1683,10 @@ static const ComponentPropertyDef g_Gen_eoc_StealthComponent_Properties[] = {
     { "SeekHiddenFlag", 0x00, FIELD_TYPE_BOOL, 0, true },
     { "Position", 0x08, FIELD_TYPE_VEC3, 0, true },
     { "SeekHiddenTimeout", 0x14, FIELD_TYPE_FLOAT, 0, true },
-    { "field_14", 0x18, FIELD_TYPE_FLOAT, 0, true },
-    { "field_18", 0x1c, FIELD_TYPE_INT32, 0, true },
-    { "field_1C", 0x20, FIELD_TYPE_FLOAT, 0, true },
-    { "field_20", 0x24, FIELD_TYPE_FLOAT, 0, true },
+    { "field_14", 0x14, FIELD_TYPE_FLOAT, 0, true },
+    { "field_18", 0x18, FIELD_TYPE_INT32, 0, true },
+    { "field_1C", 0x1c, FIELD_TYPE_FLOAT, 0, true },
+    { "field_20", 0x20, FIELD_TYPE_FLOAT, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_StealthComponent_Layout = {
@@ -1730,8 +1706,8 @@ static const ComponentLayoutDef g_Gen_eoc_StealthComponent_Layout = {
 
 static const ComponentPropertyDef g_Gen_eoc_SteeringComponent_Properties[] = {
     { "field_0", 0x00, FIELD_TYPE_VEC3, 0, true },
-    { "field_18", 0x0c, FIELD_TYPE_FLOAT, 0, true },
-    { "field_1C", 0x10, FIELD_TYPE_UINT8, 0, true },
+    { "field_18", 0x18, FIELD_TYPE_FLOAT, 0, true },
+    { "field_1C", 0x1c, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_SteeringComponent_Layout = {
@@ -1794,10 +1770,10 @@ static const ComponentLayoutDef g_Gen_eoc_TurnBasedComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_TurnOrderComponent_Properties[] = {
-    { "field_40", 0x00, FIELD_TYPE_INT32, 0, true },
-    { "field_44", 0x04, FIELD_TYPE_INT32, 0, true },
-    { "field_48", 0x08, FIELD_TYPE_INT32, 0, true },
-    { "field_4C", 0x0c, FIELD_TYPE_FLOAT, 0, true },
+    { "field_40", 0x40, FIELD_TYPE_INT32, 0, true },
+    { "field_44", 0x44, FIELD_TYPE_INT32, 0, true },
+    { "field_48", 0x48, FIELD_TYPE_INT32, 0, true },
+    { "field_4C", 0x4c, FIELD_TYPE_FLOAT, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_TurnOrderComponent_Layout = {
@@ -1918,8 +1894,8 @@ static const ComponentLayoutDef g_Gen_eoc_WieldingComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_active_roll_ModifiersComponent_Properties[] = {
-    { "field_18", 0x00, FIELD_TYPE_UINT8, 0, true },
-    { "field_19", 0x01, FIELD_TYPE_UINT8, 0, true },
+    { "field_18", 0x18, FIELD_TYPE_UINT8, 0, true },
+    { "field_19", 0x19, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_active_roll_ModifiersComponent_Layout = {
@@ -1977,10 +1953,10 @@ static const ComponentLayoutDef g_Gen_eoc_calendar_StartingDateComponent_Layout 
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_camp_ChestComponent_Properties[] = {
-    { "UserID", 0x00, FIELD_TYPE_INT32, 0, true },
-    { "field_1C", 0x04, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "field_20", 0x08, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "field_28", 0x10, FIELD_TYPE_INT32, 0, true },
+    { "UserID", 0x10, FIELD_TYPE_INT32, 0, true },
+    { "field_1C", 0x14, FIELD_TYPE_FIXEDSTRING, 0, true },
+    { "field_20", 0x18, FIELD_TYPE_ENTITY_HANDLE, 0, true },
+    { "field_28", 0x20, FIELD_TYPE_INT32, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_camp_ChestComponent_Layout = {
@@ -2329,7 +2305,7 @@ static const ComponentLayoutDef g_Gen_eoc_character_creation_StateComponent_Layo
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_character_creation_definition_CreationComponent_Properties[] = {
-    { "field_10", 0x00, FIELD_TYPE_UINT8, 0, true },
+    { "field_10", 0x10, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_character_creation_definition_CreationComponent_Layout = {
@@ -2536,7 +2512,7 @@ static const ComponentPropertyDef g_Gen_eoc_dialog_StateComponent_Properties[] =
     { "field_0", 0x00, FIELD_TYPE_UINT8, 0, true },
     { "field_1", 0x01, FIELD_TYPE_UINT8, 0, true },
     { "field_2", 0x02, FIELD_TYPE_UINT8, 0, true },
-    { "field_8", 0x03, FIELD_TYPE_UINT8, 0, true },
+    { "field_8", 0x08, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_dialog_StateComponent_Layout = {
@@ -3633,8 +3609,8 @@ static const ComponentPropertyDef g_Gen_eoc_repose_StateComponent_Properties[] =
     { "field_0", 0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true },
     { "field_8", 0x08, FIELD_TYPE_GUID, 0, true },
     { "field_18", 0x18, FIELD_TYPE_INT32, 0, true },
-    { "field_1C", 0x20, FIELD_TYPE_VEC3, 0, true },
-    { "field_28", 0x2c, FIELD_TYPE_UINT8, 0, true },
+    { "field_1C", 0x1c, FIELD_TYPE_VEC3, 0, true },
+    { "field_28", 0x28, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_repose_StateComponent_Layout = {
@@ -3656,7 +3632,7 @@ static const ComponentPropertyDef g_Gen_eoc_rest_LongRestState_Properties[] = {
     { "WaitingForOthers", 0x00, FIELD_TYPE_BOOL, 0, true },
     { "FinishConfirmed", 0x01, FIELD_TYPE_BOOL, 0, true },
     { "Finishing", 0x02, FIELD_TYPE_BOOL, 0, true },
-    { "field_8", 0x04, FIELD_TYPE_FIXEDSTRING, 0, true },
+    { "field_8", 0x08, FIELD_TYPE_FIXEDSTRING, 0, true },
     { "Requester", 0x08, FIELD_TYPE_ENTITY_HANDLE, 0, true },
 };
 
@@ -3752,7 +3728,7 @@ static const ComponentLayoutDef g_Gen_eoc_rest_RestingEntities_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_ruleset_RulesetComponent_Properties[] = {
-    { "field_40", 0x00, FIELD_TYPE_GUID, 0, true },
+    { "field_40", 0x50, FIELD_TYPE_GUID, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_ruleset_RulesetComponent_Layout = {
@@ -3837,8 +3813,8 @@ static const ComponentLayoutDef g_Gen_eoc_shapeshift_ReplicatedChangesComponent_
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_sight_DataComponent_Properties[] = {
-    { "field_20", 0x00, FIELD_TYPE_INT32, 0, true },
-    { "field_24", 0x04, FIELD_TYPE_INT32, 0, true },
+    { "field_20", 0x20, FIELD_TYPE_INT32, 0, true },
+    { "field_24", 0x24, FIELD_TYPE_INT32, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_sight_DataComponent_Layout = {
@@ -3898,9 +3874,9 @@ static const ComponentLayoutDef g_Gen_eoc_spell_ScriptedExplosionComponent_Layou
 static const ComponentPropertyDef g_Gen_eoc_spell_cast_AnimationInfoComponent_Properties[] = {
     { "TargetPosition", 0x00, FIELD_TYPE_VEC3, 0, true },
     { "Target", 0x10, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "field_28", 0x18, FIELD_TYPE_UINT8, 0, true },
+    { "field_28", 0x28, FIELD_TYPE_UINT8, 0, true },
     { "TargetIsCaster", 0x19, FIELD_TYPE_BOOL, 0, true },
-    { "field_2B", 0x1a, FIELD_TYPE_UINT8, 0, true },
+    { "field_2B", 0x2b, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_spell_cast_AnimationInfoComponent_Layout = {
@@ -4076,7 +4052,7 @@ static const ComponentLayoutDef g_Gen_eoc_status_IDComponent_Layout = {
 
 static const ComponentPropertyDef g_Gen_eoc_status_IncapacitatedComponent_Properties[] = {
     { "field_0", 0x00, FIELD_TYPE_UINT32, 0, true },
-    { "field_48", 0x04, FIELD_TYPE_UINT8, 0, true },
+    { "field_48", 0x48, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_status_IncapacitatedComponent_Layout = {
@@ -4133,9 +4109,9 @@ static const ComponentLayoutDef g_Gen_eoc_status_LoseControlComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_summon_IsSummonComponent_Properties[] = {
-    { "field_10", 0x00, FIELD_TYPE_GUID, 0, true },
-    { "field_20", 0x10, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "field_28", 0x18, FIELD_TYPE_FIXEDSTRING, 0, true },
+    { "field_10", 0x10, FIELD_TYPE_GUID, 0, true },
+    { "field_20", 0x20, FIELD_TYPE_ENTITY_HANDLE, 0, true },
+    { "field_28", 0x28, FIELD_TYPE_FIXEDSTRING, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_summon_IsSummonComponent_Layout = {
@@ -4231,10 +4207,10 @@ static const ComponentLayoutDef g_Gen_eoc_trigger_TypeComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_eoc_unsheath_StateComponent_Properties[] = {
-    { "field_10", 0x00, FIELD_TYPE_INT32, 0, true },
-    { "field_18", 0x04, FIELD_TYPE_UINT8, 0, true },
-    { "field_19", 0x05, FIELD_TYPE_UINT8, 0, true },
-    { "field_1A", 0x06, FIELD_TYPE_UINT8, 0, true },
+    { "field_10", 0x10, FIELD_TYPE_INT32, 0, true },
+    { "field_18", 0x18, FIELD_TYPE_UINT8, 0, true },
+    { "field_19", 0x19, FIELD_TYPE_UINT8, 0, true },
+    { "field_1A", 0x1a, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_unsheath_StateComponent_Layout = {
@@ -4254,7 +4230,7 @@ static const ComponentLayoutDef g_Gen_eoc_unsheath_StateComponent_Layout = {
 
 static const ComponentPropertyDef g_Gen_eoc_user_AvatarComponent_Properties[] = {
     { "UserID", 0x00, FIELD_TYPE_INT32, 0, true },
-    { "field_8", 0x04, FIELD_TYPE_UINT8, 0, true },
+    { "field_8", 0x08, FIELD_TYPE_UINT8, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_eoc_user_AvatarComponent_Layout = {
@@ -4372,7 +4348,7 @@ static const ComponentLayoutDef g_Gen_esv_BaseStatsComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_esv_BreadcrumbComponent_Properties[] = {
-    { "field_118", 0x00, FIELD_TYPE_VEC3, 0, true },
+    { "field_118", 0x100, FIELD_TYPE_VEC3, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_esv_BreadcrumbComponent_Layout = {
@@ -4886,7 +4862,7 @@ static const ComponentLayoutDef g_Gen_esv_escort_MemberComponent_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_esv_escort_StragglersTrackerComponent_Properties[] = {
-    { "field_10", 0x00, FIELD_TYPE_VEC3, 0, true },
+    { "field_10", 0x10, FIELD_TYPE_VEC3, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_esv_escort_StragglersTrackerComponent_Layout = {
@@ -5250,7 +5226,7 @@ static const ComponentLayoutDef g_Gen_esv_shapeshift_StatesComponent_Layout = {
 
 static const ComponentPropertyDef g_Gen_esv_sight_AggregatedDataComponent_Properties[] = {
     { "MaxSightRange", 0x00, FIELD_TYPE_FLOAT, 0, true },
-    { "field_144", 0x04, FIELD_TYPE_INT32, 0, true },
+    { "field_144", 0x144, FIELD_TYPE_INT32, 0, true },
 };
 
 static const ComponentLayoutDef g_Gen_esv_sight_AggregatedDataComponent_Layout = {
@@ -5412,7 +5388,7 @@ static const ComponentLayoutDef g_Gen_esv_spell_cast_MovementComponent_Layout = 
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_esv_spell_cast_StateComponent_Properties[] = {
-    { "field_4", 0x00, FIELD_TYPE_INT32, 0, true },
+    { "field_4", 0x04, FIELD_TYPE_INT32, 0, true },
     { "StoryActionId", 0x04, FIELD_TYPE_INT32, 0, true },
 };
 
@@ -5820,15 +5796,7 @@ static const ComponentLayoutDef g_Gen_ls_EffectCameraBehavior_Layout = {
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_ls_EffectComponent_Properties[] = {
-    { "Entity", 0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "Initialized", 0x08, FIELD_TYPE_BOOL, 0, true },
-    { "OverridingFadeOpacity", 0x09, FIELD_TYPE_BOOL, 0, true },
-    { "EffectName", 0x0c, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "AnimationName", 0x10, FIELD_TYPE_FIXEDSTRING, 0, true },
-    { "UpdateQueued", 0x14, FIELD_TYPE_BOOL, 0, true },
-    { "SoundEntity", 0x18, FIELD_TYPE_ENTITY_HANDLE, 0, true },
-    { "ConstructFlagsAndSalt", 0x20, FIELD_TYPE_UINT16, 0, true },
-    { "_Pad", 0x28, FIELD_TYPE_UINT64, 0, true },
+    { "EffectPtr", 0x00, FIELD_TYPE_UINT64, 0, true },  // Ptr to 0x68 (104b) malloc
 };
 
 static const ComponentLayoutDef g_Gen_ls_EffectComponent_Layout = {
@@ -6066,8 +6034,8 @@ static const ComponentLayoutDef g_Gen_ls_VisualChangeRequestOneFrameComponent_La
 // ======================================================================
 
 static const ComponentPropertyDef g_Gen_ls_VisualComponent_Properties[] = {
-    { "field_8", 0x00, FIELD_TYPE_UINT8, 0, true },
-    { "field_9", 0x01, FIELD_TYPE_UINT8, 0, true },
+    { "field_8", 0x08, FIELD_TYPE_UINT8, 0, true },
+    { "field_9", 0x09, FIELD_TYPE_UINT8, 0, true },
     { "NotClustered", 0x02, FIELD_TYPE_BOOL, 0, true },
 };
 

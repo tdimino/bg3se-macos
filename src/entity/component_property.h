@@ -9,6 +9,7 @@
 #ifndef COMPONENT_PROPERTY_H
 #define COMPONENT_PROPERTY_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -50,7 +51,7 @@ typedef enum {
 
 typedef enum {
     ELEM_TYPE_UNKNOWN = 0,      // Raw bytes (element size required)
-    ELEM_TYPE_SPELL_DATA,       // spell::SpellData (88 bytes on ARM64)
+    ELEM_TYPE_SPELL_DATA,       // spell::SpellData (0x68 bytes on ARM64)
     ELEM_TYPE_SPELL_META,       // spell::SpellMeta (96 bytes / 0x60 on ARM64, live-verified 7398727)
     ELEM_TYPE_STATUS_INFO,      // Generic status info
     ELEM_TYPE_GUID,             // Array of GUIDs
@@ -161,6 +162,40 @@ int component_property_read(lua_State *L, void *componentPtr,
  */
 int component_property_read_def(lua_State *L, void *componentPtr,
                                 const ComponentPropertyDef *prop);
+
+/** Bytes a property occupies (0 = unknown width). Shared by the reader
+ * and the tier-0 bounds sweep so both check the same widths. */
+static inline size_t component_field_type_width(const ComponentPropertyDef *prop) {
+    if (!prop) return 0;
+    switch (prop->type) {
+        case FIELD_TYPE_INT8: case FIELD_TYPE_UINT8: case FIELD_TYPE_BOOL:
+            return 1;
+        case FIELD_TYPE_INT16: case FIELD_TYPE_UINT16:
+            return 2;
+        case FIELD_TYPE_INT32: case FIELD_TYPE_UINT32:
+        case FIELD_TYPE_FLOAT: case FIELD_TYPE_FIXEDSTRING:
+            return 4;
+        case FIELD_TYPE_INT64: case FIELD_TYPE_UINT64:
+        case FIELD_TYPE_DOUBLE: case FIELD_TYPE_ENTITY_HANDLE:
+            return 8;
+        case FIELD_TYPE_VEC3:
+            return 12;
+        case FIELD_TYPE_GUID: case FIELD_TYPE_VEC4:
+        case FIELD_TYPE_DYNAMIC_ARRAY:   // buf + capacity + size header
+            return 16;
+        case FIELD_TYPE_INT32_ARRAY: case FIELD_TYPE_FLOAT_ARRAY:
+            return (size_t)prop->arraySize * 4;
+        default:
+            return 0;
+    }
+}
+
+/** False (and counted) when a read would leave the layout's recorded size. */
+bool component_property_read_in_bounds(const ComponentLayoutDef *layout,
+                                       const ComponentPropertyDef *prop);
+
+/** How many reads were refused for leaving their component. */
+uint64_t component_property_read_bounds_refused(void);
 
 // ============================================================================
 // Property Writing

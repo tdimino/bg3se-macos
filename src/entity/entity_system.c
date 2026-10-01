@@ -1664,47 +1664,44 @@ static int lua_entity_remove_component(lua_State *L) {
     return 1;
 }
 
-// Helper: Push TransformComponent as Lua table
+// Push a float vector as a table readable both ways: v[1..n] (Windows glm
+// marshalling) and v.x/.y/.z/.w (the macOS form this API has always had).
+static void push_vec_both(lua_State *L, const float *v, int n) {
+    static const char *const names[] = {"x", "y", "z", "w"};
+    lua_createtable(L, n, n);
+    for (int i = 0; i < n; i++) {
+        lua_pushnumber(L, v[i]);
+        lua_rawseti(L, -2, i + 1);
+        lua_pushnumber(L, v[i]);
+        lua_setfield(L, -2, names[i]);
+    }
+}
+
+// Helper: Push TransformComponent as Lua table.
+// Windows exposes entity.Transform.Transform.{Translate,RotationQuat,Scale}
+// with vectors as 1-based arrays; this API exposed entity.Transform.Translate.x.
+// Both shapes work: vectors carry indices and x/y/z/w, and .Transform refers
+// back to the same table.
 static void push_transform_component(lua_State *L, void *component) {
     TransformComponent *transform = (TransformComponent*)component;
 
     lua_newtable(L);
 
-    // Position subtable
-    lua_newtable(L);
-    lua_pushnumber(L, transform->position[0]);
-    lua_setfield(L, -2, "x");
-    lua_pushnumber(L, transform->position[1]);
-    lua_setfield(L, -2, "y");
-    lua_pushnumber(L, transform->position[2]);
-    lua_setfield(L, -2, "z");
+    push_vec_both(L, transform->position, 3);
     lua_pushvalue(L, -1);
     lua_setfield(L, -3, "Translate");   // Windows name (Transform.Translate)
     lua_setfield(L, -2, "Position");    // macOS legacy alias
 
-    // Rotation subtable (quaternion)
-    lua_newtable(L);
-    lua_pushnumber(L, transform->rotation[0]);
-    lua_setfield(L, -2, "x");
-    lua_pushnumber(L, transform->rotation[1]);
-    lua_setfield(L, -2, "y");
-    lua_pushnumber(L, transform->rotation[2]);
-    lua_setfield(L, -2, "z");
-    lua_pushnumber(L, transform->rotation[3]);
-    lua_setfield(L, -2, "w");
+    push_vec_both(L, transform->rotation, 4);   // quaternion x,y,z,w
     lua_pushvalue(L, -1);
     lua_setfield(L, -3, "RotationQuat"); // Windows name
     lua_setfield(L, -2, "Rotation");     // macOS legacy alias
 
-    // Scale subtable
-    lua_newtable(L);
-    lua_pushnumber(L, transform->scale[0]);
-    lua_setfield(L, -2, "x");
-    lua_pushnumber(L, transform->scale[1]);
-    lua_setfield(L, -2, "y");
-    lua_pushnumber(L, transform->scale[2]);
-    lua_setfield(L, -2, "z");
+    push_vec_both(L, transform->scale, 3);
     lua_setfield(L, -2, "Scale");
+
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "Transform");    // Windows: TransformComponent.Transform
 }
 
 // Entity:GetComponent(name) method
@@ -2237,8 +2234,17 @@ static int lua_entity_index(lua_State *L) {
     }
 
     // Dynamic component lookup via property system
-    // This allows new components to be accessed by short name without hardcoding
-    const ComponentLayoutDef *layout = component_property_get_layout_by_short_name(key);
+    // This allows new components to be accessed by short name without hardcoding.
+    // A "::"-qualified key (entity["eoc::VoiceTagComponent"]) is a full component
+    // name: short-name lookup never matches it, so it returned nil for every
+    // component.
+    const ComponentLayoutDef *layout = strstr(key, "::")
+        ? component_property_get_layout(key)
+        : component_property_get_layout_by_short_name(key);
+    if (!layout && component_engine_name(key)) {
+        // Windows ExtComponentType name ("ServerCharacter", "ResistanceBoost").
+        layout = component_property_get_layout(component_engine_name(key));
+    }
     if (layout && layout->componentTypeIndex > 0) {
         // Look up component by TypeIndex
         void *component = component_lookup_by_index(
