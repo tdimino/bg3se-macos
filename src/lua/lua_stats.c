@@ -9,6 +9,8 @@
 #include "../stats/stats_manager.h"
 #include "../stats/prototype_managers.h"
 #include "../strings/fixed_string.h"
+#include "../entity/guid_lookup.h"
+#include "../enum/enum_registry.h"
 #include "../lifetime/lifetime.h"
 #include "../mod/mod_loader.h"
 #include "logging.h"
@@ -188,11 +190,51 @@ static int lua_stats_object_index(lua_State *L) {
         return 1;
     }
 
-    // Try to get as a stat property
-    const char *str_val = stats_get_string(ud->obj, key);
-    if (str_val) {
-        lua_pushstring(L, str_val);
-        return 1;
+    // Stat attribute, pushed by its value-list type (Windows semantics:
+    // ints and floats as numbers, enumerations as their label, flags as an
+    // array of labels, GUIDs as strings).
+    StatsTypedValue v;
+    if (stats_get_typed(ud->obj, key, &v)) {
+        switch (v.kind) {
+            case STATS_VALUE_INT:
+                lua_pushinteger(L, v.i);
+                return 1;
+            case STATS_VALUE_FLOAT:
+                lua_pushnumber(L, v.f);
+                return 1;
+            case STATS_VALUE_STRING:
+                lua_pushstring(L, v.s ? v.s : "");
+                return 1;
+            case STATS_VALUE_GUID: {
+                char buf[40];
+                guid_to_string((const Guid *)v.guid, buf);
+                lua_pushstring(L, buf);
+                return 1;
+            }
+            case STATS_VALUE_FLAGS: {
+                lua_newtable(L);
+                int n = 0;
+                for (int bit = 1; bit <= 64; bit++) {
+                    if (!(v.flags & (1ull << (bit - 1)))) continue;
+                    const char *label = stats_flag_label(v.value_list, bit);
+                    if (label) {
+                        lua_pushstring(L, label);
+                        lua_rawseti(L, -2, ++n);
+                    }
+                }
+                return 1;
+            }
+            case STATS_VALUE_UNSUPPORTED:
+            case STATS_VALUE_NONE:
+            default:
+                break;
+        }
+        // Conditions and other string-pool types still read as FixedStrings.
+        const char *str_val = stats_get_string(ud->obj, key);
+        if (str_val) {
+            lua_pushstring(L, str_val);
+            return 1;
+        }
     }
 
     // Property not found
@@ -739,7 +781,15 @@ static int lua_stats_get_cached_interrupt(lua_State *L) {
 static int lua_stats_enum_index_to_label(lua_State *L) {
     const char *enum_name = luaL_checkstring(L, 1);
     int32_t index = (int32_t)luaL_checkinteger(L, 2);
-    const char *label = stats_enum_index_to_label(enum_name, index);
+    // Windows order: C++ enum/bitfield registry by name ("DamageType"),
+    // then the stats ModifierValueLists ("Damage Type").
+    const char *label = NULL;
+    EnumTypeInfo *info = enum_registry_find_by_name(enum_name);
+    if (info) {
+        label = enum_find_label(info->registry_index, (uint64_t)(int64_t)index);
+    } else {
+        label = stats_enum_index_to_label(enum_name, index);
+    }
     if (label) {
         lua_pushstring(L, label);
     } else {
@@ -752,7 +802,13 @@ static int lua_stats_enum_index_to_label(lua_State *L) {
 static int lua_stats_enum_label_to_index(lua_State *L) {
     const char *enum_name = luaL_checkstring(L, 1);
     const char *label = luaL_checkstring(L, 2);
-    int32_t index = stats_enum_label_to_index(enum_name, label);
+    int64_t index = -1;
+    EnumTypeInfo *info = enum_registry_find_by_name(enum_name);
+    if (info) {
+        index = enum_find_value(info->registry_index, label);
+    } else {
+        index = stats_enum_label_to_index(enum_name, label);
+    }
     if (index >= 0) {
         lua_pushinteger(L, index);
     } else {

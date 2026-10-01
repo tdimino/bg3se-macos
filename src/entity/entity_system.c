@@ -2237,8 +2237,13 @@ static int lua_entity_index(lua_State *L) {
     }
 
     // Dynamic component lookup via property system
-    // This allows new components to be accessed by short name without hardcoding
-    const ComponentLayoutDef *layout = component_property_get_layout_by_short_name(key);
+    // This allows new components to be accessed by short name without hardcoding.
+    // A "::"-qualified key (entity["eoc::VoiceTagComponent"]) is a full component
+    // name: short-name lookup never matches it, so it returned nil for every
+    // component.
+    const ComponentLayoutDef *layout = strstr(key, "::")
+        ? component_property_get_layout(key)
+        : component_property_get_layout_by_short_name(key);
     if (layout && layout->componentTypeIndex > 0) {
         // Look up component by TypeIndex
         void *component = component_lookup_by_index(

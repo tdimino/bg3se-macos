@@ -14,6 +14,8 @@
 #include "../osiris/osiris_functions.h"
 #include "../entity/entity_events.h"
 #include "../stats/stats_manager.h"
+#include "../entity/component_property.h"
+#include "../entity/stride_scan.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -706,6 +708,63 @@ static int lua_debug_mod_health_count(lua_State *L) {
  * Ext.Debug.ModHealthAll() - Get all mod health entries
  * @return table of {name, handlers, errors, handled, disabled, last_error}
  */
+/**
+ * Ext.Debug.ScanArrayStride(componentProxy, propertyName) -> result table
+ *
+ * Checks a dynamic array's DECLARED per-element stride against the live bytes:
+ * scores candidate strides by how many consecutive elements read coherently
+ * through probes derived from the element layout, and reports the best-scoring
+ * candidate. See src/entity/stride_scan.h for the scoring rule and the
+ * measured-noise-floor gate that keeps a weak probe set from concluding.
+ *
+ * Verdict is "PASS" (declared scores as well as the best candidate), "FAIL"
+ * (another stride reads coherently and the declared one does not — Suggested
+ * carries it) or "INCONCLUSIVE" (Reason says exactly why it could not judge).
+ */
+static int lua_debug_scan_array_stride(lua_State *L) {
+    void *componentPtr = NULL;
+    const ComponentLayoutDef *layout = component_property_check_proxy_ex(L, 1, &componentPtr);
+    if (!layout) {
+        return luaL_error(L, "ScanArrayStride: argument 1 must be a live component proxy "
+                             "(e.g. Ext.Entity.Get(guid).SpellBook)");
+    }
+    const char *propName = luaL_checkstring(L, 2);
+
+    const ComponentPropertyDef *prop = NULL;
+    for (int i = 0; i < layout->propertyCount; i++) {
+        if (layout->properties[i].name && strcmp(layout->properties[i].name, propName) == 0) {
+            prop = &layout->properties[i];
+            break;
+        }
+    }
+    if (!prop) {
+        return luaL_error(L, "ScanArrayStride: %s has no property '%s'",
+                          layout->componentName, propName);
+    }
+
+    StrideScanResult r;
+    stride_scan_property(componentPtr, prop, &r);
+
+    lua_createtable(L, 0, 14);
+    lua_pushstring(L, stride_verdict_name(r.verdict));      lua_setfield(L, -2, "Verdict");
+    lua_pushstring(L, r.reason);                            lua_setfield(L, -2, "Reason");
+    lua_pushstring(L, layout->componentName);               lua_setfield(L, -2, "Component");
+    lua_pushstring(L, propName);                            lua_setfield(L, -2, "Property");
+    lua_pushinteger(L, r.declaredStride);                   lua_setfield(L, -2, "Declared");
+    lua_pushinteger(L, r.declaredRun);                      lua_setfield(L, -2, "DeclaredRun");
+    lua_pushinteger(L, r.bestStride);                       lua_setfield(L, -2, "Suggested");
+    lua_pushinteger(L, r.bestRun);                          lua_setfield(L, -2, "SuggestedRun");
+    lua_pushinteger(L, r.elements);                         lua_setfield(L, -2, "Elements");
+    lua_pushinteger(L, r.arrayCount);                       lua_setfield(L, -2, "ArrayCount");
+    lua_pushinteger(L, r.candidates);                       lua_setfield(L, -2, "Candidates");
+    lua_pushinteger(L, r.probeCount);                       lua_setfield(L, -2, "ProbeCount");
+    lua_pushstring(L, r.probeSummary);                      lua_setfield(L, -2, "Probes");
+    lua_pushnumber(L, r.noiseRate);                         lua_setfield(L, -2, "NoiseRate");
+    lua_pushnumber(L, r.expectedFalseWins);                 lua_setfield(L, -2, "ExpectedFalseWins");
+    return 1;
+}
+
+
 static int lua_debug_mod_health_all(lua_State *L) {
     int count = events_get_mod_health_count();
     lua_createtable(L, count, 0);
@@ -933,6 +992,9 @@ void lua_ext_register_debug(lua_State *L, int ext_table_index) {
 
     lua_pushcfunction(L, lua_debug_mod_health_all);
     lua_setfield(L, -2, "ModHealthAll");
+
+    lua_pushcfunction(L, lua_debug_scan_array_stride);
+    lua_setfield(L, -2, "ScanArrayStride");
 
     lua_pushcfunction(L, lua_debug_mod_disable);
     lua_setfield(L, -2, "ModDisable");

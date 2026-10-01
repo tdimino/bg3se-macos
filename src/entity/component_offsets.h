@@ -519,24 +519,26 @@ static const ComponentLayoutDef g_TurnBasedComponent_Layout = {
 // ============================================================================
 
 static const ComponentPropertyDef g_WeaponComponent_Properties[] = {
-    // LegacyRefMap<AbilityId, Array<RollDefinition>> Rolls at 0x00 (complex, skip)
-    // LegacyRefMap<AbilityId, Array<RollDefinition>> Rolls2 at 0x?? (complex, skip)
-    // Estimate: 2 RefMaps ~= 0x30 each = 0x60, then floats
-    { "WeaponRange",      0x60, FIELD_TYPE_FLOAT,  0, true },
-    { "DamageRange",      0x64, FIELD_TYPE_FLOAT,  0, true },
-    // WeaponFunctors* at 0x68 (pointer, skip)
-    { "WeaponProperties", 0x70, FIELD_TYPE_UINT32, 0, true },  // Flags
-    { "WeaponGroup",      0x74, FIELD_TYPE_UINT8,  0, true },
-    { "Ability",          0x75, FIELD_TYPE_UINT8,  0, true },  // AbilityId enum
-    // Array<StatsExpressionWithMetadata> DamageValues after
-    // DiceSizeId at end
+    // Field map from ecs::sync::Deserialize<eoc::WeaponComponent, FieldMeta...>
+    // (Ghidra on 4.1.1.7209685): two LegacyRefMaps (0x10 each on
+    // ARM64) at 0x00/0x10, then m_Range 0x20, m_LongRange 0x24, functors* 0x28,
+    // m_Properties 0x30, m_WeaponGroup 0x34, m_BaseDamageType 0x35, attack
+    // bonuses 0x38, dice 0x48/0x49; AddComponent allocates 0x50. The old table
+    // put every field 0x40 higher, past the end of the component.
+    // Live on 4.1.1.7398727: longbows read 18/30, a halberd 2.5 (reach), a
+    // mace 1.5; 4 of 8 party weapons read 0 here -- unexplained.
+    { "WeaponRange",      0x20, FIELD_TYPE_FLOAT,  0, true },  // m_Range
+    { "DamageRange",      0x24, FIELD_TYPE_FLOAT,  0, true },  // m_LongRange
+    { "WeaponProperties", 0x30, FIELD_TYPE_UINT32, 0, true },  // m_Properties (flags)
+    { "WeaponGroup",      0x34, FIELD_TYPE_UINT8,  0, true },  // m_WeaponGroup
+    { "Ability",          0x35, FIELD_TYPE_UINT8,  0, true },  // m_BaseDamageType (legacy name)
 };
 
 static const ComponentLayoutDef g_WeaponComponent_Layout = {
     .componentName = "eoc::WeaponComponent",
     .shortName = "Weapon",
     .componentTypeIndex = 0,
-    .componentSize = 0x90,  // Estimate
+    .componentSize = 0x50,  // AddComponent<eoc::WeaponComponent> allocation
     .properties = g_WeaponComponent_Properties,
     .propertyCount = sizeof(g_WeaponComponent_Properties) / sizeof(g_WeaponComponent_Properties[0]),
 };
@@ -545,13 +547,16 @@ static const ComponentLayoutDef g_WeaponComponent_Layout = {
 // SpellBookComponent (eoc::spell::BookComponent)
 // From: BG3Extender/GameDefinitions/Components/Spell.h:217-223
 // Array<SpellData> layout: buf_(0x00), capacity_(0x08), size_(0x0C)
-// SpellData estimated size: ~88 bytes (contains SpellId, Guid, etc.)
+// SpellData stride 0x68 on ARM64 (the Windows header's 88 is x64). Live on
+// 4.1.1.7398727: at 0x68 all of the host's first 10 elements resolve their
+// prototype FixedString to a spell name (Projectile_Jump, Target_Dip, ...);
+// 88 resolves only element 0. Element [0] reads correctly at any stride.
 // ============================================================================
 
 static const ComponentPropertyDef g_SpellBookComponent_Properties[] = {
     { "Entity",     0x00, FIELD_TYPE_ENTITY_HANDLE, 0, true, ELEM_TYPE_UNKNOWN, 0 },
     // Array<SpellData> Spells at 0x08 - dynamic array with iteration support
-    { "Spells",     0x08, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_SPELL_DATA, 88 },
+    { "Spells",     0x08, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_SPELL_DATA, 0x68 },
     // Also expose count for convenience
     { "SpellCount", 0x14, FIELD_TYPE_UINT32, 0, true, ELEM_TYPE_UNKNOWN, 0 },  // Array.size_ at 0x08+0x0C
 };
@@ -574,7 +579,10 @@ static const ComponentLayoutDef g_SpellBookComponent_Layout = {
 static const ComponentPropertyDef g_StatusContainerComponent_Properties[] = {
     // HashMap<EntityHandle, FixedString> Statuses at 0x00
     // HashMap layout: HashSet (0x40) contains count at offset ~0x18
-    { "StatusCount", 0x18, FIELD_TYPE_UINT32, 0, true },  // HashMap element count
+    // HashMap size_ at +0x2C; +0x18 is the bucket count. Live on 4.1.1.7398727,
+    // four party members: +0x18/+0x2C = 32/21, 8/7, 16/9, 256/175 (statuses),
+    // 8/8, 16/10, 16/10, 16/9 (resources): +0x18 always a power of two >= +0x2C.
+    { "StatusCount", 0x2C, FIELD_TYPE_UINT32, 0, true },  // HashMap element count
 };
 
 static const ComponentLayoutDef g_StatusContainerComponent_Layout = {
@@ -615,7 +623,10 @@ static const ComponentLayoutDef g_InventoryContainerComponent_Layout = {
 
 static const ComponentPropertyDef g_ActionResourcesComponent_Properties[] = {
     // HashMap<Guid, Array<ActionResourceEntry>> Resources at 0x00
-    { "ResourceTypeCount", 0x18, FIELD_TYPE_UINT32, 0, true },  // HashMap element count
+    // HashMap size_ at +0x2C; +0x18 is the bucket count. Live on 4.1.1.7398727,
+    // four party members: +0x18/+0x2C = 32/21, 8/7, 16/9, 256/175 (statuses),
+    // 8/8, 16/10, 16/10, 16/9 (resources): +0x18 always a power of two >= +0x2C.
+    { "ResourceTypeCount", 0x2C, FIELD_TYPE_UINT32, 0, true },  // HashMap element count
 };
 
 static const ComponentLayoutDef g_ActionResourcesComponent_Layout = {
@@ -2275,7 +2286,7 @@ static const ComponentLayoutDef g_ClientPaperdollComponent_Layout = {
 static const ComponentPropertyDef g_eoc_ACOverrideFormulaBoostComponent_Properties[] = {
     { "AC", 0x00, FIELD_TYPE_INT32, 0, false },
     { "field_4", 0x04, FIELD_TYPE_BOOL, 0, false },
-    { "AddAbilityModifiers", 0x08, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "AddAbilityModifiers", 0x08, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 1 },
 };
 static const ComponentLayoutDef g_eoc_ACOverrideFormulaBoostComponent_Layout = {
     .componentName = "eoc::ACOverrideFormulaBoostComponent",
@@ -2288,8 +2299,10 @@ static const ComponentLayoutDef g_eoc_ACOverrideFormulaBoostComponent_Layout = {
 
 // eoc::AbilityFailedSavingThrowBoostComponent - 1 bytes (0x1)
 // Source: AbilityFailedSavingThrowBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::AbilityFailedSavingThrowBoostComponent>@0x101d82370 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(AbilityFailedSavingThrow) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_AbilityFailedSavingThrowBoostComponent_Properties[] = {
-    { "Ability", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "Ability", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_AbilityFailedSavingThrowBoostComponent_Layout = {
     .componentName = "eoc::AbilityFailedSavingThrowBoostComponent",
@@ -2514,8 +2527,8 @@ static const ComponentLayoutDef g_eoc_BoostConditionComponent_Layout = {
 // eoc::BoostInfoComponent - 88 bytes (0x58)
 // Source: BoostInfoComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_BoostInfoComponent_Properties[] = {
-    { "field_20", 0x00, FIELD_TYPE_BOOL, 0, false },
-    { "Owner", 0x04, FIELD_TYPE_ENTITY_HANDLE, 0, false },
+    { "field_20", 0x10, FIELD_TYPE_BOOL, 0, false },
+    { "Owner", 0x30, FIELD_TYPE_ENTITY_HANDLE, 0, false },
 };
 static const ComponentLayoutDef g_eoc_BoostInfoComponent_Layout = {
     .componentName = "eoc::BoostInfoComponent",
@@ -2528,8 +2541,10 @@ static const ComponentLayoutDef g_eoc_BoostInfoComponent_Layout = {
 
 // eoc::CanBeDisarmedComponent - 2 bytes (0x2)
 // Source: CanBeDisarmedComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::CanBeDisarmedComponent>@0x101edca34 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=ghidra/offsets/windows_reference_sizes.json:eoc::CanBeDisarmedComponent build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes and the ctor zero-inits it with a single 2-byte store, so Flags is the uint16_t Windows declares; it was UINT32 and read 2 bytes past the end"
 static const ComponentPropertyDef g_eoc_CanBeDisarmedComponent_Properties[] = {
-    { "Flags", 0x00, FIELD_TYPE_UINT32, 0, false },
+    { "Flags", 0x00, FIELD_TYPE_UINT16, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CanBeDisarmedComponent_Layout = {
     .componentName = "eoc::CanBeDisarmedComponent",
@@ -2542,8 +2557,10 @@ static const ComponentLayoutDef g_eoc_CanBeDisarmedComponent_Layout = {
 
 // eoc::CanBeLootedComponent - 2 bytes (0x2)
 // Source: CanBeLootedComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::CanBeLootedComponent>@0x101edbe18 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=ghidra/offsets/windows_reference_sizes.json:eoc::CanBeLootedComponent build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes and the ctor zero-inits it with a single 2-byte store, so Flags is the uint16_t Windows declares; it was UINT32 and read 2 bytes past the end"
 static const ComponentPropertyDef g_eoc_CanBeLootedComponent_Properties[] = {
-    { "Flags", 0x00, FIELD_TYPE_UINT32, 0, false },
+    { "Flags", 0x00, FIELD_TYPE_UINT16, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CanBeLootedComponent_Layout = {
     .componentName = "eoc::CanBeLootedComponent",
@@ -2556,8 +2573,10 @@ static const ComponentLayoutDef g_eoc_CanBeLootedComponent_Layout = {
 
 // eoc::CanDeflectProjectilesComponent - 2 bytes (0x2)
 // Source: CanDeflectProjectilesComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::CanDeflectProjectilesComponent>@0x101eda8ac build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=ghidra/offsets/windows_reference_sizes.json:eoc::CanDeflectProjectilesComponent build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes and the ctor zero-inits it with a single 2-byte store, so Flags is the uint16_t Windows declares; it was UINT32 and read 2 bytes past the end"
 static const ComponentPropertyDef g_eoc_CanDeflectProjectilesComponent_Properties[] = {
-    { "Flags", 0x00, FIELD_TYPE_UINT32, 0, false },
+    { "Flags", 0x00, FIELD_TYPE_UINT16, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CanDeflectProjectilesComponent_Layout = {
     .componentName = "eoc::CanDeflectProjectilesComponent",
@@ -2570,8 +2589,10 @@ static const ComponentLayoutDef g_eoc_CanDeflectProjectilesComponent_Layout = {
 
 // eoc::CanModifyHealthComponent - 2 bytes (0x2)
 // Source: CanModifyHealthComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::CanModifyHealthComponent>@0x101ed7814 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=ghidra/offsets/windows_reference_sizes.json:eoc::CanModifyHealthComponent build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes and the ctor zero-inits it with a single 2-byte store, so Flags is the uint16_t Windows declares; it was UINT32 and read 2 bytes past the end"
 static const ComponentPropertyDef g_eoc_CanModifyHealthComponent_Properties[] = {
-    { "Flags", 0x00, FIELD_TYPE_UINT32, 0, false },
+    { "Flags", 0x00, FIELD_TYPE_UINT16, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CanModifyHealthComponent_Layout = {
     .componentName = "eoc::CanModifyHealthComponent",
@@ -2613,8 +2634,10 @@ static const ComponentLayoutDef g_eoc_CanSeeThroughBoostComponent_Layout = {
 
 // eoc::CanSenseComponent - 2 bytes (0x2)
 // Source: CanSenseComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::CanSenseComponent>@0x101ed5fbc build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=ghidra/offsets/windows_reference_sizes.json:eoc::CanSenseComponent build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes and the ctor zero-inits it with a single 2-byte store, so Flags is the uint16_t Windows declares; it was UINT32 and read 2 bytes past the end"
 static const ComponentPropertyDef g_eoc_CanSenseComponent_Properties[] = {
-    { "Flags", 0x00, FIELD_TYPE_UINT32, 0, false },
+    { "Flags", 0x00, FIELD_TYPE_UINT16, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CanSenseComponent_Layout = {
     .componentName = "eoc::CanSenseComponent",
@@ -2642,7 +2665,7 @@ static const ComponentLayoutDef g_eoc_CanShootThroughBoostComponent_Layout = {
 // eoc::CanTravelComponent - 6 bytes (0x6)
 // Source: CanTravelComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_CanTravelComponent_Properties[] = {
-    { "field_2", 0x00, FIELD_TYPE_UINT32, 0, false },
+    { "field_2", 0x02, FIELD_TYPE_UINT32, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CanTravelComponent_Layout = {
     .componentName = "eoc::CanTravelComponent",
@@ -2703,7 +2726,7 @@ static const ComponentPropertyDef g_eoc_CharacterCreationStatsComponent_Properti
     { "BodyType", 0x20, FIELD_TYPE_UINT8, 0, false },
     { "BodyShape", 0x21, FIELD_TYPE_UINT8, 0, false },
     { "Abilities", 0x24, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
-    { "field_5C", 0x34, FIELD_TYPE_UINT8, 0, false },
+    { "field_5C", 0x54, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CharacterCreationStatsComponent_Layout = {
     .componentName = "eoc::CharacterCreationStatsComponent",
@@ -2744,8 +2767,10 @@ static const ComponentLayoutDef g_eoc_CharacterWeaponDamageBoostComponent_Layout
 
 // eoc::ConcentrationIgnoreDamageBoostComponent - 1 bytes (0x1)
 // Source: ConcentrationIgnoreDamageBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::ConcentrationIgnoreDamageBoostComponent>@0x101d6dcd8 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(ConcentrationIgnoreDamage) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_ConcentrationIgnoreDamageBoostComponent_Properties[] = {
-    { "SpellSchool", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "SpellSchool", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_ConcentrationIgnoreDamageBoostComponent_Layout = {
     .componentName = "eoc::ConcentrationIgnoreDamageBoostComponent",
@@ -2772,9 +2797,11 @@ static const ComponentLayoutDef g_eoc_CriticalHitBoostComponent_Layout = {
 
 // eoc::CriticalHitExtraDiceBoostComponent - 2 bytes (0x2)
 // Source: CriticalHitExtraDiceBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::CriticalHitExtraDiceBoostComponent>@0x101d6c4b0 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(CriticalHitExtraDice) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes for 2 fields, and the ctor zero-init is a single 2-byte store of 0x0001 (Amount=1 at byte 0, AttackType=0 at byte 1); AttackType was INT32 at +4, entirely outside"
 static const ComponentPropertyDef g_eoc_CriticalHitExtraDiceBoostComponent_Properties[] = {
     { "Amount", 0x00, FIELD_TYPE_UINT8, 0, false },
-    { "AttackType", 0x04, FIELD_TYPE_INT32, 0, false },
+    { "AttackType", 0x01, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_CriticalHitExtraDiceBoostComponent_Layout = {
     .componentName = "eoc::CriticalHitExtraDiceBoostComponent",
@@ -3023,8 +3050,10 @@ static const ComponentLayoutDef g_eoc_EntityThrowDamageBoostComponent_Layout = {
 
 // eoc::ExpertiseBonusBoostComponent - 1 bytes (0x1)
 // Source: ExpertiseBonusBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::ExpertiseBonusBoostComponent>@0x101d4ee54 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(ExpertiseBonus) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_ExpertiseBonusBoostComponent_Properties[] = {
-    { "Skill", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "Skill", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_ExpertiseBonusBoostComponent_Layout = {
     .componentName = "eoc::ExpertiseBonusBoostComponent",
@@ -3095,8 +3124,10 @@ static const ComponentLayoutDef g_eoc_GuaranteedChanceRollOutcomeBoostComponent_
 
 // eoc::HalveWeaponDamageBoostComponent - 1 bytes (0x1)
 // Source: HalveWeaponDamageBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::HalveWeaponDamageBoostComponent>@0x101d5f868 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(HalveWeaponDamage) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_HalveWeaponDamageBoostComponent_Properties[] = {
-    { "Ability", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "Ability", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_HalveWeaponDamageBoostComponent_Layout = {
     .componentName = "eoc::HalveWeaponDamageBoostComponent",
@@ -3137,10 +3168,12 @@ static const ComponentLayoutDef g_eoc_HorizontalFOVOverrideBoostComponent_Layout
 
 // eoc::IgnoreDamageThresholdMinBoostComponent - 4 bytes (0x4)
 // Source: IgnoreDamageThresholdMinBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::IgnoreDamageThresholdMinBoostComponent>@0x101d5e048 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(IgnoreDamageThresholdMin) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 4 bytes; Windows declares {DamageType(u8), bool All, uint16 Amount}, which packs to exactly 4 with Amount 2-aligned at +2. Amount was UINT32 at +5, wholly outside the component"
 static const ComponentPropertyDef g_eoc_IgnoreDamageThresholdMinBoostComponent_Properties[] = {
-    { "DamageType", 0x00, FIELD_TYPE_INT32, 0, false },
-    { "All", 0x04, FIELD_TYPE_BOOL, 0, false },
-    { "Amount", 0x05, FIELD_TYPE_UINT32, 0, false },
+    { "DamageType", 0x00, FIELD_TYPE_UINT8, 0, false },
+    { "All", 0x01, FIELD_TYPE_BOOL, 0, false },
+    { "Amount", 0x02, FIELD_TYPE_UINT16, 0, false },
 };
 static const ComponentLayoutDef g_eoc_IgnoreDamageThresholdMinBoostComponent_Layout = {
     .componentName = "eoc::IgnoreDamageThresholdMinBoostComponent",
@@ -3151,8 +3184,10 @@ static const ComponentLayoutDef g_eoc_IgnoreDamageThresholdMinBoostComponent_Lay
     .propertyCount = sizeof(g_eoc_IgnoreDamageThresholdMinBoostComponent_Properties) / sizeof(g_eoc_IgnoreDamageThresholdMinBoostComponent_Properties[0]),
 };
 
-// eoc::IgnorePointBlankDisadvantageBoostComponent - 1 bytes (0x1)
+// eoc::IgnorePointBlankDisadvantageBoostComponent - 4 bytes (0x4)
 // Source: IgnorePointBlankDisadvantageBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::IgnorePointBlankDisadvantageBoostComponent>@0x101d5c82c build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(IgnorePointBlankDisadvantage) build=4.1.1.7209685 date=2026-07-26 note="SIZE WAS WRONG, NOT THE FIELD: ARM64 allocs 4 bytes (the AddComponent<T> helper even returns undefined4*), matching Windows' 4-byte WeaponFlags. The recorded 0x1 was the bogus value; Flags as UINT32 at +0 is correct and now fits"
 static const ComponentPropertyDef g_eoc_IgnorePointBlankDisadvantageBoostComponent_Properties[] = {
     { "Flags", 0x00, FIELD_TYPE_UINT32, 0, false },
 };
@@ -3160,7 +3195,7 @@ static const ComponentLayoutDef g_eoc_IgnorePointBlankDisadvantageBoostComponent
     .componentName = "eoc::IgnorePointBlankDisadvantageBoostComponent",
     .shortName = "IgnorePointBlankDisadvantageBoostComponent",
     .componentTypeIndex = 0,
-    .componentSize = 0x1,
+    .componentSize = 0x4,
     .properties = g_eoc_IgnorePointBlankDisadvantageBoostComponent_Properties,
     .propertyCount = sizeof(g_eoc_IgnorePointBlankDisadvantageBoostComponent_Properties) / sizeof(g_eoc_IgnorePointBlankDisadvantageBoostComponent_Properties[0]),
 };
@@ -3210,9 +3245,19 @@ static const ComponentLayoutDef g_eoc_InitiativeBoostComponent_Layout = {
 
 // eoc::InvisibilityComponent - 20 bytes (0x14)
 // Source: InvisibilityComponent from Windows BG3SE
+// The offsets here WERE WRONG: the vec3 at +0x04 was missing entirely and
+// field_10 sat at +0x01, reading the wrong byte. Both were in-bounds, so
+// tests/tier0/test_component_bounds.c could not see it — and this hand-authored
+// layout WINS registration over the generated one (component_property_init skips
+// a generated layout whose name is already registered), so these are the offsets
+// the runtime actually served. Corrected from the Ghidra read already recorded on
+// g_Gen_eoc_InvisibilityComponent_Properties in generated_property_defs.h.
+// @prov size=GHIDRA ref=AddComponent<eoc::InvisibilityComponent>@0x101e81ce8 build=4.1.1.7209685 date=2026-07-26 note="ComponentFrameStorageAllocRaw(storage, 0x14, idx)"
+// @prov fields=GHIDRA ref=AddComponent<eoc::InvisibilityComponent>@0x101e81ce8 build=4.1.1.7209685 date=2026-07-26 note="ctor init: 2 bytes @+0x00 = 0; 8 bytes @+0x04 = 0x7f7fffff7f7fffff; 4 bytes @+0x0C = 0x7f7fffff (three FLT_MAX = the vec3 at +0x04); 1 byte @+0x10 = 1. NOT settled: the 2-byte store at +0 hints at a second 1-byte field at +0x01 that the Windows header does not list; the replication serializer (0x10172f5d0) also writes exactly 2 bytes from +0x00 and nothing else"
 static const ComponentPropertyDef g_eoc_InvisibilityComponent_Properties[] = {
     { "field_0", 0x00, FIELD_TYPE_UINT8, 0, false },
-    { "field_10", 0x01, FIELD_TYPE_UINT8, 0, false },
+    { "field_4", 0x04, FIELD_TYPE_VEC3, 0, true },
+    { "field_10", 0x10, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_InvisibilityComponent_Layout = {
     .componentName = "eoc::InvisibilityComponent",
@@ -3298,8 +3343,12 @@ static const ComponentLayoutDef g_eoc_LootingStateComponent_Layout = {
 
 // eoc::MaximumRollResultBoostComponent - 2 bytes (0x2)
 // Source: MaximumRollResultBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::MaximumRollResultBoostComponent>@0x101d55b28 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(MaximumRollResult) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes; Windows declares {stats::RollType RollType, int8 Result} - Result is the SECOND byte, not the first. The old INT32 Result at +0 both overran the component AND would have returned RollType in its low byte, so widening in place was not an option"
 static const ComponentPropertyDef g_eoc_MaximumRollResultBoostComponent_Properties[] = {
-    { "Result", 0x00, FIELD_TYPE_INT32, 0, false },
+    // +0x00 is stats::RollType (1 byte). Left UNMAPPED on purpose: adding it would
+    // introduce a new offset whose ARM64 position is not independently verified.
+    { "Result", 0x01, FIELD_TYPE_INT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_MaximumRollResultBoostComponent_Layout = {
     .componentName = "eoc::MaximumRollResultBoostComponent",
@@ -3312,8 +3361,12 @@ static const ComponentLayoutDef g_eoc_MaximumRollResultBoostComponent_Layout = {
 
 // eoc::MinimumRollResultBoostComponent - 2 bytes (0x2)
 // Source: MinimumRollResultBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::MinimumRollResultBoostComponent>@0x101d54f14 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(MinimumRollResult) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 2 bytes; Windows declares {stats::RollType RollType, int8 Result} - Result is the SECOND byte, not the first. The old INT32 Result at +0 both overran the component AND would have returned RollType in its low byte, so widening in place was not an option"
 static const ComponentPropertyDef g_eoc_MinimumRollResultBoostComponent_Properties[] = {
-    { "Result", 0x00, FIELD_TYPE_INT32, 0, false },
+    // +0x00 is stats::RollType (1 byte). Left UNMAPPED on purpose: adding it would
+    // introduce a new offset whose ARM64 position is not independently verified.
+    { "Result", 0x01, FIELD_TYPE_INT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_MinimumRollResultBoostComponent_Layout = {
     .componentName = "eoc::MinimumRollResultBoostComponent",
@@ -3354,8 +3407,10 @@ static const ComponentLayoutDef g_eoc_MovementSpeedLimitBoostComponent_Layout = 
 
 // eoc::NullifyAbilityBoostComponent - 1 bytes (0x1)
 // Source: NullifyAbilityBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::NullifyAbilityBoostComponent>@0x101d52ab0 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(NullifyAbility) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_NullifyAbilityBoostComponent_Properties[] = {
-    { "Ability", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "Ability", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_NullifyAbilityBoostComponent_Layout = {
     .componentName = "eoc::NullifyAbilityBoostComponent",
@@ -3369,7 +3424,7 @@ static const ComponentLayoutDef g_eoc_NullifyAbilityBoostComponent_Layout = {
 // eoc::ObjectInteractionComponent - 16 bytes (0x10)
 // Source: ObjectInteractionComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_ObjectInteractionComponent_Properties[] = {
-    { "Interactions", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Interactions", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_ENTITY_HANDLE, 8 },
 };
 static const ComponentLayoutDef g_eoc_ObjectInteractionComponent_Layout = {
     .componentName = "eoc::ObjectInteractionComponent",
@@ -3425,10 +3480,14 @@ static const ComponentLayoutDef g_eoc_PhysicalForceRangeBonusBoostComponent_Layo
 
 // eoc::RedirectDamageBoostComponent - 8 bytes (0x8)
 // Source: RedirectDamageBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::RedirectDamageBoostComponent>@0x101d4a92c build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(RedirectDamage) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 8 bytes; Windows declares {int32 Amount, DamageType1, DamageType2, bool RedirectToDamageSource} whose legacy name field_6 pins that bool at +6, giving 4+1+1+1+pad=8. DamageType2 was INT32 at +8 — entirely past the end"
 static const ComponentPropertyDef g_eoc_RedirectDamageBoostComponent_Properties[] = {
     { "Amount", 0x00, FIELD_TYPE_INT32, 0, false },
-    { "DamageType1", 0x04, FIELD_TYPE_INT32, 0, false },
-    { "DamageType2", 0x08, FIELD_TYPE_INT32, 0, false },
+    { "DamageType1", 0x04, FIELD_TYPE_UINT8, 0, false },
+    { "DamageType2", 0x05, FIELD_TYPE_UINT8, 0, false },
+    // +0x06 is bool RedirectToDamageSource (Windows legacy name field_6). Left
+    // UNMAPPED: same reason as above — new offsets need their own evidence.
 };
 static const ComponentLayoutDef g_eoc_RedirectDamageBoostComponent_Layout = {
     .componentName = "eoc::RedirectDamageBoostComponent",
@@ -3455,10 +3514,12 @@ static const ComponentLayoutDef g_eoc_ReduceCriticalAttackThresholdBoostComponen
 
 // eoc::ResistanceBoostComponent - 3 bytes (0x3)
 // Source: ResistanceBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::ResistanceBoostComponent>@0x101d484a8 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(Resistance) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 3 bytes for 3 fields and the ctor writes exactly a 2-byte store at +0 plus a 1-byte store at +2, so all three are 1 byte at 0/1/2; DamageType was INT32 at +0 and the other two sat at +4/+5, past the end"
 static const ComponentPropertyDef g_eoc_ResistanceBoostComponent_Properties[] = {
-    { "DamageType", 0x00, FIELD_TYPE_INT32, 0, false },
-    { "ResistanceFlags", 0x04, FIELD_TYPE_UINT8, 0, false },
-    { "IsResistantToAll", 0x05, FIELD_TYPE_BOOL, 0, false },
+    { "DamageType", 0x00, FIELD_TYPE_UINT8, 0, false },
+    { "ResistanceFlags", 0x01, FIELD_TYPE_UINT8, 0, false },
+    { "IsResistantToAll", 0x02, FIELD_TYPE_BOOL, 0, false },
 };
 static const ComponentLayoutDef g_eoc_ResistanceBoostComponent_Layout = {
     .componentName = "eoc::ResistanceBoostComponent",
@@ -3626,13 +3687,25 @@ static const ComponentLayoutDef g_eoc_StatusImmunityBoostComponent_Layout = {
 
 // eoc::StealthComponent - 36 bytes (0x24)
 // Source: StealthComponent from Windows BG3SE
+// The offsets here WERE WRONG: Position (the vec3 at +0x04) was missing entirely
+// and everything after SeekHiddenFlag was packed 12 bytes too low, so every field
+// from SeekHiddenTimeout on read someone else's bytes. All of them stayed
+// in-bounds, so tests/tier0/test_component_bounds.c could not see it — and this
+// hand-authored layout WINS registration over the generated one
+// (component_property_init skips a generated layout whose name is already
+// registered), so these are the offsets the runtime actually served. Corrected
+// from the Ghidra read already recorded on g_Gen_eoc_StealthComponent_Properties
+// in generated_property_defs.h.
+// @prov size=GHIDRA ref=AddComponent<eoc::StealthComponent>@0x101e30694 build=4.1.1.7209685 date=2026-07-26 note="ComponentFrameStorageAllocRaw(storage, 0x24, idx)"
+// @prov fields=GHIDRA ref=ComponentSerializer<eoc::StealthComponent>::SerializeComponent@0x101a7c790 build=4.1.1.7209685 date=2026-07-26 note="writes base+0x00 len 1 (bool), base+0x04 len 0xC (vec3), base+0x10 len 0x10 (four 4-byte fields), base+0x20 len 4 - ends exactly at 0x24. Corroborated by the ctor at 0x101e30694 (1 byte @0, then 8-byte zero stores at +0x04/+0x0C/+0x14 and a constant at +0x1C) and by the Windows field_14/18/1C/20 names landing on their own offsets"
 static const ComponentPropertyDef g_eoc_StealthComponent_Properties[] = {
     { "SeekHiddenFlag", 0x00, FIELD_TYPE_BOOL, 0, false },
-    { "SeekHiddenTimeout", 0x04, FIELD_TYPE_FLOAT, 0, false },
-    { "field_14", 0x08, FIELD_TYPE_FLOAT, 0, false },
-    { "field_18", 0x0C, FIELD_TYPE_INT32, 0, false },
-    { "field_1C", 0x10, FIELD_TYPE_FLOAT, 0, false },
-    { "field_20", 0x14, FIELD_TYPE_FLOAT, 0, false },
+    { "Position", 0x04, FIELD_TYPE_VEC3, 0, true },
+    { "SeekHiddenTimeout", 0x10, FIELD_TYPE_FLOAT, 0, false },
+    { "field_14", 0x14, FIELD_TYPE_FLOAT, 0, false },
+    { "field_18", 0x18, FIELD_TYPE_INT32, 0, false },
+    { "field_1C", 0x1c, FIELD_TYPE_FLOAT, 0, false },
+    { "field_20", 0x20, FIELD_TYPE_FLOAT, 0, false },
 };
 static const ComponentLayoutDef g_eoc_StealthComponent_Layout = {
     .componentName = "eoc::StealthComponent",
@@ -3646,12 +3719,12 @@ static const ComponentLayoutDef g_eoc_StealthComponent_Layout = {
 // eoc::TurnOrderComponent - 80 bytes (0x50)
 // Source: TurnOrderComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_TurnOrderComponent_Properties[] = {
-    { "TurnOrderIndices", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "TurnOrderIndices", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 8 },
     { "TurnOrderIndices2", 0x10, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
-    { "field_40", 0x20, FIELD_TYPE_INT32, 0, false },
-    { "field_44", 0x24, FIELD_TYPE_INT32, 0, false },
-    { "field_48", 0x28, FIELD_TYPE_INT32, 0, false },
-    { "field_4C", 0x2C, FIELD_TYPE_FLOAT, 0, false },
+    { "field_40", 0x40, FIELD_TYPE_INT32, 0, false },
+    { "field_44", 0x44, FIELD_TYPE_INT32, 0, false },
+    { "field_48", 0x48, FIELD_TYPE_INT32, 0, false },
+    { "field_4C", 0x4c, FIELD_TYPE_FLOAT, 0, false },
 };
 static const ComponentLayoutDef g_eoc_TurnOrderComponent_Layout = {
     .componentName = "eoc::TurnOrderComponent",
@@ -3679,7 +3752,7 @@ static const ComponentLayoutDef g_eoc_UnlockInterruptBoostComponent_Layout = {
 // eoc::UseBoostsComponent - 16 bytes (0x10)
 // Source: UseBoostsComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_UseBoostsComponent_Properties[] = {
-    { "Boosts", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Boosts", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 12 },
 };
 static const ComponentLayoutDef g_eoc_UseBoostsComponent_Layout = {
     .componentName = "eoc::UseBoostsComponent",
@@ -3693,12 +3766,17 @@ static const ComponentLayoutDef g_eoc_UseBoostsComponent_Layout = {
 // eoc::UseComponent - 80 bytes (0x50)
 // Source: UseComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_UseComponent_Properties[] = {
-    { "Requirements", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Requirements", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 32 },
     { "Charges", 0x10, FIELD_TYPE_INT32, 0, false },
     { "MaxCharges", 0x14, FIELD_TYPE_INT32, 0, false },
-    { "Boosts", 0x18, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
-    { "BoostsOnEquipMainHand", 0x28, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
-    { "BoostsOnEquipOffHand", 0x38, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    // Array<eoc::BoostDescription> (0x0C) at 0x20/0x30/0x40 --
+    // Ghidra (Deserialize<eoc::UseComponent> reads base+0x20/+0x30/+0x40).
+    // Live on 7398727, four party weapons: counts at +0x20/+0x30 equal their
+    // stats' Boosts / BoostsOnEquipMainHand entries (4/1, 1/1, 0/3, 0/2); the
+    // old +0x18/+0x28 read a non-pointer (0xffffffff00000001) as the buffer.
+    { "Boosts", 0x20, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 0x0C },
+    { "BoostsOnEquipMainHand", 0x30, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 0x0C },
+    { "BoostsOnEquipOffHand", 0x40, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 0x0C },
 };
 static const ComponentLayoutDef g_eoc_UseComponent_Layout = {
     .componentName = "eoc::UseComponent",
@@ -3726,7 +3804,7 @@ static const ComponentLayoutDef g_eoc_VoiceComponent_Layout = {
 // eoc::VoiceTagComponent - 16 bytes (0x10)
 // Source: VoiceTagComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_VoiceTagComponent_Properties[] = {
-    { "Tags", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Tags", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_GUID, 16 },
 };
 static const ComponentLayoutDef g_eoc_VoiceTagComponent_Layout = {
     .componentName = "eoc::VoiceTagComponent",
@@ -3739,8 +3817,10 @@ static const ComponentLayoutDef g_eoc_VoiceTagComponent_Layout = {
 
 // eoc::WeaponAttackRollAbilityOverrideBoostComponent - 1 bytes (0x1)
 // Source: WeaponAttackRollAbilityOverrideBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::WeaponAttackRollAbilityOverrideBoostComponent>@0x101d3b224 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(WeaponAttackRollAbilityOverride) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_WeaponAttackRollAbilityOverrideBoostComponent_Properties[] = {
-    { "Ability", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "Ability", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_WeaponAttackRollAbilityOverrideBoostComponent_Layout = {
     .componentName = "eoc::WeaponAttackRollAbilityOverrideBoostComponent",
@@ -3753,8 +3833,10 @@ static const ComponentLayoutDef g_eoc_WeaponAttackRollAbilityOverrideBoostCompon
 
 // eoc::WeaponAttackTypeOverrideBoostComponent - 1 bytes (0x1)
 // Source: WeaponAttackTypeOverrideBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::WeaponAttackTypeOverrideBoostComponent>@0x101d39968 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(WeaponAttackTypeOverride) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_WeaponAttackTypeOverrideBoostComponent_Properties[] = {
-    { "AttackType", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "AttackType", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_WeaponAttackTypeOverrideBoostComponent_Layout = {
     .componentName = "eoc::WeaponAttackTypeOverrideBoostComponent",
@@ -3783,7 +3865,7 @@ static const ComponentLayoutDef g_eoc_WeaponDamageBoostComponent_Layout = {
 // eoc::WeaponDamageResistanceBoostComponent - 16 bytes (0x10)
 // Source: WeaponDamageResistanceBoostComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_WeaponDamageResistanceBoostComponent_Properties[] = {
-    { "DamageTypes", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "DamageTypes", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 1 },
 };
 static const ComponentLayoutDef g_eoc_WeaponDamageResistanceBoostComponent_Layout = {
     .componentName = "eoc::WeaponDamageResistanceBoostComponent",
@@ -3796,8 +3878,10 @@ static const ComponentLayoutDef g_eoc_WeaponDamageResistanceBoostComponent_Layou
 
 // eoc::WeaponDamageTypeOverrideBoostComponent - 1 bytes (0x1)
 // Source: WeaponDamageTypeOverrideBoostComponent from Windows BG3SE
+// @prov size=GHIDRA ref=AddComponent<eoc::WeaponDamageTypeOverrideBoostComponent>@0x101d37450 build=4.1.1.7209685 date=2026-07-26
+// @prov fields=WINDOWS_HEADER ref=Boosts.h:DEFN_BOOST(WeaponDamageTypeOverride) build=4.1.1.7209685 date=2026-07-26 note="ARM64 alloc is 1 byte, so the single field is a 1-byte enum at +0; it was declared INT32 and read 4 bytes, 3 of them past the end"
 static const ComponentPropertyDef g_eoc_WeaponDamageTypeOverrideBoostComponent_Properties[] = {
-    { "DamageType", 0x00, FIELD_TYPE_INT32, 0, false },
+    { "DamageType", 0x00, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_WeaponDamageTypeOverrideBoostComponent_Layout = {
     .componentName = "eoc::WeaponDamageTypeOverrideBoostComponent",
@@ -3867,7 +3951,7 @@ static const ComponentLayoutDef g_eoc_WeightCategoryBoostComponent_Layout = {
 // eoc::action::ActionUseConditionsComponent - 16 bytes (0x10)
 // Source: ActionUseConditionsComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_ActionUseConditionsComponent_Properties[] = {
-    { "Conditions", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Conditions", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 4 },
 };
 static const ComponentLayoutDef g_eoc_ActionUseConditionsComponent_Layout = {
     .componentName = "eoc::action::ActionUseConditionsComponent",
@@ -3939,7 +4023,7 @@ static const ComponentLayoutDef g_eoc_StartingDateComponent_Layout = {
 // eoc::character_creation::LevelUpComponent - 16 bytes (0x10)
 // Source: LevelUpComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_LevelUpComponent_Properties[] = {
-    { "LevelUps", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "LevelUps", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 224 },
 };
 static const ComponentLayoutDef g_eoc_LevelUpComponent_Layout = {
     .componentName = "eoc::character_creation::LevelUpComponent",
@@ -3985,7 +4069,7 @@ static const ComponentLayoutDef g_eoc_StateComponent_Layout = {
 // eoc::combat::IsThreatenedComponent - 16 bytes (0x10)
 // Source: IsThreatenedComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_IsThreatenedComponent_Properties[] = {
-    { "ThreatenedBy", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "ThreatenedBy", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_ENTITY_HANDLE, 8 },
 };
 static const ComponentLayoutDef g_eoc_IsThreatenedComponent_Layout = {
     .componentName = "eoc::combat::IsThreatenedComponent",
@@ -4041,7 +4125,7 @@ static const ComponentLayoutDef g_eoc_ZoneBlockReasonComponent_Layout = {
 // eoc::god::TagComponent - 16 bytes (0x10)
 // Source: GodTagComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_TagComponent_Properties[] = {
-    { "Tags", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Tags", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_GUID, 16 },
 };
 static const ComponentLayoutDef g_eoc_TagComponent_Layout = {
     .componentName = "eoc::god::TagComponent",
@@ -4203,7 +4287,7 @@ static const ComponentPropertyDef g_eoc_LockComponent_Properties[] = {
     { "Key_M", 0x00, FIELD_TYPE_FIXEDSTRING, 0, false },
     { "LockDC", 0x04, FIELD_TYPE_INT32, 0, false },
     { "field_8", 0x08, FIELD_TYPE_GUID, 0, false },
-    { "field_18", 0x18, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "field_18", 0x18, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_GUID, 16 },
 };
 static const ComponentLayoutDef g_eoc_LockComponent_Layout = {
     .componentName = "eoc::lock::LockComponent",
@@ -4232,7 +4316,7 @@ static const ComponentLayoutDef g_eoc_PickUpRequestComponent_Layout = {
 // eoc::spell::AddedSpellsComponent - 16 bytes (0x10)
 // Source: AddedSpellsComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_AddedSpellsComponent_Properties[] = {
-    { "Spells", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Spells", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_SPELL_META, 96 },
 };
 static const ComponentLayoutDef g_eoc_AddedSpellsComponent_Layout = {
     .componentName = "eoc::spell::AddedSpellsComponent",
@@ -4246,7 +4330,7 @@ static const ComponentLayoutDef g_eoc_AddedSpellsComponent_Layout = {
 // eoc::spell::BookCooldownsComponent - 16 bytes (0x10)
 // Source: SpellBookCooldownsComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_BookCooldownsComponent_Properties[] = {
-    { "Cooldowns", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Cooldowns", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 80 },
 };
 static const ComponentLayoutDef g_eoc_BookCooldownsComponent_Layout = {
     .componentName = "eoc::spell::BookCooldownsComponent",
@@ -4260,7 +4344,7 @@ static const ComponentLayoutDef g_eoc_BookCooldownsComponent_Layout = {
 // eoc::spell::CCPrepareSpellComponent - 16 bytes (0x10)
 // Source: CCPrepareSpellComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_CCPrepareSpellComponent_Properties[] = {
-    { "Spells", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Spells", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 48 },
 };
 static const ComponentLayoutDef g_eoc_CCPrepareSpellComponent_Layout = {
     .componentName = "eoc::spell::CCPrepareSpellComponent",
@@ -4274,7 +4358,7 @@ static const ComponentLayoutDef g_eoc_CCPrepareSpellComponent_Layout = {
 // eoc::spell::PlayerPrepareSpellComponent - 24 bytes (0x18)
 // Source: PlayerPrepareSpellComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_PlayerPrepareSpellComponent_Properties[] = {
-    { "Spells", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Spells", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 48 },
 };
 static const ComponentLayoutDef g_eoc_PlayerPrepareSpellComponent_Layout = {
     .componentName = "eoc::spell::PlayerPrepareSpellComponent",
@@ -4331,7 +4415,7 @@ static const ComponentLayoutDef g_eoc_IDComponent_Layout = {
 // Source: IncapacitatedComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_IncapacitatedComponent_Properties[] = {
     { "field_0", 0x00, FIELD_TYPE_UINT32, 0, false },
-    { "field_48", 0x04, FIELD_TYPE_UINT8, 0, false },
+    { "field_48", 0x48, FIELD_TYPE_UINT8, 0, false },
 };
 static const ComponentLayoutDef g_eoc_IncapacitatedComponent_Layout = {
     .componentName = "eoc::status::IncapacitatedComponent",
@@ -4373,9 +4457,9 @@ static const ComponentLayoutDef g_eoc_LoseControlComponent_Layout = {
 // eoc::summon::IsSummonComponent - 48 bytes (0x30)
 // Source: IsSummonComponent from Windows BG3SE
 static const ComponentPropertyDef g_eoc_IsSummonComponent_Properties[] = {
-    { "field_10", 0x00, FIELD_TYPE_GUID, 0, false },
-    { "field_20", 0x10, FIELD_TYPE_ENTITY_HANDLE, 0, false },
-    { "field_28", 0x18, FIELD_TYPE_FIXEDSTRING, 0, false },
+    { "field_10", 0x10, FIELD_TYPE_GUID, 0, false },
+    { "field_20", 0x20, FIELD_TYPE_ENTITY_HANDLE, 0, false },
+    { "field_28", 0x28, FIELD_TYPE_FIXEDSTRING, 0, false },
 };
 static const ComponentLayoutDef g_eoc_IsSummonComponent_Layout = {
     .componentName = "eoc::summon::IsSummonComponent",
@@ -4405,7 +4489,7 @@ static const ComponentLayoutDef g_esv_AIHintAreaTrigger_Layout = {
 // esv::ActivationGroupContainerComponent - 16 bytes (0x10)
 // Source: ServerData.h
 static const ComponentPropertyDef g_esv_ActivationGroupContainerComponent_Properties[] = {
-    { "Groups", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },  // Array<ActivationGroupData>
+    { "Groups", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 8 },  // Array<ActivationGroupData>
 };
 static const ComponentLayoutDef g_esv_ActivationGroupContainerComponent_Layout = {
     .componentName = "esv::ActivationGroupContainerComponent",
@@ -4561,7 +4645,7 @@ static const ComponentLayoutDef g_esv_BaseStatsComponent_Layout = {
 // esv::BaseWeaponComponent - 16 bytes (0x10)
 // Source: ServerData.h
 static const ComponentPropertyDef g_esv_BaseWeaponComponent_Properties[] = {
-    { "DamageList", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },  // Array<BaseWeaponDamage>
+    { "DamageList", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 20 },  // Array<BaseWeaponDamage>
 };
 static const ComponentLayoutDef g_esv_BaseWeaponComponent_Layout = {
     .componentName = "esv::BaseWeaponComponent",
@@ -4758,7 +4842,7 @@ static const ComponentLayoutDef g_esv_CustomStatsComponent_Layout = {
 
 // esv::DisplayNameListComponent - 40 bytes (0x28)
 static const ComponentPropertyDef g_esv_DisplayNameListComponent_Properties[] = {
-    { "Names", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Names", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 40 },
 };
 static const ComponentLayoutDef g_esv_DisplayNameListComponent_Layout = {
     .componentName = "esv::DisplayNameListComponent",
@@ -4913,7 +4997,7 @@ static const ComponentLayoutDef g_esv_HealthComponent_Layout = {
 
 // esv::IconListComponent - 16 bytes (0x10)
 static const ComponentPropertyDef g_esv_IconListComponent_Properties[] = {
-    { "Icons", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Icons", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 8 },
 };
 static const ComponentLayoutDef g_esv_IconListComponent_Layout = {
     .componentName = "esv::IconListComponent",
@@ -5150,7 +5234,7 @@ static const ComponentLayoutDef g_esv_OriginalTemplateComponent_Layout = {
 
 // esv::OsirisPingRequestSingletonComponent - 16 bytes (0x10)
 static const ComponentPropertyDef g_esv_OsirisPingRequestSingletonComponent_Properties[] = {
-    { "Requests", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Requests", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 32 },
 };
 static const ComponentLayoutDef g_esv_OsirisPingRequestSingletonComponent_Layout = {
     .componentName = "esv::OsirisPingRequestSingletonComponent",
@@ -5176,7 +5260,7 @@ static const ComponentLayoutDef g_esv_PartyMemberComponent_Layout = {
 
 // esv::PingRequestSingletonComponent - 16 bytes (0x10)
 static const ComponentPropertyDef g_esv_PingRequestSingletonComponent_Properties[] = {
-    { "Requests", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Requests", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 32 },
 };
 static const ComponentLayoutDef g_esv_PingRequestSingletonComponent_Layout = {
     .componentName = "esv::PingRequestSingletonComponent",
@@ -5401,7 +5485,7 @@ static const ComponentLayoutDef g_esv_SummonContainerComponent_Layout = {
 
 // esv::SurfacePathInfluencesComponent - 24 bytes (0x18)
 static const ComponentPropertyDef g_esv_SurfacePathInfluencesComponent_Properties[] = {
-    { "PathInfluences", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "PathInfluences", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 8 },
 };
 static const ComponentLayoutDef g_esv_SurfacePathInfluencesComponent_Layout = {
     .componentName = "esv::SurfacePathInfluencesComponent",
@@ -5669,7 +5753,7 @@ static const ComponentLayoutDef g_esv_inventory_ShapeshiftAddedEquipmentComponen
 // esv::inventory::ShapeshiftEquipmentHistoryComponent - 16 bytes (0x10)
 // Source: Inventory.h
 static const ComponentPropertyDef g_esv_inventory_ShapeshiftEquipmentHistoryComponent_Properties[] = {
-    { "History", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "History", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_GUID, 16 },
 };
 static const ComponentLayoutDef g_esv_inventory_ShapeshiftEquipmentHistoryComponent_Layout = {
     .componentName = "esv::inventory::ShapeshiftEquipmentHistoryComponent",
@@ -7664,7 +7748,7 @@ static const ComponentLayoutDef g_ls_AnimationSetUpdateRequest_Layout = {
 // ls::animation::DynamicAnimationTagsComponent - 16 bytes (0x10)
 // Source: Visual.h, COMPONENT_SIZES_LS_ANIMATION.md
 static const ComponentPropertyDef g_ls_DynamicAnimationTags_Properties[] = {
-    { "Tags", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Tags", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 24 },
 };
 static const ComponentLayoutDef g_ls_DynamicAnimationTags_Layout = {
     .componentName = "ls::animation::DynamicAnimationTagsComponent",
@@ -7678,7 +7762,7 @@ static const ComponentLayoutDef g_ls_DynamicAnimationTags_Layout = {
 // ls::animation::LoadAnimationSetGameplayRequestOneFrameComponent - 16 bytes (0x10)
 // Source: Visual.h, COMPONENT_SIZES_LS_ANIMATION.md
 static const ComponentPropertyDef g_ls_LoadAnimationSetGameplayRequestOneFrame_Properties[] = {
-    { "Animations", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Animations", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 16 },
 };
 static const ComponentLayoutDef g_ls_LoadAnimationSetGameplayRequestOneFrame_Layout = {
     .componentName = "ls::animation::LoadAnimationSetGameplayRequestOneFrameComponent",
@@ -7706,7 +7790,7 @@ static const ComponentLayoutDef g_ls_RemoveAnimationSetsGameplayRequestOneFrame_
 // ls::animation::TemplateAnimationSetOverrideComponent - 16 bytes (0x10)
 // Source: Visual.h, COMPONENT_SIZES_LS_ANIMATION.md
 static const ComponentPropertyDef g_ls_TemplateAnimationSetOverride_Properties[] = {
-    { "Overrides", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Overrides", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_UNKNOWN, 12 },
 };
 static const ComponentLayoutDef g_ls_TemplateAnimationSetOverride_Layout = {
     .componentName = "ls::animation::TemplateAnimationSetOverrideComponent",
@@ -7762,7 +7846,7 @@ static const ComponentLayoutDef g_ls_SceneStage_Layout = {
 // ls::trigger::IsInsideOfComponent - 16 bytes (0x10)
 // Source: COMPONENT_SIZES_LS_MISC.md
 static const ComponentPropertyDef g_ls_IsInsideOf_Properties[] = {
-    { "Triggers", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true },
+    { "Triggers", 0x00, FIELD_TYPE_DYNAMIC_ARRAY, 0, true, ELEM_TYPE_GUID, 16 },
 };
 static const ComponentLayoutDef g_ls_IsInsideOf_Layout = {
     .componentName = "ls::trigger::IsInsideOfComponent",
