@@ -265,11 +265,30 @@ def test_raycast_any_binding_is_gated():
 
     # Version + UUID gate; arm64-only with an x86_64 fail-closed fallback.
     assert "version_detect_matches()" in source
-    assert "9a, 0x64, 0x73, 0x11" in source  # audited LC_UUID gate bytes
+    assert "0x0c, 0x51, 0xca, 0xed" in source  # 7398727 arm64 LC_UUID gate bytes
     assert "#if defined(__aarch64__)" in source
 
     # The audited RaycastAny VMT index is slot 10.
     assert _parse_physics_indices()["PHYSICS_VMT_RAYCAST_ANY"] == 10
+
+
+def test_raycast_any_gate_uuid_is_the_installed_binary():
+    """The RaycastAny gate must name the build its signature was checked on."""
+    if not BG3_EXEC.exists():
+        pytest.skip("BG3 binary not installed")
+    if not shutil.which("dwarfdump"):
+        pytest.skip("dwarfdump unavailable")
+    out = subprocess.run(["dwarfdump", "--uuid", str(BG3_EXEC)],
+                         capture_output=True, text=True).stdout
+    m = re.search(r"UUID: ([0-9A-F-]+) \(arm64\)", out)
+    assert m, out
+    installed = bytes.fromhex(m.group(1).replace("-", ""))
+    block = re.search(r"s_raycast_any_verified_uuid\[16\] = \{(.*?)\};",
+                      LEVEL_MANAGER_C.read_text(), re.S).group(1)
+    gate = bytes(int(b, 16) for b in re.findall(r"0x([0-9a-fA-F]{2})", block))
+    assert gate == installed, (
+        f"RaycastAny gate UUID {gate.hex()} != installed arm64 {installed.hex()}; "
+        "re-check phx::PhysXScene::RaycastAny's signature before moving the gate")
 
 
 def test_installed_arm64_physxscene_vtable_dispatch():

@@ -2849,21 +2849,24 @@ void lua_ext_register_global_helpers(lua_State *L) {
         "  assert(unknown == nil, 'unknown component should return nil')\n"
         "end)\n";
 
-    // Wave 7 B4b: RaycastAny via the proven zeroed-aggregate ABI (VMT slot 10,
-    // RAYCAST_ABI_B4A.md). UUID+version gated; ships with NO parity credit until
-    // the live stress ladder passes. Safe assertion: callable + returns boolean.
+    // RaycastAny (VMT slot 10, RAYCAST_ABI_B4A.md): a vertical ray through the
+    // host's feet must hit the ground and a ray far above it must hit nothing.
     static const char *console_cmd_test_wave7_raycastany =
         "BG3SE_AddTest(2, 'Wave7.Level.RaycastAny', function()\n"
         "  assert(Ext and Ext.Level and type(Ext.Level.RaycastAny) == 'function',\n"
         "    'Ext.Level.RaycastAny must exist and be callable')\n"
-        "  if Ext.Level.GetCurrentLevel() == nil then return end\n"
-        "  local host = Osi.GetHostCharacter()\n"
-        "  local x, y, z = Osi.GetPosition(host)\n"
+        "  assert(Ext.Level.GetCurrentLevel() ~= nil, 'no current level in a loaded session')\n"
+        "  local x, y, z = Osi.GetPosition(Osi.GetHostCharacter())\n"
         "  assert(type(x) == 'number' and type(y) == 'number' and type(z) == 'number',\n"
         "    'loaded level must provide the host position')\n"
-        "  local ok, blocked = pcall(Ext.Level.RaycastAny, {x, y, z}, {x, y + 1.0, z})\n"
-        "  assert(ok, 'RaycastAny must not error: ' .. tostring(blocked))\n"
-        "  assert(type(blocked) == 'boolean', 'RaycastAny must return a boolean')\n"
+        "  local ok, hit = pcall(Ext.Level.RaycastAny, {x, y + 5, z}, {x, y - 5, z})\n"
+        "  assert(ok, 'RaycastAny must not error: ' .. tostring(hit))\n"
+        "  assert(hit == true, 'ray down through the host position must hit the ground')\n"
+        "  -- An upward ray is NOT a reliable miss: under an overhang it hits the\n"
+        "  -- ceiling. A ray far below the world is (noted by mageweaver/bg3se-macos).\n"
+        "  local ok2, void = pcall(Ext.Level.RaycastAny, {x, -500, z}, {x, -480, z})\n"
+        "  assert(ok2, 'RaycastAny must not error: ' .. tostring(void))\n"
+        "  assert(void == false, 'ray below the world must hit nothing')\n"
         "end)\n";
 
     static const char *console_cmd_test_parity_ingame_entity =
