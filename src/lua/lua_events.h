@@ -222,6 +222,7 @@ void events_fire_turn_started(lua_State *L, uint64_t entity, int round);
  * @param source   The source entity
  */
 void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statusId, uint64_t source);
+void events_fire_status_removed(lua_State *L, uint64_t entity, const char *statusId, uint64_t source);
 
 /**
  * Fire ExecuteFunctor event before functor execution.

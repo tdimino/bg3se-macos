@@ -16,9 +16,12 @@
 #include "../mod/mod_loader.h"
 #include "../entity/component_registry.h"
 #include "../entity/component_lookup.h"
+#include "../core/safe_memory.h"
+#include "../strings/fixed_string.h"
 
 #include <stdatomic.h>
 #include <string.h>
+#include <stdlib.h>
 #include <mach/mach_time.h>
 
 // ============================================================================
@@ -1422,20 +1425,22 @@ void events_fire_turn_ended_from_osiris(lua_State *L, const char *characterGuid)
     }
 }
 
-void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statusId, uint64_t source) {
+static void fire_status_event(lua_State *L, BG3SEEventType event, uint64_t entity,
+                              const char *statusId, uint64_t source) {
     if (!L) return;
 
-    int count = g_handler_counts[EVENT_STATUS_APPLIED];
+    int count = g_handler_counts[event];
     if (count == 0) return;
 
-    LOG_EVENTS_DEBUG("Firing StatusApplied (entity=0x%llx, status=%s, source=0x%llx, %d handlers)",
+    LOG_EVENTS_DEBUG("Firing %s (entity=0x%llx, status=%s, source=0x%llx, %d handlers)",
+                g_event_names[event],
                 (unsigned long long)entity, statusId ? statusId : "nil",
                 (unsigned long long)source, count);
 
-    g_dispatch_depth[EVENT_STATUS_APPLIED]++;
+    g_dispatch_depth[event]++;
 
-    for (int i = 0; i < g_handler_counts[EVENT_STATUS_APPLIED]; i++) {
-        EventHandler *h = &g_handlers[EVENT_STATUS_APPLIED][i];
+    for (int i = 0; i < g_handler_counts[event]; i++) {
+        EventHandler *h = &g_handlers[event][i];
         if (h->callback_ref == LUA_NOREF || h->callback_ref == LUA_REFNIL) {
             continue;
         }
@@ -1463,7 +1468,8 @@ void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statu
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
-            LOG_EVENTS_ERROR("StatusApplied handler error (id=%llu, mod=%s): %s",
+            LOG_EVENTS_ERROR("%s handler error (id=%llu, mod=%s): %s",
+                       g_event_names[event],
                        h->handler_id, h->mod_name, err ? err : "unknown");
             mod_health_record_error(h->mod_name, err);
             lua_pop(L, 1);
@@ -1476,16 +1482,24 @@ void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statu
         if (h->once) {
             if (g_deferred_unsub_count < MAX_DEFERRED_OPERATIONS) {
                 g_deferred_unsubs[g_deferred_unsub_count++] =
-                    (DeferredUnsubscribe){EVENT_STATUS_APPLIED, h->handler_id};
+                    (DeferredUnsubscribe){event, h->handler_id};
             }
         }
     }
 
-    g_dispatch_depth[EVENT_STATUS_APPLIED]--;
+    g_dispatch_depth[event]--;
 
-    if (g_dispatch_depth[EVENT_STATUS_APPLIED] == 0) {
-        process_deferred_unsubscribes(L, EVENT_STATUS_APPLIED);
+    if (g_dispatch_depth[event] == 0) {
+        process_deferred_unsubscribes(L, event);
     }
+}
+
+void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statusId, uint64_t source) {
+    fire_status_event(L, EVENT_STATUS_APPLIED, entity, statusId, source);
+}
+
+void events_fire_status_removed(lua_State *L, uint64_t entity, const char *statusId, uint64_t source) {
+    fire_status_event(L, EVENT_STATUS_REMOVED, entity, statusId, source);
 }
 
 // ============================================================================
@@ -2368,14 +2382,6 @@ static void handle_combat_left(lua_State *L, uint64_t entity) {
     ONEFRAME_DISPATCH(EVENT_COMBAT_ENDED, "Entity", entity);
 }
 
-static void handle_status_applied(lua_State *L, uint64_t entity) {
-    ONEFRAME_DISPATCH(EVENT_STATUS_APPLIED, "Entity", entity);
-}
-
-static void handle_status_removed(lua_State *L, uint64_t entity) {
-    ONEFRAME_DISPATCH(EVENT_STATUS_REMOVED, "Entity", entity);
-}
-
 static void handle_equipment_changed(lua_State *L, uint64_t entity) {
     ONEFRAME_DISPATCH(EVENT_EQUIPMENT_CHANGED, "Entity", entity);
 }
@@ -2483,8 +2489,6 @@ static PolledEvent g_polled_events[] = {
     { EVENT_COMBAT_ENDED,    "esv::combat::FleeSuccessOneFrameComponent",                            handle_combat_left,                        {NULL, NULL, 0} },
     { EVENT_EQUIPMENT_CHANGED, "esv::item::EquippedEventOneFrameComponent",                          handle_equipment_changed,                  {NULL, NULL, 0} },
     { EVENT_EQUIPMENT_CHANGED, "esv::item::UnequippedEventOneFrameComponent",                        handle_equipment_changed,                  {NULL, NULL, 0} },
-    { EVENT_STATUS_APPLIED,  "esv::status::ActivationEventOneFrameComponent",                        handle_status_applied,                     {NULL, NULL, 0} },
-    { EVENT_STATUS_REMOVED,  "esv::status::DeactivationEventOneFrameComponent",                      handle_status_removed,                     {NULL, NULL, 0} },
     { EVENT_LEVEL_UP,        "esv::stats::LevelChangedOneFrameComponent",                            handle_level_up,                           {NULL, NULL, 0} },
     { EVENT_DIED,            "esv::death::ExecuteDieLogicEventOneFrameComponent",                    handle_died,                               {NULL, NULL, 0} },
     { EVENT_DOWNED,          "esv::death::DownedEventOneFrameComponent",                             handle_downed,                             {NULL, NULL, 0} },
@@ -2517,8 +2521,115 @@ static void poll_cache_init(void) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// StatusApplied / StatusRemoved
+//
+// The status one-frame components live for one frame and this poll runs on
+// the Osiris tick (~8 Hz), so it caught few events and gave only the status
+// entity. Instead, diff every owner's eoc::status::ContainerComponent
+// (HashMap<EntityHandle status, FixedString id>) against the previous poll:
+// a new status entity is applied, a vanished one removed. Layout read live
+// on 4.1.1.7398727: keys at +0x20, count (u32) at +0x2C, values at +0x30.
+// ----------------------------------------------------------------------------
+
+#define STATUS_CONTAINER_KEYS   0x20
+#define STATUS_CONTAINER_COUNT  0x2C
+#define STATUS_CONTAINER_VALUES 0x30
+#define STATUS_SNAPSHOT_MAX     16384
+#define STATUS_PER_OWNER_MAX    512
+
+typedef struct {
+    uint64_t status;   // status entity handle (unique per status instance)
+    uint64_t owner;
+    uint32_t id;       // FixedString index
+} StatusSnap;
+
+static StatusSnap g_status_snap[2][STATUS_SNAPSHOT_MAX];
+static int g_status_snap_n[2];
+static int g_status_cur = 0;
+static bool g_status_seeded = false;
+
+static int status_snap_cmp(const void *a, const void *b) {
+    uint64_t x = ((const StatusSnap *)a)->status, y = ((const StatusSnap *)b)->status;
+    return x < y ? -1 : x > y;
+}
+
+// Fills `out` with every owned status; returns the count or -1 when the
+// status containers cannot be read yet.
+static int status_snapshot(StatusSnap *out) {
+    static const ComponentInfo *info = NULL;
+    if (!info) info = component_registry_lookup("eoc::status::ContainerComponent");
+    if (!info || info->index == 0xFFFF || !component_lookup_ready()) return -1;
+
+    static uint64_t owners[8192];
+    int n_owners = component_lookup_get_all_with_component(info->index, owners, 8192);
+    int n = 0;
+    uint64_t keys[STATUS_PER_OWNER_MAX];
+    uint32_t ids[STATUS_PER_OWNER_MAX];
+    for (int i = 0; i < n_owners; i++) {
+        uintptr_t c = (uintptr_t)component_lookup_by_index(owners[i], info->index,
+                                                           info->size, info->is_proxy);
+        uint64_t kbuf = 0, vbuf = 0;
+        uint32_t count = 0;
+        if (!c || !safe_memory_read_u32(c + STATUS_CONTAINER_COUNT, &count) || count == 0) continue;
+        if (count > STATUS_PER_OWNER_MAX ||
+            !safe_memory_read_u64(c + STATUS_CONTAINER_KEYS, &kbuf) ||
+            !safe_memory_read_u64(c + STATUS_CONTAINER_VALUES, &vbuf) ||
+            !safe_memory_read(kbuf, keys, count * sizeof(uint64_t)) ||
+            !safe_memory_read(vbuf, ids, count * sizeof(uint32_t))) {
+            continue;
+        }
+        for (uint32_t k = 0; k < count && n < STATUS_SNAPSHOT_MAX; k++) {
+            out[n++] = (StatusSnap){ keys[k], owners[i], ids[k] };
+        }
+    }
+    qsort(out, (size_t)n, sizeof(*out), status_snap_cmp);
+    return n;
+}
+
+static void status_fire(lua_State *L, BG3SEEventType event, const StatusSnap *s) {
+    const char *id = fixed_string_resolve(s->id);
+    if (event == EVENT_STATUS_APPLIED) {
+        events_fire_status_applied(L, s->owner, id, 0);
+    } else {
+        events_fire_status_removed(L, s->owner, id, 0);
+    }
+}
+
+static void poll_status_diff(lua_State *L) {
+    if (g_handler_counts[EVENT_STATUS_APPLIED] == 0 &&
+        g_handler_counts[EVENT_STATUS_REMOVED] == 0) {
+        g_status_seeded = false;  // reseed when someone subscribes again
+        return;
+    }
+    int next = 1 - g_status_cur;
+    int n = status_snapshot(g_status_snap[next]);
+    if (n < 0) return;
+    g_status_snap_n[next] = n;
+    if (!g_status_seeded) {
+        g_status_seeded = true;  // the first snapshot is the baseline, not events
+        g_status_cur = next;
+        return;
+    }
+
+    const StatusSnap *a = g_status_snap[g_status_cur], *b = g_status_snap[next];
+    int na = g_status_snap_n[g_status_cur], i = 0, j = 0;
+    g_status_cur = next;  // handlers may subscribe/unsubscribe; state is already advanced
+    while (i < na || j < n) {
+        if (j >= n || (i < na && a[i].status < b[j].status)) {
+            status_fire(L, EVENT_STATUS_REMOVED, &a[i++]);
+        } else if (i >= na || b[j].status < a[i].status) {
+            status_fire(L, EVENT_STATUS_APPLIED, &b[j++]);
+        } else {
+            i++; j++;
+        }
+    }
+}
+
 void events_poll_oneframe_components(lua_State *L) {
     if (!L) return;
+
+    poll_status_diff(L);
 
     // Only poll if we have subscribers to any engine events
     int total_handlers = 0;
