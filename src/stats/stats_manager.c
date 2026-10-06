@@ -17,6 +17,7 @@
 #include "logging.h"
 #include "../strings/fixed_string.h"
 #include "../core/offset_table.h"
+#include "../core/safe_memory.h"
 #include "../core/version_detect.h"
 #include "../game/game_state.h"
 
@@ -268,6 +269,7 @@ static void* get_objects_manager(void);
 static int get_manager_count(void *manager);
 static void* get_manager_element(void *manager, int index);
 static const char* read_fixed_string(void *addr);
+static int32_t fixedstrings_pool_index(const char *value);
 
 // ============================================================================
 // Initialization
@@ -1717,6 +1719,181 @@ bool stats_get_int(StatsObjectPtr obj, const char *prop, int64_t *out_value) {
     return true;
 }
 
+// ============================================================================
+// Typed property read (Windows: LuaStatGetAttribute / Object::Get*)
+// ============================================================================
+//
+// IndexedProperties[i] means different things by the attribute's value-list
+// type: ConstantInt and enumerations store the value itself; FixedString,
+// ConstantFloat, flags and Guid store an index into an RPGStats pool. Reading
+// every attribute as a FixedString index (as __index did) returned an
+// unrelated string for every number, enumeration and flags field.
+//
+// Pools after FixedStrings, each Array {buf, cap u32, size u32} (0x10), in the
+// Windows order Int64s, GUIDs, Floats, TranslatedStrings. Live on
+// 4.1.1.7398727: sizes 10069 / 184 / 127 / 13802 at 0x358/0x368/0x378/0x388.
+#define RPGSTATS_OFFSET_INT64S  0x358   // Array<int64_t*>
+#define RPGSTATS_OFFSET_GUIDS   0x368   // Array<Guid>
+#define RPGSTATS_OFFSET_FLOATS  0x378   // Array<float>
+// TranslatedString {RuntimeStringHandle Handle; RuntimeStringHandle Arg}:
+// 16 bytes, Handle's FixedString at +0 (live: stride 16 yields h... handles).
+#define RPGSTATS_OFFSET_TRANSLATED_STRINGS 0x388
+// Array<STDString> Conditions, after the four manager pointers, the data
+// buffer path, PreParsedDataBufferMap/Buffers, BloodTypes and the load flags
+// (live on 7398727: capacity 4096, size 3530).
+#define RPGSTATS_OFFSET_CONDITIONS 0x410
+
+static bool rpgstats_pool_elem(uint32_t pool_offset, int32_t index,
+                               size_t elem_size, void **out_addr) {
+    void *rpgstats = stats_manager_get_raw();
+    if (!rpgstats || index < 0) return false;
+    void *buf = NULL;
+    uint32_t size = 0;
+    if (!safe_read_ptr((char*)rpgstats + pool_offset, &buf) || !buf ||
+        !safe_read_u32((char*)rpgstats + pool_offset + 0x0C, &size) ||
+        (uint32_t)index >= size) {
+        return false;
+    }
+    *out_addr = (char*)buf + (size_t)index * elem_size;
+    return true;
+}
+
+static bool is_flag_type(const char *name) {
+    static const char *const names[] = {
+        "AttributeFlags", "SpellFlagList", "WeaponFlags", "ResistanceFlags",
+        "PassiveFlags", "ProficiencyGroupFlags", "StatsFunctorContext",
+        "StatusEvent", "StatusPropertyFlags", "StatusGroupFlags",
+        "LineOfSightFlags", "CinematicArenaFlags", "SpellCategoryFlags",
+        "InterruptContext", "InterruptContextScope", "InterruptDefaultValue",
+        "InterruptFlagsList", "AuraFlags", "AbilityFlags"
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (strcmp(name, names[i]) == 0) return true;
+    }
+    return false;
+}
+
+// Resolve an attribute to its IndexedProperties slot and its value list
+// (whose name is the attribute's type: ConstantInt, Damage Type, ...).
+static bool resolve_attribute(StatsObjectPtr obj, const char *prop, int *out_index,
+                              void **out_value_list, const char **out_type_name) {
+    void *modifier_list = get_object_modifier_list(obj);
+    int prop_index = modifier_list ? find_property_index_by_name(modifier_list, prop) : -1;
+    if (prop_index < 0) return false;
+
+    void *attrs_buf = NULL, *modifier = NULL;
+    int32_t enum_index = -1;
+    if (!safe_read_ptr((char*)modifier_list + CNEM_OFFSET_VALUES_BUF, &attrs_buf) || !attrs_buf ||
+        !safe_read_ptr((char*)attrs_buf + (size_t)prop_index * sizeof(void*), &modifier) || !modifier ||
+        !safe_read_i32((char*)modifier + MODIFIER_OFFSET_ENUM_INDEX, &enum_index)) {
+        return false;
+    }
+
+    uint32_t vl_count = 0;
+    void *vl_elements = NULL;
+    void *value_list = NULL;
+    if (stats_valuelist_registry_shape(get_modifier_value_lists_manager(), &vl_count, &vl_elements)) {
+        value_list = stats_valuelist_registry_element(vl_elements, vl_count, (uint32_t)enum_index);
+    }
+    const char *type_name = value_list ? read_fixed_string((char*)value_list + RPGENUM_OFFSET_NAME) : NULL;
+    if (!type_name) return false;
+
+    *out_index = prop_index;
+    *out_value_list = value_list;
+    *out_type_name = type_name;
+    return true;
+}
+
+bool stats_get_typed(StatsObjectPtr obj, const char *prop, StatsTypedValue *out) {
+    if (!obj || !prop || !out) return false;
+    memset(out, 0, sizeof(*out));
+
+    int prop_index = -1;
+    void *value_list = NULL;
+    const char *type_name = NULL;
+    if (!resolve_attribute(obj, prop, &prop_index, &value_list, &type_name)) return false;
+    out->type_name = type_name;
+
+    int32_t raw = stats_get_property_raw(obj, prop_index);
+    void *addr = NULL;
+
+    if (strcmp(type_name, "ConstantInt") == 0) {
+        out->kind = STATS_VALUE_INT;
+        out->i = raw;
+    } else if (strcmp(type_name, "ConstantFloat") == 0) {
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_FLOATS, raw, sizeof(float), &addr)) {
+            float f = 0;
+            if (safe_read_u32(addr, (uint32_t *)&f)) {
+                out->kind = STATS_VALUE_FLOAT;
+                out->f = f;
+            }
+        }
+    } else if (strcmp(type_name, "FixedString") == 0 ||
+               strcmp(type_name, "StatusIDs") == 0) {
+        out->kind = STATS_VALUE_STRING;
+        out->s = get_rpgstats_fixedstring(raw);
+    } else if (strcmp(type_name, "Guid") == 0) {
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_GUIDS, raw, 16, &addr) &&
+            safe_memory_read((mach_vm_address_t)(uintptr_t)addr, out->guid, 16)) {
+            out->kind = STATS_VALUE_GUID;
+        }
+    } else if (strcmp(type_name, "Conditions") == 0 ||
+               strcmp(type_name, "TargetConditions") == 0 ||
+               strcmp(type_name, "UseConditions") == 0) {
+        // ls::STDString, 16 bytes: long form {char* data; u32 size; u32 cap}
+        // with bit 7 of byte 15 set, else up to 15 inline bytes with the
+        // length in byte 15.
+        uint8_t raw_str[16];
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_CONDITIONS, raw, 16, &addr) &&
+            safe_memory_read((mach_vm_address_t)(uintptr_t)addr, raw_str, 16)) {
+            out->kind = STATS_VALUE_EXTERNAL_STRING;
+            if (raw_str[15] & 0x80) {
+                memcpy(&out->str_addr, raw_str, sizeof(void *));
+                memcpy(&out->str_len, raw_str + 8, sizeof(uint32_t));
+            } else {
+                out->str_addr = addr;
+                out->str_len = raw_str[15] & 0x7f;
+            }
+        }
+    } else if (strcmp(type_name, "TranslatedString") == 0) {
+        uint32_t handle = FS_NULL_INDEX;
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_TRANSLATED_STRINGS, raw, 16, &addr) &&
+            safe_read_u32(addr, &handle)) {
+            out->kind = STATS_VALUE_STRING;
+            out->s = fixed_string_resolve(handle);
+        }
+    } else if (is_flag_type(type_name)) {
+        void *slot = NULL, *pflags = NULL;
+        uint64_t flags = 0;
+        out->kind = STATS_VALUE_FLAGS;
+        out->value_list = value_list;
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_INT64S, raw, sizeof(void*), &slot) &&
+            safe_read_ptr(slot, &pflags) && pflags &&
+            safe_memory_read((mach_vm_address_t)(uintptr_t)pflags, &flags, sizeof(flags))) {
+            out->flags = flags;
+        }
+    } else if (stats_valuelist_find_value(value_list, raw, NULL) == STATS_VALUELIST_FOUND) {
+        // Enumeration: the stored value is the label's value.
+        uint32_t key = FS_NULL_INDEX;
+        stats_valuelist_find_value(value_list, raw, &key);
+        out->kind = STATS_VALUE_STRING;
+        out->s = fixed_string_resolve(key);
+    } else {
+        // RollConditions, StatsFunctors, Requirements: not decoded here.
+        out->kind = STATS_VALUE_UNSUPPORTED;
+        out->i = raw;
+    }
+    return true;
+}
+
+const char *stats_flag_label(void *value_list, int bit_value) {
+    uint32_t key = FS_NULL_INDEX;
+    if (stats_valuelist_find_value(value_list, bit_value, &key) != STATS_VALUELIST_FOUND) {
+        return NULL;
+    }
+    return fixed_string_resolve(key);
+}
+
 bool stats_get_float(StatsObjectPtr obj, const char *prop, float *out_value) {
     if (!obj || !prop || !out_value) return false;
 
@@ -1794,9 +1971,22 @@ bool stats_set_string(StatsObjectPtr obj, const char *prop, const char *value) {
     void *write_addr = get_property_write_address(obj, prop, &prop_index, "stats_set_string");
     if (!write_addr) return false;
 
-    int32_t pool_index = find_fixedstring_pool_index(value);
+    // This path is untyped (SetRawAttribute, SetProperty with a string), so it
+    // may only intern a new string where stats_set_typed would: a FixedString or
+    // StatusIDs attribute. Anything else keeps the find-only lookup, so a new
+    // string is refused rather than stored as a pool index in a slot that holds
+    // a different kind of value.
+    int type_index = -1;
+    void *value_list = NULL;
+    const char *type_name = NULL;
+    bool may_intern = resolve_attribute(obj, prop, &type_index, &value_list, &type_name) &&
+                      (strcmp(type_name, "FixedString") == 0 ||
+                       strcmp(type_name, "StatusIDs") == 0);
+    int32_t pool_index = may_intern ? fixedstrings_pool_index(value)
+                                    : find_fixedstring_pool_index(value);
     if (pool_index < 0) {
-        LOG_STATS_DEBUG("stats_set_string: value '%s' not found in FixedStrings pool", value);
+        LOG_STATS_DEBUG("stats_set_string: '%s' not in the FixedStrings pool%s", value,
+                        may_intern ? " and could not be added" : "");
         return false;
     }
 
@@ -1842,6 +2032,147 @@ bool stats_set_float(StatsObjectPtr obj, const char *prop, float value) {
 
     LOG_STATS_DEBUG("stats_set_float: %s = %f (index %d)", prop, value, prop_index);
     return true;
+}
+
+// Index of `value` in the Floats pool, appending it when absent and the
+// pool's existing capacity allows (no reallocation of the game's buffer).
+static int32_t floats_pool_index(float value) {
+    void *rpgstats = stats_manager_get_raw();
+    if (!rpgstats) return -1;
+    char *arr = (char*)rpgstats + RPGSTATS_OFFSET_FLOATS;
+    void *buf = NULL;
+    uint32_t cap = 0, size = 0;
+    if (!safe_read_ptr(arr, &buf) || !buf ||
+        !safe_read_u32(arr + 0x08, &cap) || !safe_read_u32(arr + 0x0C, &size) ||
+        size > cap) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < size; i++) {
+        float f = 0;
+        if (safe_read_u32((char*)buf + i * sizeof(float), (uint32_t *)&f) && f == value) {
+            return (int32_t)i;
+        }
+    }
+    if (size >= cap) return -1;
+    union { float f; int32_t i; } conv = { .f = value };
+    if (!safe_write_i32((char*)buf + size * sizeof(float), conv.i) ||
+        !safe_write_i32(arr + 0x0C, (int32_t)(size + 1))) {
+        return -1;
+    }
+    return (int32_t)size;
+}
+
+// Index of `value` in the FixedStrings pool, interning it and appending it
+// when absent and the pool's existing capacity allows (Windows
+// RPGStats::GetOrCreateFixedString; no reallocation of the game's buffer).
+static int32_t fixedstrings_pool_index(const char *value) {
+    if (value && value[0] == '\0') return 0;  // entry 0 is the null FixedString
+    int32_t found = find_fixedstring_pool_index(value);
+    if (found >= 0) return found;
+    if (!value || !fixed_string_intern_ready()) return -1;
+
+    void *rpgstats = stats_manager_get_raw();
+    if (!rpgstats) return -1;
+    char *arr = (char*)rpgstats + RPGSTATS_OFFSET_FIXEDSTRINGS;
+    void *buf = NULL;
+    uint32_t cap = 0, size = 0;
+    if (!safe_read_ptr(arr, &buf) || !buf ||
+        !safe_read_u32(arr + 0x08, &cap) || !safe_read_u32(arr + 0x0C, &size) ||
+        size >= cap) {
+        return -1;
+    }
+    uint32_t fs = fixed_string_intern(value, -1);
+    if (fs == FS_NULL_INDEX) return -1;
+    if (!safe_write_i32((char*)buf + size * sizeof(uint32_t), (int32_t)fs) ||
+        !safe_write_i32(arr + 0x0C, (int32_t)(size + 1))) {
+        return -1;
+    }
+    return (int32_t)size;
+}
+
+// Index of an existing Int64s pool entry equal to `mask` (entries are
+// pointers to heap int64s; creating one would need the game's allocator).
+static int32_t int64_pool_find(uint64_t mask) {
+    void *rpgstats = stats_manager_get_raw();
+    if (!rpgstats) return -1;
+    char *arr = (char*)rpgstats + RPGSTATS_OFFSET_INT64S;
+    void *buf = NULL;
+    uint32_t size = 0;
+    if (!safe_read_ptr(arr, &buf) || !buf || !safe_read_u32(arr + 0x0C, &size)) return -1;
+    for (uint32_t i = 0; i < size; i++) {
+        void *p = NULL;
+        uint64_t v = 0;
+        if (safe_read_ptr((char*)buf + i * sizeof(void*), &p) && p &&
+            safe_memory_read((mach_vm_address_t)(uintptr_t)p, &v, sizeof(v)) && v == mask) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
+
+StatsSetResult stats_set_typed(StatsObjectPtr obj, const char *prop, const StatsSetValue *in) {
+    if (!obj || !prop || !in) return STATS_SET_NO_SUCH_ATTRIBUTE;
+
+    int prop_index = -1;
+    void *value_list = NULL;
+    const char *type_name = NULL;
+    if (!resolve_attribute(obj, prop, &prop_index, &value_list, &type_name)) {
+        return STATS_SET_NO_SUCH_ATTRIBUTE;
+    }
+    int ignored = 0;
+    void *write_addr = get_property_write_address(obj, prop, &ignored, "stats_set_typed");
+    if (!write_addr) return STATS_SET_NO_SUCH_ATTRIBUTE;
+
+    int32_t stored;
+    if (strcmp(type_name, "ConstantInt") == 0) {
+        if (in->kind != STATS_SET_NUMBER || in->number != (double)(int32_t)in->number) {
+            return STATS_SET_WRONG_TYPE;
+        }
+        stored = (int32_t)in->number;
+    } else if (strcmp(type_name, "ConstantFloat") == 0) {
+        if (in->kind != STATS_SET_NUMBER) return STATS_SET_WRONG_TYPE;
+        stored = floats_pool_index((float)in->number);
+        if (stored < 0) return STATS_SET_POOL_FULL;
+    } else if (strcmp(type_name, "FixedString") == 0 || strcmp(type_name, "StatusIDs") == 0) {
+        if (in->kind != STATS_SET_STRING) return STATS_SET_WRONG_TYPE;
+        stored = fixedstrings_pool_index(in->string);
+        if (stored < 0) return STATS_SET_POOL_FULL;
+    } else if (is_flag_type(type_name)) {
+        if (in->kind != STATS_SET_LABELS) return STATS_SET_WRONG_TYPE;
+        uint64_t mask = 0;
+        for (int i = 0; i < in->label_count; i++) {
+            int32_t bit = -1;
+            if (stats_valuelist_find_label(value_list, in->labels[i], &bit) !=
+                    STATS_VALUELIST_FOUND || bit < 1 || bit > 64) {
+                return STATS_SET_UNKNOWN_LABEL;
+            }
+            mask |= 1ull << (bit - 1);
+        }
+        stored = int64_pool_find(mask);
+        if (stored < 0) return STATS_SET_NOT_IN_POOL;
+    } else if (strcmp(type_name, "Guid") == 0 || strcmp(type_name, "TranslatedString") == 0 ||
+               strcmp(type_name, "Conditions") == 0 || strcmp(type_name, "TargetConditions") == 0 ||
+               strcmp(type_name, "UseConditions") == 0 || strcmp(type_name, "RollConditions") == 0 ||
+               strcmp(type_name, "StatsFunctors") == 0 || strcmp(type_name, "Requirements") == 0 ||
+               strcmp(type_name, "MemorizationRequirements") == 0) {
+        return STATS_SET_UNSUPPORTED;
+    } else {
+        // Enumeration: a label, or a value the list defines.
+        if (in->kind == STATS_SET_STRING) {
+            if (stats_valuelist_find_label(value_list, in->string, &stored) != STATS_VALUELIST_FOUND) {
+                return STATS_SET_UNKNOWN_LABEL;
+            }
+        } else if (in->kind == STATS_SET_NUMBER && in->number == (double)(int32_t)in->number) {
+            stored = (int32_t)in->number;
+            if (stats_valuelist_find_value(value_list, stored, NULL) != STATS_VALUELIST_FOUND) {
+                return STATS_SET_UNKNOWN_LABEL;
+            }
+        } else {
+            return STATS_SET_WRONG_TYPE;
+        }
+    }
+
+    return write_property_i32(obj, write_addr, stored) ? STATS_SET_OK : STATS_SET_WRITE_FAILED;
 }
 
 // ============================================================================
