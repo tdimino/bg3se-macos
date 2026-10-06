@@ -18,6 +18,7 @@ void register_lua_runtime_tests(void);
 void register_guid_lookup_tests(void);
 void register_persistentvars_tests(void);
 void register_json_proxy_tests(void);
+void register_lua_json_tests(void);
 void register_arm64_prologue_tests(void);
 void register_enum_ext_tests(void);
 void register_osi_hook_abi_tests(void);
@@ -35,6 +36,7 @@ int main(void) {
     register_guid_lookup_tests();
     register_persistentvars_tests();
     register_json_proxy_tests();
+    register_lua_json_tests();
     register_arm64_prologue_tests();
     register_enum_ext_tests();
     register_osi_hook_abi_tests();

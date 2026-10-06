@@ -279,7 +279,6 @@ static KnownFunction g_knownFunctions[] = {
     {"GetHostCharacter", 0, 1, OSI_FUNC_QUERY},  // () → guid
     // Input+output queries
     {"IsInCombat", 0, 2, OSI_FUNC_QUERY},         // (guid) → bool
-    {"IsAlive", 0, 2, OSI_FUNC_QUERY},             // (guid) → bool
     {"IsDead", 0, 2, OSI_FUNC_QUERY},              // (guid) → bool
     {"IsTagged", 0, 2, OSI_FUNC_QUERY},
     {"GetUUID", 0, 2, OSI_FUNC_QUERY},
@@ -307,8 +306,8 @@ static KnownFunction g_knownFunctions[] = {
     // =========================================================================
     // Calls (OSI_FUNC_CALL = 3) - no return value
     // =========================================================================
-    {"ApplyStatus", 0, 4, OSI_FUNC_CALL},
-    {"RemoveStatus", 0, 2, OSI_FUNC_CALL},
+    {"ApplyStatus", 0, 5, OSI_FUNC_CALL},   // (Object, Status, Duration, Force, Source)
+    {"RemoveStatus", 0, 3, OSI_FUNC_CALL},  // (Target, Status, Cause)
     {"PlaySound", 0, 2, OSI_FUNC_CALL},
     {"ShowNotification", 0, 2, OSI_FUNC_CALL},
     {"TeleportToPosition", 0, 5, OSI_FUNC_CALL},
@@ -1525,23 +1524,24 @@ static bool osi_db_resolve(void *def, void **outNode, void **outDb,
     return true;
 }
 
-/* Locate the value array of a stored fact. CTuple (inline at listnode+0x10)
- * is a COsiSOOList<COsiTypedValue,8>: size @ +0x80, cap @ +0x84; values are
- * stored INLINE at the tuple base when cap < 9, else the tuple base holds a
- * heap pointer. Returns 0 on read failure. */
+/* Locate the value array of a stored fact. A database's Facts list holds
+ * TupleVec {COsiTypedValue *Values @ +0x00; uint64 Size @ +0x08} inline at
+ * listnode+0x10 (Windows BG3SE: List<TupleVec> Facts). This was read as the
+ * inline COsiSOOList used by search tuples (size @ +0x80, cap @ +0x84); on
+ * 4.1.1.7398727 that decoded the Values pointer itself as an INTEGER column,
+ * so every Osi.DB_*:Get() row came back as a number (live-verified: a
+ * 1-column DB node reads Values=heap ptr, Size=1; the values carry typeId
+ * 0x05/0x0b at +0x08). Returns 0 on read failure. */
 static mach_vm_address_t osi_db_tuple_values(mach_vm_address_t listNode,
                                              uint32_t *outSize) {
     mach_vm_address_t tuple = listNode + 0x10;
-    uint32_t tsize = 0, tcap = 0;
-    safe_memory_read_u32(tuple + 0x80, &tsize);
-    safe_memory_read_u32(tuple + 0x84, &tcap);
-    *outSize = tsize;
-    if (tcap >= 9) {
-        void *heap = NULL;
-        safe_memory_read_pointer(tuple, &heap);
-        return (mach_vm_address_t)heap;
-    }
-    return tuple;
+    void *values = NULL;
+    uint64_t size = 0;
+    *outSize = 0;
+    if (!safe_memory_read_pointer(tuple, &values) || !values) return 0;
+    if (!safe_memory_read_u64(tuple + 0x08, &size) || size > 32) return 0;
+    *outSize = (uint32_t)size;
+    return (mach_vm_address_t)values;
 }
 
 /* Compare Lua stack slots 2..(1+nfilter) against a stored value array.
@@ -2077,17 +2077,6 @@ static int osi_dynamic_call(lua_State *L) {
         return 1;
     }
 
-    // Validate argument count against arity.
-    // arity = total params (in + out) from funcDef->Signature->Params.Size.
-    // If caller passes more args than the function accepts, clamp to arity
-    // to prevent the game's OsirisQuery from walking past the arg chain
-    // into unallocated memory (crash at NULL+0xC).
-    if (arity > 0 && numArgs > arity) {
-        LOG_OSIRIS_DEBUG("Osi.%s: WARNING: %d args passed but arity=%d, clamping to %d",
-                        funcName, numArgs, arity, arity);
-        numArgs = arity;
-    }
-
     // Build the Osiris argument chain. Prefer the game's authoritative param
     // definitions (types + in/out directions) read from the OsirisInterface —
     // the same structure OsirisQuery validates against. Fall back to guessing
@@ -2095,6 +2084,17 @@ static int osi_dynamic_call(lua_State *L) {
     OsiParamDef pdefs[20];
     int pcount = osi_read_param_defs(funcId, pdefs, 20);
     int useDefs = (pcount >= 0);
+
+    // Legacy path only: clamp to the guessed arity so OsirisQuery cannot walk
+    // past the arg chain (crash at NULL+0xC). With the game's param defs the
+    // chain is exactly pcount slots and extra Lua args are never read, while
+    // the guessed arity can be stale: ApplyStatus was listed with 4 params and
+    // its 5th (_Source) was silently dropped.
+    if (!useDefs && arity > 0 && numArgs > arity) {
+        LOG_OSIRIS_DEBUG("Osi.%s: WARNING: %d args passed but arity=%d, clamping to %d",
+                        funcName, numArgs, arity, arity);
+        numArgs = arity;
+    }
     int numOut = 0;
     int allocCount = numArgs;
     OsiArgumentDesc *args = NULL;
@@ -2486,6 +2486,18 @@ static void register_osi_namespace(lua_State *L) {
 
     // Set Osi as global
     lua_setglobal(L, "Osi");
+
+    // The story has no IsAlive query (only IsDead), so Osi.IsAlive resolved to
+    // nothing and returned nil. Provide it over IsDead: 1 alive, 0 dead.
+    if (luaL_dostring(L,
+            "rawset(Osi, 'IsAlive', function(c)\n"
+            "  local d = Osi.IsDead(c)\n"
+            "  if d == nil then return nil end\n"
+            "  return (d == 0) and 1 or 0\n"
+            "end)") != LUA_OK) {
+        LOG_OSIRIS_WARN("Osi.IsAlive wrapper failed: %s", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
 
     // Also register GetHostCharacter as a global function
     lua_pushcfunction(L, lua_gethostcharacter);

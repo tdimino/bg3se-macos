@@ -22,6 +22,39 @@ static const char *json_skip_whitespace(const char *json) {
     return json;
 }
 
+/* Append one code point as UTF-8. */
+static void json_add_utf8(luaL_Buffer *b, unsigned long cp) {
+    if (cp < 0x80) {
+        luaL_addchar(b, (char)cp);
+    } else if (cp < 0x800) {
+        luaL_addchar(b, (char)(0xC0 | (cp >> 6)));
+        luaL_addchar(b, (char)(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+        luaL_addchar(b, (char)(0xE0 | (cp >> 12)));
+        luaL_addchar(b, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        luaL_addchar(b, (char)(0x80 | (cp & 0x3F)));
+    } else {
+        luaL_addchar(b, (char)(0xF0 | (cp >> 18)));
+        luaL_addchar(b, (char)(0x80 | ((cp >> 12) & 0x3F)));
+        luaL_addchar(b, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        luaL_addchar(b, (char)(0x80 | (cp & 0x3F)));
+    }
+}
+
+static int json_hex4(const char *p, unsigned *out) {
+    unsigned v = 0;
+    for (int i = 0; i < 4; i++) {
+        char c = p[i];
+        v <<= 4;
+        if (c >= '0' && c <= '9')      v |= (unsigned)(c - '0');
+        else if (c >= 'a' && c <= 'f') v |= (unsigned)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v |= (unsigned)(c - 'A' + 10);
+        else return 0;
+    }
+    *out = v;
+    return 1;
+}
+
 static const char *json_parse_string(lua_State *L, const char *json) {
     if (*json != '"') return NULL;
     json++;  // skip opening quote
@@ -41,6 +74,26 @@ static const char *json_parse_string(lua_State *L, const char *json) {
                 case 'n': luaL_addchar(&b, '\n'); break;
                 case 'r': luaL_addchar(&b, '\r'); break;
                 case 't': luaL_addchar(&b, '\t'); break;
+                case 'u': {
+                    /* \uXXXX was copied through verbatim, so "A" read
+                     * back as the literal text u0041. */
+                    unsigned cp = 0;
+                    if (!json_hex4(json + 1, &cp)) {
+                        luaL_addchar(&b, *json);
+                        break;
+                    }
+                    json += 4;
+                    if (cp >= 0xD800 && cp <= 0xDBFF &&
+                        json[1] == '\\' && json[2] == 'u') {
+                        unsigned lo = 0;
+                        if (json_hex4(json + 3, &lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
+                            json += 6;
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                        }
+                    }
+                    json_add_utf8(&b, cp);
+                    break;
+                }
                 default: luaL_addchar(&b, *json); break;
             }
         } else {
@@ -367,18 +420,45 @@ static void json_sb_value(lua_State *L, int index, JsonBuf *jb, int depth) {
     int t = lua_type(L, index);
     switch (t) {
         case LUA_TSTRING: {
-            const char *s = lua_tostring(L, index);
+            size_t len = 0;
+            const char *s = lua_tolstring(L, index, &len);
             jb_addchar(jb, '"');
-            for (; s && *s; s++) {
-                if (*s == '"' || *s == '\\') jb_addchar(jb, '\\');
-                jb_addchar(jb, *s);
+            for (size_t i = 0; s && i < len; i++) {
+                unsigned char c = (unsigned char)s[i];
+                /* Raw control characters (and NUL, which also truncated the
+                 * string) are invalid inside a JSON string per RFC 8259. */
+                switch (c) {
+                    case '"':  jb_addstring(jb, "\\\""); continue;
+                    case '\\': jb_addstring(jb, "\\\\"); continue;
+                    case '\b': jb_addstring(jb, "\\b");  continue;
+                    case '\f': jb_addstring(jb, "\\f");  continue;
+                    case '\n': jb_addstring(jb, "\\n");  continue;
+                    case '\r': jb_addstring(jb, "\\r");  continue;
+                    case '\t': jb_addstring(jb, "\\t");  continue;
+                    default: break;
+                }
+                if (c < 0x20) {
+                    char esc[7];
+                    snprintf(esc, sizeof(esc), "\\u%04x", c);
+                    jb_addstring(jb, esc);
+                } else {
+                    jb_addchar(jb, (char)c);
+                }
             }
             jb_addchar(jb, '"');
             break;
         }
         case LUA_TNUMBER: {
+            // "%g" keeps 6 significant digits: 1755460000 became 1.75546e+09
+            // and 1/3 became 0.333333, so a timestamp, entity id or gold total
+            // in PersistentVars was rewritten on every save. Integers print
+            // exactly; floats use %.17g (round-trip exact for IEEE-754).
             char buf[64];
-            snprintf(buf, sizeof(buf), "%g", lua_tonumber(L, index));
+            if (lua_isinteger(L, index)) {
+                snprintf(buf, sizeof(buf), "%lld", (long long)lua_tointeger(L, index));
+            } else {
+                snprintf(buf, sizeof(buf), "%.17g", lua_tonumber(L, index));
+            }
             jb_addstring(jb, buf);
             break;
         }

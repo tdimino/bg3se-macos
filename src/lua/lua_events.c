@@ -16,6 +16,10 @@
 #include "../mod/mod_loader.h"
 #include "../entity/component_registry.h"
 #include "../entity/component_lookup.h"
+#include "../entity/entity_system.h"
+#include "../core/safe_memory.h"
+#include "../strings/fixed_string.h"
+#include "../enum/enum_registry.h"
 
 #include <stdatomic.h>
 #include <string.h>
@@ -1492,6 +1496,93 @@ void events_fire_status_applied(lua_State *L, uint64_t entity, const char *statu
 // Functor Events (Issue #53)
 // ============================================================================
 
+// Windows ExecuteFunctorEvent.Params (stats::ContextData). Type is always set;
+// the AttackTarget fields below were read on 4.1.1.7398727 during a weapon
+// attack and matched the attacker, the target, the spell and the target's HP
+// loss. Other fields are absent until checked the same way.
+#define ATTACK_TARGET_CASTER    0x98   // ecs::EntityRef (handle at +0)
+#define ATTACK_TARGET_TARGET    0xB8
+#define ATTACK_TARGET_SPELL_ID  0xE8   // SpellIdWithPrototype; OriginatorPrototype at +0
+#define ATTACK_TARGET_ATTACK    0x2E8  // AttackDesc
+#define ATTACK_DESC_LIST        0x10   // Array<DamagePair>: buf, cap u32 @+8, size u32 @+0xC
+
+static const char *const k_functor_context_names[] = {
+    "AttackTarget", "AttackPosition", "Move", "Target", "NearbyAttacked",
+    "NearbyAttacking", "Equip", "Source", "Interrupt",
+};
+
+static void push_attack_desc(lua_State *L, uintptr_t attack) {
+    int32_t total = 0, heal = 0;
+    uint8_t pct = 0;
+    lua_newtable(L);
+    if (safe_memory_read_i32(attack, &total)) {
+        lua_pushinteger(L, total);
+        lua_setfield(L, -2, "TotalDamageDone");
+    }
+    if (safe_memory_read_i32(attack + 4, &heal)) {
+        lua_pushinteger(L, heal);
+        lua_setfield(L, -2, "TotalHealDone");
+    }
+    if (safe_memory_read_u8(attack + 8, &pct)) {
+        lua_pushinteger(L, pct);
+        lua_setfield(L, -2, "InitialHPPercentage");
+    }
+    lua_newtable(L);
+    uint64_t buf = 0;
+    uint32_t size = 0;
+    if (safe_memory_read_u64(attack + ATTACK_DESC_LIST, &buf) && buf &&
+        safe_memory_read_u32(attack + ATTACK_DESC_LIST + 0xC, &size) && size <= 64) {
+        for (uint32_t i = 0; i < size; i++) {
+            int32_t amount = 0;
+            uint8_t type = 0;
+            if (!safe_memory_read_i32(buf + i * 8, &amount) ||
+                !safe_memory_read_u8(buf + i * 8 + 4, &type)) {
+                break;
+            }
+            lua_newtable(L);
+            lua_pushinteger(L, amount);
+            lua_setfield(L, -2, "Amount");
+            EnumTypeInfo *info = enum_registry_find_by_name("DamageType");
+            const char *name = info ? enum_find_label(info->registry_index, type) : NULL;
+            if (name) lua_pushstring(L, name); else lua_pushinteger(L, type);
+            lua_setfield(L, -2, "DamageType");
+            lua_rawseti(L, -2, (lua_Integer)i + 1);
+        }
+    }
+    lua_setfield(L, -2, "DamageList");
+}
+
+static void push_functor_params(lua_State *L, int ctxType, const void *context) {
+    lua_newtable(L);
+    if (ctxType >= 0 && ctxType < (int)(sizeof(k_functor_context_names) / sizeof(*k_functor_context_names))) {
+        lua_pushstring(L, k_functor_context_names[ctxType]);
+        lua_setfield(L, -2, "Type");
+    }
+    uintptr_t ctx = (uintptr_t)context;
+    if (ctx && ctxType == 0) {
+        uint64_t handle = 0;
+        if (safe_memory_read_u64(ctx + ATTACK_TARGET_CASTER, &handle)) {
+            entity_push_by_handle(L, (EntityHandle)handle);
+            lua_setfield(L, -2, "Caster");
+        }
+        if (safe_memory_read_u64(ctx + ATTACK_TARGET_TARGET, &handle)) {
+            entity_push_by_handle(L, (EntityHandle)handle);
+            lua_setfield(L, -2, "Target");
+        }
+        uint32_t fs = 0;
+        const char *spell = NULL;
+        if (safe_memory_read_u32(ctx + ATTACK_TARGET_SPELL_ID, &fs) &&
+            (spell = fixed_string_resolve(fs)) != NULL) {
+            lua_newtable(L);
+            lua_pushstring(L, spell);
+            lua_setfield(L, -2, "OriginatorPrototype");
+            lua_setfield(L, -2, "SpellId");
+        }
+        push_attack_desc(L, ctx + ATTACK_TARGET_ATTACK);
+        lua_setfield(L, -2, "Attack");
+    }
+}
+
 void events_fire_execute_functor(lua_State *L, int ctxType, void *functors, void *context) {
     if (!L) return;
 
@@ -1501,6 +1592,7 @@ void events_fire_execute_functor(lua_State *L, int ctxType, void *functors, void
     LOG_EVENTS_DEBUG("Firing ExecuteFunctor (ctx=%d, functors=%p, context=%p, %d handlers)",
                 ctxType, functors, context, count);
 
+    lifetime_lua_begin_scope(L);
     g_dispatch_depth[EVENT_EXECUTE_FUNCTOR]++;
 
     for (int i = 0; i < g_handler_counts[EVENT_EXECUTE_FUNCTOR]; i++) {
@@ -1529,6 +1621,8 @@ void events_fire_execute_functor(lua_State *L, int ctxType, void *functors, void
         lua_setfield(L, -2, "FunctorListPtr");
         lua_pushinteger(L, (lua_Integer)(uintptr_t)context);
         lua_setfield(L, -2, "ContextPtr");
+        push_functor_params(L, ctxType, context);
+        lua_setfield(L, -2, "Params");
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
@@ -1555,6 +1649,7 @@ void events_fire_execute_functor(lua_State *L, int ctxType, void *functors, void
     if (g_dispatch_depth[EVENT_EXECUTE_FUNCTOR] == 0) {
         process_deferred_unsubscribes(L, EVENT_EXECUTE_FUNCTOR);
     }
+    lifetime_lua_end_scope(L);
 }
 
 void events_fire_after_execute_functor(lua_State *L, int ctxType, void *functors, void *context) {
@@ -1565,6 +1660,7 @@ void events_fire_after_execute_functor(lua_State *L, int ctxType, void *functors
 
     LOG_EVENTS_DEBUG("Firing AfterExecuteFunctor (ctx=%d, %d handlers)", ctxType, count);
 
+    lifetime_lua_begin_scope(L);
     g_dispatch_depth[EVENT_AFTER_EXECUTE_FUNCTOR]++;
 
     for (int i = 0; i < g_handler_counts[EVENT_AFTER_EXECUTE_FUNCTOR]; i++) {
@@ -1593,6 +1689,8 @@ void events_fire_after_execute_functor(lua_State *L, int ctxType, void *functors
         lua_setfield(L, -2, "FunctorListPtr");
         lua_pushinteger(L, (lua_Integer)(uintptr_t)context);
         lua_setfield(L, -2, "ContextPtr");
+        push_functor_params(L, ctxType, context);
+        lua_setfield(L, -2, "Params");
 
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char *err = lua_tostring(L, -1);
@@ -1619,6 +1717,7 @@ void events_fire_after_execute_functor(lua_State *L, int ctxType, void *functors
     if (g_dispatch_depth[EVENT_AFTER_EXECUTE_FUNCTOR] == 0) {
         process_deferred_unsubscribes(L, EVENT_AFTER_EXECUTE_FUNCTOR);
     }
+    lifetime_lua_end_scope(L);
 }
 
 static void set_pointer_field(lua_State *L, const char *field, const void *ptr) {

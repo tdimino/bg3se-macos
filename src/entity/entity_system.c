@@ -1279,9 +1279,14 @@ static int lua_entity_get_by_handle(lua_State *L) {
         return luaL_error(L, "GetByHandle: expected number or hex string");
     }
 
+    entity_push_by_handle(L, handle);
+    return 1;
+}
+
+void entity_push_by_handle(lua_State *L, EntityHandle handle) {
     if (!entity_is_valid(handle)) {
         lua_pushnil(L);
-        return 1;
+        return;
     }
 
     // Create entity userdata with lifetime scoping
@@ -1292,8 +1297,6 @@ static int lua_entity_get_by_handle(lua_State *L) {
     // Set metatable
     luaL_getmetatable(L, "BG3Entity");
     lua_setmetatable(L, -2);
-
-    return 1;
 }
 
 // Ext.Entity.IsReady() -> boolean

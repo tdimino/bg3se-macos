@@ -287,6 +287,12 @@ struct lua_State;
  */
 void entity_register_lua(struct lua_State *L);
 
+/**
+ * Push the entity for `handle` (as Ext.Entity.GetByHandle does), or nil when
+ * the handle is not valid.
+ */
+void entity_push_by_handle(struct lua_State *L, EntityHandle handle);
+
 #ifdef __cplusplus
 }
 #endif
