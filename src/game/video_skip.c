@@ -1,12 +1,11 @@
 #include "video_skip.h"
 #include "../core/logging.h"
+#include "../core/offset_table.h"
 #include "../core/safe_memory.h"
 #include <dobby.h>
 #include <mach-o/dyld.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define VA_BINK_LOAD_VIDEO 0x10390b6ccULL
 
 static void *(*orig_BinkLoadVideo)(void *self, const void *path) = NULL;
 static bool s_skip_enabled = false;
@@ -90,12 +89,17 @@ bool video_skip_init(void *binary_base) {
 
     s_skip_enabled = true;
 
-    uintptr_t base = (uintptr_t)binary_base;
-    uintptr_t slide = base - 0x100000000ULL;
-    void *target = (void *)(VA_BINK_LOAD_VIDEO + slide);
+    (void)binary_base;
+    // Per-version address from the offset table. A literal here was pinned to
+    // 7209685; on 7398727 it lands inside an unrelated UI sort routine.
+    void *target = offset_table_game_fn(GAME_FN_BINK_LOAD_VIDEO);
+    if (!target) {
+        LOG_CORE_WARN("[VideoSkip] BinkManager::LoadVideo not in the offset table "
+                      "for this game version — not hooking");
+        return false;
+    }
 
-    LOG_CORE_INFO("[VideoSkip] Hooking BinkManager::LoadVideo at %p (slide=0x%lx)",
-                  target, (unsigned long)slide);
+    LOG_CORE_INFO("[VideoSkip] Hooking BinkManager::LoadVideo at %p", target);
 
     int result = DobbyHook(target, (void *)fake_BinkLoadVideo, (void **)&orig_BinkLoadVideo);
     if (result != 0) {

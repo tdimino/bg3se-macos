@@ -59,8 +59,7 @@ bool component_lookup_init(void *entityWorld, void *binaryBase) {
     LOG_ENTITY_DEBUG("Initialized:");
     LOG_ENTITY_DEBUG("  EntityWorld: %p", g_EntityWorld);
     LOG_ENTITY_DEBUG("  StorageContainer: %p", g_StorageContainer);
-    LOG_ENTITY_DEBUG("  TryGet: %p (Ghidra: 0x%llx)", g_TryGetFnAddr,
-               (unsigned long long)ADDR_STORAGE_CONTAINER_TRYGET);
+    LOG_ENTITY_DEBUG("  TryGet: %p", g_TryGetFnAddr);
 
     g_Initialized = true;
     return true;

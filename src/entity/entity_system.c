@@ -81,32 +81,13 @@ static int g_TypeIdRetryCount = 0;
 // From Ghidra analysis - see ghidra/ENTITY_OFFSETS.md
 // ============================================================================
 
-// esv::EocServer::StartUp(eoc::ServerInit const&)
-// Called once during server initialization - safe to hook
-// First parameter (x0) is the EoCServer* this pointer
-#define OFFSET_EOC_SERVER_STARTUP 0x10110f0d0
-
 // Offset of EntityWorld* within EoCServer struct (from Windows BG3SE analysis)
 // This matches the Windows offset exactly
 #define OFFSET_ENTITYWORLD_IN_EOCSERVER 0x288
 
-// esv::EocServer::m_ptr - Static member holding the EoCServer singleton pointer
-// Discovered via Ghidra analysis of symbol __ZN3esv9EocServer5m_ptrE
-// This is a global pointer in __DATA that we can read directly without hooks
-// Re-derived 2026-07-28 via nm for game build 4.1.1.7209685 (was 0x10898e8b8)
-#define OFFSET_EOCSERVER_SINGLETON_PTR 0x1089968b8
-
-// ecl::EocClient::m_ptr - Static member holding the EoCClient singleton pointer
-// Discovered via Ghidra analysis of gui::DataContextProvider::CreateDataContextClass
-// Address: 0x10898c000 + 0x968 = 0x10898c968
-// See ghidra/offsets/ENTITY_SYSTEM.md for discovery details
-// Re-derived 2026-07-28 via nm for game build 4.1.1.7209685 (was 0x10898c968)
-#define OFFSET_EOCCLIENT_SINGLETON_PTR 0x108994968
-
-// Offset of EntityWorld* within EoCClient struct
-// Windows BG3SE: EntityWorld at +0x1D0, PermissionsManager at +0x1D8
-// Previous 0x1B0 was wrong (overlapped with Array fields before PermissionsManager)
-#define OFFSET_ENTITYWORLD_IN_EOCCLIENT 0x1D0
+// Offset of EntityWorld* within EoCClient: ecl::EocClient::ConfigureECS passes
+// this+0x1a0 to RegisterComponents/RegisterSystems as the ecs::EntityWorld&.
+#define OFFSET_ENTITYWORLD_IN_EOCCLIENT 0x1a0
 
 // Verified for 4.1.1.7209685 in
 // ghidra/offsets/COMPONENT_OPS_AND_PROTO_INIT.md, Dig 1; re-verified for
@@ -390,92 +371,6 @@ static void *scan_for_eocserver_singleton(void) {
     return NULL;
 }
 
-// Alternative: Scan using known function patterns (ARM64 ADRP/LDR)
-// This looks for the instruction pattern that loads EoCServer from a global
-static void *scan_for_eocserver_via_instructions(void) {
-    if (!g_MainBinaryBase) return NULL;
-
-    LOG_ENTITY_DEBUG("=== Scanning via instruction patterns ===");
-
-    // The StartUp function at known offset loads EoCServer
-    // We can look at functions that access EoCServer+0x288 (EntityWorld)
-    // Pattern: ADRP Xn, page; LDR Xn, [Xn, #offset]
-
-    uintptr_t ghidra_base = GHIDRA_BASE_ADDRESS;
-    uintptr_t actual_base = (uintptr_t)g_MainBinaryBase;
-
-    // Address of a function we know accesses EoCServer
-    // esv::EocServer::GetEntityWorld would be ideal, but we'll use StartUp
-    uintptr_t startup_addr = OFFSET_EOC_SERVER_STARTUP - ghidra_base + actual_base;
-
-    LOG_ENTITY_DEBUG("Analyzing function at 0x%llx for EoCServer global reference",
-               (unsigned long long)startup_addr);
-
-    // Read the first 64 instructions of StartUp looking for ADRP pattern
-    uint32_t *instructions = (uint32_t *)startup_addr;
-
-    for (int i = 0; i < 64; i++) {
-        uint32_t instr = instructions[i];
-
-        // Check for ADRP instruction (bits 31, 28-24 = 1x0x0)
-        // ADRP Rd, label: 1|immlo|10000|immhi|Rd
-        if ((instr & 0x9F000000) == 0x90000000) {
-            // This is ADRP
-            uint32_t rd = instr & 0x1F;
-            int64_t immhi = ((int64_t)(instr >> 5) & 0x7FFFF) << 2;
-            int64_t immlo = (instr >> 29) & 0x3;
-            int64_t imm = (immhi | immlo) << 12;
-
-            // Sign extend
-            if (imm & (1ULL << 32)) {
-                imm |= 0xFFFFFFFF00000000ULL;
-            }
-
-            uintptr_t page_addr = ((uintptr_t)&instructions[i] & ~0xFFFULL) + imm;
-
-            // Look for following LDR that uses this register
-            for (int j = i + 1; j < i + 8 && j < 64; j++) {
-                uint32_t ldr_instr = instructions[j];
-
-                // LDR (unsigned offset): 11|111|00|01|0|imm12|Rn|Rt
-                if ((ldr_instr & 0xFFC00000) == 0xF9400000) {
-                    uint32_t rn = (ldr_instr >> 5) & 0x1F;
-                    uint32_t imm12 = ((ldr_instr >> 10) & 0xFFF) << 3;  // Scale by 8 for 64-bit
-
-                    if (rn == rd) {
-                        uintptr_t global_addr = page_addr + imm12;
-
-                        LOG_ENTITY_DEBUG("Found ADRP+LDR pattern at instruction %d:", i);
-                        LOG_ENTITY_DEBUG("  Page: 0x%llx, Offset: 0x%x",
-                                   (unsigned long long)page_addr, imm12);
-                        LOG_ENTITY_DEBUG("  Global address: 0x%llx", (unsigned long long)global_addr);
-
-                        // Try to read from this global
-                        if (is_valid_pointer((void *)global_addr)) {
-                            void *potential_eocserver = *(void **)global_addr;
-                            LOG_ENTITY_DEBUG("  Value at global: %p", potential_eocserver);
-
-                            if (is_valid_pointer(potential_eocserver)) {
-                                // Check offset 0x288
-                                void *potential_ew = *(void **)((char *)potential_eocserver + 0x288);
-                                LOG_ENTITY_DEBUG("  Value at +0x288: %p", potential_ew);
-
-                                if (is_valid_pointer(potential_ew)) {
-                                    LOG_ENTITY_DEBUG("  SUCCESS: Found EoCServer singleton!");
-                                    return potential_eocserver;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    LOG_ENTITY_DEBUG("No EoCServer reference found via instruction analysis");
-    return NULL;
-}
-
 // Direct memory read from known global address (primary method)
 // This is the simplest and most reliable approach now that we have the exact address
 static void *read_eocserver_from_global(void) {
@@ -484,20 +379,14 @@ static void *read_eocserver_from_global(void) {
         return NULL;
     }
 
-    // Calculate runtime address of esv::EocServer::m_ptr.
-    // Prefer the per-version offset table (eocserver_ptr). The hardcoded define
-    // is allowed only when the binary is the exact build it was audited against
-    // (version_detect_matches()); on any other version reading a stale slot
-    // yields a garbage EoCServer -> garbage EntityWorld -> crash inside the ECS
-    // query, so we fail closed instead.
-    uintptr_t ghidra_base = GHIDRA_BASE_ADDRESS;
+    // esv::EocServer::m_ptr comes only from the per-version offset table. A
+    // slot from another build yields a garbage EoCServer -> garbage
+    // EntityWorld -> crash inside the ECS query, so fail closed without one.
     uintptr_t actual_base = (uintptr_t)g_MainBinaryBase;
     uintptr_t global_addr;
     const VersionOffsets *off = offset_table_get();
     if (off && off->eocserver_ptr) {
         global_addr = actual_base + off->eocserver_ptr;
-    } else if (version_detect_matches()) {
-        global_addr = OFFSET_EOCSERVER_SINGLETON_PTR - ghidra_base + actual_base;
     } else {
         LOG_ENTITY_DEBUG("No verified EocServer slot for this game version — "
                          "entity capture via global disabled (fail closed)");
@@ -505,8 +394,6 @@ static void *read_eocserver_from_global(void) {
     }
 
     LOG_ENTITY_DEBUG("Reading EoCServer from global at 0x%llx", (unsigned long long)global_addr);
-    LOG_ENTITY_DEBUG("  (Ghidra offset: 0x%llx, base: %p)",
-               (unsigned long long)OFFSET_EOCSERVER_SINGLETON_PTR, g_MainBinaryBase);
 
     // Safely read the pointer using vm_read
     vm_size_t data_size = sizeof(void*);
@@ -540,48 +427,28 @@ static void *read_eocserver_from_global(void) {
 
 // Direct memory read for EoCClient (similar to server)
 // Returns NULL if placeholder address is used or client not initialized
+extern uintptr_t g_RuntimeClientSingletonAddr;  // Ext.Entity.SetClientSingleton()
+
 static void *read_eocclient_from_global(void) {
     if (!g_MainBinaryBase) {
         LOG_ENTITY_DEBUG("Cannot read EoCClient: main binary base not set");
         return NULL;
     }
 
-    // Check if we have a valid address (not placeholder)
-    if (OFFSET_EOCCLIENT_SINGLETON_PTR == 0) {
-        // Try runtime-discovered address if set via Lua
-        extern uintptr_t g_RuntimeClientSingletonAddr;  // Set via Ext.Entity.SetClientSingleton()
-        if (g_RuntimeClientSingletonAddr == 0) {
-            LOG_ENTITY_DEBUG("EoCClient singleton address not discovered - use Ext.Entity.SetClientSingleton()");
-            return NULL;
-        }
-        // Use runtime-discovered address directly (already adjusted)
-        uintptr_t global_addr = g_RuntimeClientSingletonAddr;
-
-        vm_size_t data_size = sizeof(void*);
-        vm_offset_t data;
-        kern_return_t kr = vm_read(mach_task_self(), (vm_address_t)global_addr,
-                                   data_size, &data, (mach_msg_type_number_t*)&data_size);
-
-        if (kr != KERN_SUCCESS) {
-            LOG_ENTITY_DEBUG("Failed to read EoCClient from runtime address 0x%llx",
-                       (unsigned long long)global_addr);
-            return NULL;
-        }
-
-        void *eocclient = *(void **)data;
-        vm_deallocate(mach_task_self(), data, data_size);
-
-        if (eocclient && is_valid_pointer(eocclient)) {
-            LOG_ENTITY_DEBUG("Read EoCClient pointer from runtime address: %p", eocclient);
-            return eocclient;
-        }
+    // Per-version offset table first, then an address set from Lua via
+    // Ext.Entity.SetClientSingleton(). No hardcoded fallback: a slot from
+    // another build reads unrelated memory.
+    uintptr_t global_addr;
+    const VersionOffsets *off = offset_table_get();
+    if (off && off->eocclient_ptr) {
+        global_addr = (uintptr_t)g_MainBinaryBase + off->eocclient_ptr;
+    } else if (g_RuntimeClientSingletonAddr) {
+        global_addr = g_RuntimeClientSingletonAddr;
+    } else {
+        LOG_ENTITY_DEBUG("No EoCClient slot for this game version — "
+                         "use Ext.Entity.SetClientSingleton()");
         return NULL;
     }
-
-    // Calculate runtime address of ecl::EocClient::m_ptr
-    uintptr_t ghidra_base = GHIDRA_BASE_ADDRESS;
-    uintptr_t actual_base = (uintptr_t)g_MainBinaryBase;
-    uintptr_t global_addr = OFFSET_EOCCLIENT_SINGLETON_PTR - ghidra_base + actual_base;
 
     LOG_ENTITY_DEBUG("Reading EoCClient from global at 0x%llx", (unsigned long long)global_addr);
 
@@ -625,18 +492,17 @@ bool entity_discover_world(void) {
 
     LOG_ENTITY_DEBUG("Attempting to discover Server EntityWorld...");
 
-    // Method 1 (PRIMARY): Direct read from known global address
-    // This is the most reliable method using the address discovered via Ghidra:
-    // esv::EocServer::m_ptr at 0x10898e8b8
+    // esv::EocServer::m_ptr from the per-version offset table.
     void *eocserver = read_eocserver_from_global();
 
-    // Method 2 (FALLBACK): Try instruction pattern analysis
-    if (!eocserver) {
-        LOG_ENTITY_DEBUG("Direct read failed, trying instruction pattern analysis...");
-        eocserver = scan_for_eocserver_via_instructions();
+    // A NULL read from a known slot means the server is not up yet. Only a
+    // version with no slot falls back to the heuristic data-segment scan, which
+    // accepts the first pointer whose +0x288 is readable.
+    const VersionOffsets *off = offset_table_get();
+    if (!eocserver && off && off->eocserver_ptr) {
+        LOG_ENTITY_DEBUG("EoCServer slot is NULL — server not initialized yet");
+        return false;
     }
-
-    // Method 3 (FALLBACK): Data segment scan
     if (!eocserver) {
         LOG_ENTITY_DEBUG("Pattern analysis failed, trying data segment scan...");
         eocserver = scan_for_eocserver_singleton();
@@ -1036,7 +902,6 @@ int entity_system_init(void *main_binary_base) {
     // 3. Scan for known patterns in memory at runtime
     //
     // The old approach of hooking EocServer::StartUp is disabled:
-    // uintptr_t startup_addr = OFFSET_EOC_SERVER_STARTUP - ghidra_base + actual_base;
     // DobbyHook((void*)startup_addr, (void*)hook_EocServerStartUp, (void**)&orig_EocServerStartUp);
     LOG_ENTITY_DEBUG("Main binary hooks disabled (macOS memory protection issues)");
     LOG_ENTITY_DEBUG("EntityWorld must be set manually via Ext.Entity.SetWorldPtr() or discovered via Osiris hooks");
@@ -3035,8 +2900,11 @@ static int lua_entity_get_known_addresses(lua_State *L) {
 
     // Server addresses
     lua_newtable(L);
-    lua_pushinteger(L, (lua_Integer)OFFSET_EOCSERVER_SINGLETON_PTR);
-    lua_setfield(L, -2, "singletonPtrGhidra");
+    const VersionOffsets *off = offset_table_get();
+    if (off && off->eocserver_ptr) {
+        lua_pushinteger(L, (lua_Integer)(GHIDRA_BASE_ADDRESS + off->eocserver_ptr));
+        lua_setfield(L, -2, "singletonPtrGhidra");
+    }
     if (g_EoCServer) {
         lua_pushinteger(L, (lua_Integer)(uintptr_t)g_EoCServer);
         lua_setfield(L, -2, "singleton");
@@ -3051,8 +2919,10 @@ static int lua_entity_get_known_addresses(lua_State *L) {
 
     // Client addresses
     lua_newtable(L);
-    lua_pushinteger(L, (lua_Integer)OFFSET_EOCCLIENT_SINGLETON_PTR);
-    lua_setfield(L, -2, "singletonPtrGhidra");
+    if (off && off->eocclient_ptr) {
+        lua_pushinteger(L, (lua_Integer)(GHIDRA_BASE_ADDRESS + off->eocclient_ptr));
+        lua_setfield(L, -2, "singletonPtrGhidra");
+    }
     if (g_RuntimeClientSingletonAddr) {
         lua_pushinteger(L, (lua_Integer)g_RuntimeClientSingletonAddr);
         lua_setfield(L, -2, "singletonPtrRuntime");

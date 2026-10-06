@@ -239,17 +239,6 @@ static bool discover_arm64_offsets(void *gst);
 // Ghidra analysis shows gGlobalStringTable is typically a static pointer
 #define GHIDRA_BASE_ADDRESS           0x100000000ULL
 
-// GlobalStringTable pointer discovered via Ghidra analysis of ls::gst::Get()
-// Re-derived 2026-07-28 for game build 4.1.1.7209685 by decoding the
-// ADRP+LDR pair at ls::gst::Get (0x1064a9ddc): adrp 0x108af4000 + 0xcd8.
-// (was 0x108aeccd8 for build 4.1.1.6995620)
-// See ghidra/offsets/GLOBALSTRINGTABLE.md for details
-#define OFFSET_GLOBAL_STRING_TABLE    0x108af4cd8ULL
-
-// Known RPGStats offset - GlobalStringTable is likely nearby
-// Re-derived 2026-07-28 via nm for game build 4.1.1.7209685 (was 0x1089c5730)
-#define OFFSET_RPGSTATS               0x1089cd730ULL
-
 // GlobalStringTable size: 11 SubTables * 0x1200 + MainTable = ~0xC600+ bytes
 // Search range around RPGStats
 #define PROBE_SEARCH_RANGE            0x200000ULL  // 2MB window
@@ -1158,27 +1147,6 @@ void fixed_string_init(void *main_binary_base) {
             if (fixed_string_probe_offsets()) {
                 g_Initialized = true;
                 LOG_CORE_DEBUG("Initialization complete");
-                return;
-            }
-        }
-    }
-
-    // Fallback: Use Ghidra offset if available
-    if (OFFSET_GLOBAL_STRING_TABLE != 0 && g_MainBinaryBase) {
-        uintptr_t runtime_addr = (uintptr_t)g_MainBinaryBase +
-                                  (OFFSET_GLOBAL_STRING_TABLE - GHIDRA_BASE_ADDRESS);
-        g_pGlobalStringTable = (void **)runtime_addr;
-        LOG_CORE_DEBUG("Using Ghidra offset: %p (base %p + 0x%llx)",
-                   (void *)g_pGlobalStringTable, g_MainBinaryBase,
-                   (unsigned long long)(OFFSET_GLOBAL_STRING_TABLE - GHIDRA_BASE_ADDRESS));
-
-        void *gst = NULL;
-        if (safe_read_ptr(g_pGlobalStringTable, &gst) && gst) {
-            LOG_CORE_DEBUG("GlobalStringTable = %p", gst);
-
-            if (fixed_string_probe_offsets()) {
-                g_Initialized = true;
-                LOG_CORE_DEBUG("Initialization complete via Ghidra offset");
                 return;
             }
         }

@@ -105,12 +105,6 @@ static bool safe_write_i32(void *addr, int32_t value) {
 // RPGStats::m_ptr mangled symbol name
 #define RPGSTATS_M_PTR_SYMBOL "__ZN8RPGStats5m_ptrE"
 
-// Ghidra offset (for fallback if dlsym fails)
-#define GHIDRA_BASE_ADDRESS 0x100000000ULL
-// RPGStats::m_ptr — re-derived 2026-07-28 via nm for game build
-// 4.1.1.7209685 (was 0x1089c5730; the +0x8000 bss shift after the game
-// update made Ext.Stats return nil for every stat).
-#define OFFSET_RPGSTATS_M_PTR 0x1089cd730ULL
 
 // ============================================================================
 // Structure Offsets (from Windows BG3SE + ARM64 alignment)
@@ -299,22 +293,14 @@ void stats_manager_init(void *main_binary_base) {
         }
     }
 
-    // Fallback: use offset table (version-keyed). The hardcoded Ghidra define is
-    // allowed only when the binary is the exact audited build; on any other
-    // version we fail closed (stats disabled) rather than read a stale slot.
+    // Fallback: the per-version offset table. Without a row, fail closed (stats
+    // disabled) rather than read a slot from another build.
     if (!g_pRPGStatsPtr && main_binary_base) {
         const VersionOffsets *off = offset_table_get();
         if (off && off->rpgstats_ptr) {
             g_pRPGStatsPtr = (void**)offset_table_resolve(off->rpgstats_ptr);
             LOG_STATS_DEBUG("Using offset table: %p (offset 0x%llx)",
                       (void*)g_pRPGStatsPtr, (unsigned long long)off->rpgstats_ptr);
-        } else if (version_detect_matches()) {
-            uintptr_t runtime_addr = (uintptr_t)main_binary_base +
-                                      (OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS);
-            g_pRPGStatsPtr = (void**)runtime_addr;
-            LOG_STATS_DEBUG("Using Ghidra offset fallback: %p (base %p + offset 0x%llx)",
-                      (void*)g_pRPGStatsPtr, main_binary_base,
-                      (unsigned long long)(OFFSET_RPGSTATS_M_PTR - GHIDRA_BASE_ADDRESS));
         } else {
             LOG_STATS_INFO("No verified RPGStats slot for this game version — "
                            "stats system disabled (fail closed)");
