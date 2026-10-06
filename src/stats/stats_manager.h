@@ -155,6 +155,36 @@ bool stats_get_int(StatsObjectPtr obj, const char *prop, int64_t *out_value);
  */
 bool stats_get_float(StatsObjectPtr obj, const char *prop, float *out_value);
 
+typedef enum {
+    STATS_VALUE_NONE = 0,
+    STATS_VALUE_INT,
+    STATS_VALUE_FLOAT,
+    STATS_VALUE_STRING,       // FixedString, or an enumeration's label
+    STATS_VALUE_GUID,
+    STATS_VALUE_FLAGS,        // bitmask; labels via stats_flag_label
+    STATS_VALUE_UNSUPPORTED   // conditions, functors, translated strings
+} StatsValueKind;
+
+typedef struct {
+    StatsValueKind kind;
+    const char *type_name;    // the attribute's value-list name
+    int64_t i;
+    float f;
+    const char *s;
+    uint8_t guid[16];
+    uint64_t flags;
+    void *value_list;
+} StatsTypedValue;
+
+/**
+ * Read a property by its value-list type (Windows: LuaStatGetAttribute).
+ * Returns false when the object has no such attribute.
+ */
+bool stats_get_typed(StatsObjectPtr obj, const char *prop, StatsTypedValue *out);
+
+/** Label of flag value `bit_value` (bit bit_value-1) in a flags value list. */
+const char *stats_flag_label(void *value_list, int bit_value);
+
 // ============================================================================
 // Property Access (Write) - Phase 4
 // ============================================================================

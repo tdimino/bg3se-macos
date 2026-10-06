@@ -17,6 +17,7 @@
 #include "logging.h"
 #include "../strings/fixed_string.h"
 #include "../core/offset_table.h"
+#include "../core/safe_memory.h"
 #include "../core/version_detect.h"
 #include "../game/game_state.h"
 
@@ -1715,6 +1716,134 @@ bool stats_get_int(StatsObjectPtr obj, const char *prop, int64_t *out_value) {
 
     *out_value = (int64_t)stats_get_property_raw(obj, prop_index);
     return true;
+}
+
+// ============================================================================
+// Typed property read (Windows: LuaStatGetAttribute / Object::Get*)
+// ============================================================================
+//
+// IndexedProperties[i] means different things by the attribute's value-list
+// type: ConstantInt and enumerations store the value itself; FixedString,
+// ConstantFloat, flags and Guid store an index into an RPGStats pool. Reading
+// every attribute as a FixedString index (as __index did) returned an
+// unrelated string for every number, enumeration and flags field.
+//
+// Pools after FixedStrings, each Array {buf, cap u32, size u32} (0x10), in the
+// Windows order Int64s, GUIDs, Floats, TranslatedStrings. Live on
+// 4.1.1.7398727: sizes 10069 / 184 / 127 / 13802 at 0x358/0x368/0x378/0x388.
+#define RPGSTATS_OFFSET_INT64S  0x358   // Array<int64_t*>
+#define RPGSTATS_OFFSET_GUIDS   0x368   // Array<Guid>
+#define RPGSTATS_OFFSET_FLOATS  0x378   // Array<float>
+
+static bool rpgstats_pool_elem(uint32_t pool_offset, int32_t index,
+                               size_t elem_size, void **out_addr) {
+    void *rpgstats = stats_manager_get_raw();
+    if (!rpgstats || index < 0) return false;
+    void *buf = NULL;
+    uint32_t size = 0;
+    if (!safe_read_ptr((char*)rpgstats + pool_offset, &buf) || !buf ||
+        !safe_read_u32((char*)rpgstats + pool_offset + 0x0C, &size) ||
+        (uint32_t)index >= size) {
+        return false;
+    }
+    *out_addr = (char*)buf + (size_t)index * elem_size;
+    return true;
+}
+
+static bool is_flag_type(const char *name) {
+    static const char *const names[] = {
+        "AttributeFlags", "SpellFlagList", "WeaponFlags", "ResistanceFlags",
+        "PassiveFlags", "ProficiencyGroupFlags", "StatsFunctorContext",
+        "StatusEvent", "StatusPropertyFlags", "StatusGroupFlags",
+        "LineOfSightFlags", "CinematicArenaFlags", "SpellCategoryFlags",
+        "InterruptContext", "InterruptContextScope", "InterruptDefaultValue",
+        "InterruptFlagsList", "AuraFlags", "AbilityFlags"
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (strcmp(name, names[i]) == 0) return true;
+    }
+    return false;
+}
+
+bool stats_get_typed(StatsObjectPtr obj, const char *prop, StatsTypedValue *out) {
+    if (!obj || !prop || !out) return false;
+    memset(out, 0, sizeof(*out));
+
+    void *modifier_list = get_object_modifier_list(obj);
+    int prop_index = modifier_list ? find_property_index_by_name(modifier_list, prop) : -1;
+    if (prop_index < 0) return false;
+
+    void *attrs_buf = NULL, *modifier = NULL;
+    int32_t enum_index = -1;
+    if (!safe_read_ptr((char*)modifier_list + CNEM_OFFSET_VALUES_BUF, &attrs_buf) || !attrs_buf ||
+        !safe_read_ptr((char*)attrs_buf + (size_t)prop_index * sizeof(void*), &modifier) || !modifier ||
+        !safe_read_i32((char*)modifier + MODIFIER_OFFSET_ENUM_INDEX, &enum_index)) {
+        return false;
+    }
+
+    uint32_t vl_count = 0;
+    void *vl_elements = NULL;
+    void *value_list = NULL;
+    if (stats_valuelist_registry_shape(get_modifier_value_lists_manager(), &vl_count, &vl_elements)) {
+        value_list = stats_valuelist_registry_element(vl_elements, vl_count, (uint32_t)enum_index);
+    }
+    const char *type_name = value_list ? read_fixed_string((char*)value_list + RPGENUM_OFFSET_NAME) : NULL;
+    if (!type_name) return false;
+    out->type_name = type_name;
+
+    int32_t raw = stats_get_property_raw(obj, prop_index);
+    void *addr = NULL;
+
+    if (strcmp(type_name, "ConstantInt") == 0) {
+        out->kind = STATS_VALUE_INT;
+        out->i = raw;
+    } else if (strcmp(type_name, "ConstantFloat") == 0) {
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_FLOATS, raw, sizeof(float), &addr)) {
+            float f = 0;
+            if (safe_read_u32(addr, (uint32_t *)&f)) {
+                out->kind = STATS_VALUE_FLOAT;
+                out->f = f;
+            }
+        }
+    } else if (strcmp(type_name, "FixedString") == 0 ||
+               strcmp(type_name, "StatusIDs") == 0) {
+        out->kind = STATS_VALUE_STRING;
+        out->s = get_rpgstats_fixedstring(raw);
+    } else if (strcmp(type_name, "Guid") == 0) {
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_GUIDS, raw, 16, &addr) &&
+            safe_memory_read((mach_vm_address_t)(uintptr_t)addr, out->guid, 16)) {
+            out->kind = STATS_VALUE_GUID;
+        }
+    } else if (is_flag_type(type_name)) {
+        void *slot = NULL, *pflags = NULL;
+        uint64_t flags = 0;
+        out->kind = STATS_VALUE_FLAGS;
+        out->value_list = value_list;
+        if (rpgstats_pool_elem(RPGSTATS_OFFSET_INT64S, raw, sizeof(void*), &slot) &&
+            safe_read_ptr(slot, &pflags) && pflags &&
+            safe_memory_read((mach_vm_address_t)(uintptr_t)pflags, &flags, sizeof(flags))) {
+            out->flags = flags;
+        }
+    } else if (stats_valuelist_find_value(value_list, raw, NULL) == STATS_VALUELIST_FOUND) {
+        // Enumeration: the stored value is the label's value.
+        uint32_t key = FS_NULL_INDEX;
+        stats_valuelist_find_value(value_list, raw, &key);
+        out->kind = STATS_VALUE_STRING;
+        out->s = fixed_string_resolve(key);
+    } else {
+        // Conditions, functors, TranslatedString, ...: not decoded here.
+        out->kind = STATS_VALUE_UNSUPPORTED;
+        out->i = raw;
+    }
+    return true;
+}
+
+const char *stats_flag_label(void *value_list, int bit_value) {
+    uint32_t key = FS_NULL_INDEX;
+    if (stats_valuelist_find_value(value_list, bit_value, &key) != STATS_VALUELIST_FOUND) {
+        return NULL;
+    }
+    return fixed_string_resolve(key);
 }
 
 bool stats_get_float(StatsObjectPtr obj, const char *prop, float *out_value) {
