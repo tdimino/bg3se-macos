@@ -437,11 +437,14 @@ if(BUILD_TESTS)
         tests/tier0/test_guid_lookup.c
         tests/tier0/test_persistentvars.c
         tests/tier0/test_json_proxies.c
+        tests/tier0/test_lua_json.c
         tests/tier0/test_arm64_prologue.c
         tests/tier0/test_enum_ext.c
         tests/tier0/test_osi_hook_abi.c
         tests/tier0/test_staticdata_layouts.c
+        tests/tier0/test_stats_set_string.c
         tests/tier0/stub_logging.c
+        tests/tier0/stub_stats_deps.c
         src/core/safe_memory.c
         src/entity/guid_lookup.c
         src/osiris/pattern_scan.c
@@ -458,6 +461,7 @@ if(BUILD_TESTS)
         src/enum/bitfield_lua.c
         src/enum/enum_ext.c
         src/staticdata/staticdata_layouts.c
+        src/stats/stats_manager.c
     )
     target_include_directories(bg3se_test_tier0 PRIVATE
         ${CMAKE_SOURCE_DIR}/tests/tier0
@@ -469,6 +473,8 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/hooks
         ${CMAKE_SOURCE_DIR}/src/enum
         ${CMAKE_SOURCE_DIR}/src/staticdata
+        ${CMAKE_SOURCE_DIR}/src/stats
+        ${CMAKE_SOURCE_DIR}/src/strings
         ${LUA_SRC_DIR}
     )
     target_link_libraries(bg3se_test_tier0 PRIVATE lua_static "-framework Foundation")
